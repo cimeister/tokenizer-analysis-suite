@@ -1,0 +1,6 @@
+{
+  "method": "lines",
+  "pretokenization": "python_split",
+  "include_empty_splits": false,
+  "encoding": "utf-8"
+}

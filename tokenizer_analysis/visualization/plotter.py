@@ -65,18 +65,122 @@ class TokenizerVisualizer:
         
         return (lower_bound, upper_bound)
     
+    def _extract_per_language_value(self, metric_name: str, value: Any) -> float:
+        """
+        Extract the appropriate numeric value for per-language plotting based on known metric structures.
+        
+        Args:
+            metric_name: Name of the metric (e.g., 'fertility', 'compression_ratio', etc.)
+            value: The value from the per_language data structure
+            
+        Returns:
+            float: The numeric value to plot
+        """
+        # Handle scalar values (like compression_ratio per_language values)
+        if isinstance(value, (int, float)):
+            return value
+        
+        # Handle dictionary values based on known metric structures
+        if isinstance(value, dict):
+            if metric_name == 'fertility':
+                # Fertility per_language structure: {'mean': float, 'std': float, 'median': float}
+                return value.get('mean', 0.0)
+            
+            elif metric_name == 'vocabulary_utilization':
+                # Vocabulary utilization per_language structure: {'utilization': float, 'used_tokens': int, 'vocab_size': int}
+                return value.get('utilization', 0.0)
+            
+            elif metric_name == 'type_token_ratio':
+                # TTR per_language structure: {'ttr': float, 'types': int, 'tokens': int}
+                return value.get('ttr', 0.0)
+            
+            elif metric_name == 'avg_tokens_per_line':
+                # Avg tokens per line per_language structure: {'avg_tokens_per_line': float, 'std_tokens_per_line': float, 'total_lines': int}
+                return value.get('avg_tokens_per_line', 0.0)
+            
+            elif metric_name in ['unigram_entropy', 'avg_token_rank']:
+                # Unigram distribution metrics per_language structure: {'unigram_entropy': float, 'avg_token_rank': float, 'total_tokens': int, 'unique_tokens': int}
+                return value.get(metric_name, 0.0)
+            
+            elif 'mean' in value:
+                # Fallback for any structure with 'mean' key
+                return value['mean']
+            
+            else:
+                raise ValueError(f"Unknown per_language data structure for metric '{metric_name}': {value}")
+        
+        # Fallback for unexpected types
+        raise ValueError(f"Unexpected value type for metric '{metric_name}': {type(value)} - {value}")
+    
+    def _get_per_language_labels(self, metric_name: str, results: Dict[str, Any]) -> tuple:
+        """
+        Get appropriate ylabel and title for per-language plots based on metric and normalization.
+        
+        Args:
+            metric_name: Name of the metric
+            results: Full results dictionary containing metadata
+            
+        Returns:
+            tuple: (ylabel, title) for the plot
+        """
+        # Default labels
+        ylabel = metric_name.replace('_', ' ').title()
+        title = f'{metric_name.replace("_", " ").title()} by Language'
+        
+        # Handle metrics with normalization metadata
+        if metric_name == 'fertility' and 'metadata' in results.get(metric_name, {}):
+            metadata = results[metric_name]['metadata']
+            norm_method = metadata.get('normalization_method', 'tokens')
+            ylabel = "# Tokens per " + norm_method.title() 
+            title = f"Fertility ({norm_method.title()}) by Language"
+        
+        elif metric_name == 'compression_ratio' and 'metadata' in results.get(metric_name, {}):
+            metadata = results[metric_name]['metadata']
+            ylabel = "# " + metadata.get('unit', 'units').title() + "/ # Tokens"
+            norm_method = metadata.get('normalization_method', 'units')
+            title = f"Compression Ratio ({norm_method.title()}) by Language"
+        
+        # Handle specific metric types
+        elif metric_name == 'vocabulary_utilization':
+            ylabel = 'Vocabulary Utilization'
+            title = 'Vocabulary Utilization by Language'
+        
+        elif metric_name == 'type_token_ratio':
+            ylabel = 'Type-Token Ratio'
+            title = 'Type-Token Ratio by Language'
+        
+        elif metric_name == 'avg_tokens_per_line':
+            ylabel = 'Tokens per Line'
+            title = 'Average Tokens per Line by Language'
+        
+        # Handle unigram distribution metrics
+        elif metric_name in ['unigram_entropy', 'avg_token_rank']:
+            if metric_name == 'unigram_entropy':
+                ylabel = 'Unigram Entropy (bits)'
+                title = 'Unigram Distribution Entropy by Language'
+            else:
+                ylabel = 'Average Token Rank'
+                title = 'Average Token Rank by Language'
+        
+        # Handle TFG language costs
+        elif metric_name == 'language_costs':
+            # Get cost unit from TFG metadata if available
+            if 'tokenizer_fairness_gini' in results:
+                metadata = results['tokenizer_fairness_gini'].get('metadata', {})
+                cost_unit = metadata.get('cost_unit', 'tokens per unit')
+                ylabel = f'Cost ({cost_unit.title()})'
+                title = 'Token Costs by Language'
+            else:
+                ylabel = 'Token Cost'
+                title = 'Token Costs by Language'
+        
+        return ylabel, title
+    
     def plot_basic_metrics_comparison(self, results: Dict[str, Any]) -> None:
         """Plot basic tokenization metrics comparison."""
-        fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+        fig, axes = plt.subplots(2, 2, figsize=(12, 12))
         fig.suptitle('Basic Tokenization Metrics Comparison', fontsize=16)
-        
-        # Vocabulary sizes - starting at 0 is important here
-        if 'vocabulary_overlap' in results:
-            vocab_sizes = results['vocabulary_overlap']['vocabulary_sizes']
-            axes[0, 0].bar(vocab_sizes.keys(), vocab_sizes.values())
-            axes[0, 0].set_title('Vocabulary Sizes')
-            axes[0, 0].set_ylabel('Number of Tokens')
-            axes[0, 0].tick_params(axis='x', rotation=45)
+
         
         # Token length comparison
         if 'token_length' in results:
@@ -99,31 +203,54 @@ class TokenizerVisualizer:
                     unit = 'characters'
                 labels.append(name)
             
-            axes[0, 1].bar(labels, primary_lengths)
-            axes[0, 1].set_title('Average Token Length')
-            axes[0, 1].set_ylabel(f'{unit.capitalize()} per Token')
-            axes[0, 1].tick_params(axis='x', rotation=45)
+            axes[0, 0].bar(labels, primary_lengths)
+            axes[0, 0].set_title('Global Average Token Length')
+            axes[0, 0].set_ylabel(f'{unit.capitalize()} per Token')
+            axes[0, 0].tick_params(axis='x', rotation=45)
             if primary_lengths:
-                axes[0, 1].set_ylim(self._get_dynamic_ylim(primary_lengths))
+                axes[0, 0].set_ylim(self._get_dynamic_ylim(primary_lengths))
         
         # Compression ratios
         if 'compression_ratio' in results:
             compression_ratios = [stats['global'] for stats in results['compression_ratio']['per_tokenizer'].values()]
             labels = list(results['compression_ratio']['per_tokenizer'].keys())
             axes[1, 0].bar(labels, compression_ratios)
-            axes[1, 0].set_title('Compression Ratio')
-            axes[1, 0].set_ylabel('Bytes per Token')
+            axes[1, 0].set_title('Global Compression Ratio')
+            
+            # Use dynamic ylabel based on normalization method
+            metadata = results['compression_ratio'].get('metadata', {})
+            ylabel = metadata.get('unit', 'units')
+            axes[1, 0].set_ylabel('# ' + ylabel.title() + ' / # Token (higher = more compressed)')
+            
             axes[1, 0].tick_params(axis='x', rotation=45)
             axes[1, 0].axhline(y=1.0, color='red', linestyle='--', alpha=0.7)
             if compression_ratios:
                 axes[1, 0].set_ylim(self._get_dynamic_ylim(compression_ratios))
 
-        # Fertility comparisons
-        if 'whitespace_fertility' in results:
+        # Fertility comparison (configurable normalization)
+        if 'fertility' in results:
+            fertilities = [stats['global']['mean'] for stats in results['fertility']['per_tokenizer'].values() if stats['global']]
+            labels = [name for name, stats in results['fertility']['per_tokenizer'].items() if stats['global']]
+            if fertilities:
+                axes[1, 1].bar(labels, fertilities, color='skyblue', alpha=0.7)
+                
+                # Use metadata to set dynamic titles and labels
+                metadata = results['fertility'].get('metadata', {})
+                title = f"Global Fertility ({metadata.get('normalization_method', 'tokens')})"
+                norm_method = metadata.get('normalization_method', 'tokens')
+                ylabel = "# Tokens per " + norm_method.title()
+                
+                axes[1, 1].set_title(title)
+                axes[1, 1].set_ylabel(ylabel.title())
+                axes[1, 1].tick_params(axis='x', rotation=45)
+                axes[1, 1].set_ylim(self._get_dynamic_ylim(fertilities))
+
+        # Handle legacy fertility results for backward compatibility
+        elif 'whitespace_fertility' in results:
             ws_fertilities = [stats['global']['mean'] for stats in results['whitespace_fertility']['per_tokenizer'].values()]
             labels = list(results['whitespace_fertility']['per_tokenizer'].keys())
             axes[1, 1].bar(labels, ws_fertilities, color='skyblue', alpha=0.7)
-            axes[1, 1].set_title('Whitespace-Delimited Fertility')
+            axes[1, 1].set_title('Global Whitespace-Delimited Fertility')
             axes[1, 1].set_ylabel('Tokens per Word')
             axes[1, 1].tick_params(axis='x', rotation=45)
             if ws_fertilities:
@@ -133,7 +260,7 @@ class TokenizerVisualizer:
             char_fertilities = [stats['global']['mean'] for stats in results['character_fertility']['per_tokenizer'].values()]
             labels = list(results['character_fertility']['per_tokenizer'].keys())
             axes[1, 2].bar(labels, char_fertilities, color='lightcoral', alpha=0.7)
-            axes[1, 2].set_title('Character-Based Fertility')
+            axes[1, 2].set_title('Global Character-Based Fertility')
             axes[1, 2].set_ylabel('Tokens per Character')
             axes[1, 2].tick_params(axis='x', rotation=45)
             if char_fertilities:
@@ -164,7 +291,7 @@ class TokenizerVisualizer:
             utilizations = [stats['global_utilization'] for stats in results['vocabulary_utilization']['per_tokenizer'].values()]
             labels = list(results['vocabulary_utilization']['per_tokenizer'].keys())
             axes[0, 1].bar(labels, utilizations)
-            axes[0, 1].set_title('Vocabulary Utilization')
+            axes[0, 1].set_title('Global Vocabulary Utilization')
             axes[0, 1].set_ylabel('Proportion of Vocabulary Used')
             axes[0, 1].tick_params(axis='x', rotation=45)
             if utilizations:
@@ -176,7 +303,7 @@ class TokenizerVisualizer:
             labels = [name for name, stats in results['renyi_efficiency']['per_tokenizer'].items() if 'renyi_1.0' in stats]
             if shannon_entropies:
                 axes[1, 0].bar(labels, shannon_entropies)
-                axes[1, 0].set_title('Shannon Entropy')
+                axes[1, 0].set_title('Global Shannon Entropy')
                 axes[1, 0].set_ylabel('Entropy (bits)')
                 axes[1, 0].tick_params(axis='x', rotation=45)
                 axes[1, 0].set_ylim(self._get_dynamic_ylim(shannon_entropies))
@@ -186,8 +313,8 @@ class TokenizerVisualizer:
             avg_tokens = [stats['global_avg'] for stats in results['avg_tokens_per_line']['per_tokenizer'].values()]
             labels = list(results['avg_tokens_per_line']['per_tokenizer'].keys())
             axes[1, 1].bar(labels, avg_tokens)
-            axes[1, 1].set_title('Average Tokens per Line')
-            axes[1, 1].set_ylabel('Tokens')
+            axes[1, 1].set_title('Global Average Tokens per Line')
+            axes[1, 1].set_ylabel('# Tokens')
             axes[1, 1].tick_params(axis='x', rotation=45)
             if avg_tokens:
                 axes[1, 1].set_ylim(self._get_dynamic_ylim(avg_tokens))
@@ -505,11 +632,12 @@ class TokenizerVisualizer:
         fig, axes = plt.subplots(2, 2, figsize=(16, 12))
         fig.suptitle('Per-Language Performance Analysis', fontsize=16)
         
+        # Updated to handle new unified fertility structure
         metrics_to_plot = [
             ('compression_ratio', 'per_tokenizer', 'per_language'),
-            ('whitespace_fertility', 'per_tokenizer', 'per_language'),
-            ('character_fertility', 'per_tokenizer', 'per_language'),
-            ('type_token_ratio', 'per_language', None)
+            ('fertility', 'per_tokenizer', 'per_language'),
+            ('type_token_ratio', 'per_language', None),
+            ('vocabulary_utilization', 'per_tokenizer', 'per_language')
         ]
         
         for idx, (metric_name, path1, path2) in enumerate(metrics_to_plot):
@@ -523,9 +651,17 @@ class TokenizerVisualizer:
                     if tok_name in results[metric_name][path1] and path2 in results[metric_name][path1][tok_name]:
                         for lang, value in results[metric_name][path1][tok_name][path2].items():
                             if lang not in lang_data: lang_data[lang] = {}
-                            lang_data[lang][tok_name] = value['mean'] if isinstance(value, dict) and 'mean' in value else value
+                            
+                            # Extract value based on known metric data structures
+                            extracted_value = self._extract_per_language_value(metric_name, value)
+                            lang_data[lang][tok_name] = extracted_value
             elif path1 == 'per_language':
-                lang_data = results[metric_name][path1]
+                # Handle direct per_language structure (like type_token_ratio)
+                if metric_name in results and path1 in results[metric_name]:
+                    for lang, tok_values in results[metric_name][path1].items():
+                        if lang not in lang_data: lang_data[lang] = {}
+                        for tok_name, value in tok_values.items():
+                            lang_data[lang][tok_name] = value
             
             if lang_data:
                 languages = sorted([lang for lang in lang_data.keys() if lang in all_languages])
@@ -541,8 +677,11 @@ class TokenizerVisualizer:
                     ax.bar(x_pos + offset, values, width=bar_width, label=tok_name, alpha=0.8)
                 
                 ax.set_xlabel('Languages')
-                ax.set_ylabel(metric_name.replace('_', ' ').title())
-                ax.set_title(f'{metric_name.replace("_", " ").title()} by Language')
+                # Use metadata for better labels when available
+                ylabel, title = self._get_per_language_labels(metric_name, results)
+                
+                ax.set_ylabel(ylabel)
+                ax.set_title(title)
                 ax.set_xticks(x_pos)
                 ax.set_xticklabels(languages, rotation=45)
                 ax.legend()
@@ -555,45 +694,83 @@ class TokenizerVisualizer:
         plt.close()
 
     def plot_fertility_comparison(self, results: Dict[str, Any]) -> None:
-        """Create a dedicated plot comparing both fertility metrics."""
-        if 'whitespace_fertility' not in results or 'character_fertility' not in results:
-            return
+        """Create a dedicated plot for fertility metric."""
+        # Handle new unified fertility structure
+        if 'fertility' in results:
+            fig, ax = plt.subplots(1, 1, figsize=(12, 6))
+            
+            # Get metadata for dynamic labeling
+            metadata = results['fertility'].get('metadata', {})
+            norm_method = metadata.get('normalization_method', 'tokens')
+            description = metadata.get('description', 'Fertility')
+            short_desc = metadata.get('short_description', 'tokens/unit')
+            
+            fig.suptitle(f'Global Fertility Analysis ({norm_method.title()})', fontsize=16)
+            
+            fertilities = []
+            labels = []
+            for name in self.tokenizer_names:
+                if name in results['fertility']['per_tokenizer']:
+                    fertilities.append(results['fertility']['per_tokenizer'][name]['global']['mean'])
+                    labels.append(name)
+            
+            if fertilities:
+                x_pos = np.arange(len(labels))
+                bars = ax.bar(x_pos, fertilities, color='skyblue', alpha=0.8)
+                ax.set_title(f"Global {description}")
+                ax.set_ylabel("# Tokens per " + norm_method.title())
+                ax.set_xlabel('Tokenizer')
+                ax.set_xticks(x_pos)
+                ax.set_xticklabels(labels, rotation=45)
+                ax.set_ylim(self._get_dynamic_ylim(fertilities))
+                
+                # Add value labels on bars
+                for i, (bar, value) in enumerate(zip(bars, fertilities)):
+                    height = bar.get_height()
+                    ax.text(bar.get_x() + bar.get_width()/2., height,
+                           f'{value:.3f}', ha='center', va='bottom')
+            
+            plt.tight_layout()
+            plt.savefig(f"{self.save_dir}/fertility_comparison.png", dpi=300, bbox_inches='tight')
+            plt.close()
         
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
-        fig.suptitle('Fertility Metrics Comparison', fontsize=16)
-        
-        ws_fertilities = []
-        char_fertilities = []
-        labels = []
-        for name in self.tokenizer_names:
-            if (name in results['whitespace_fertility']['per_tokenizer'] and
-                name in results['character_fertility']['per_tokenizer']):
-                ws_fertilities.append(results['whitespace_fertility']['per_tokenizer'][name]['global']['mean'])
-                char_fertilities.append(results['character_fertility']['per_tokenizer'][name]['global']['mean'])
-                labels.append(name)
-        
-        x_pos = np.arange(len(labels))
-        bars1 = ax1.bar(x_pos, ws_fertilities, color='skyblue', alpha=0.8, label='Whitespace-Delimited')
-        ax1.set_title('Whitespace-Delimited Fertility')
-        ax1.set_ylabel('Tokens per Word')
-        ax1.set_xlabel('Tokenizer')
-        ax1.set_xticks(x_pos)
-        ax1.set_xticklabels(labels, rotation=45)
-        if ws_fertilities:
-            ax1.set_ylim(self._get_dynamic_ylim(ws_fertilities))
-        
-        bars2 = ax2.bar(x_pos, char_fertilities, color='lightcoral', alpha=0.8, label='Character-Based')
-        ax2.set_title('Character-Based Fertility')
-        ax2.set_ylabel('Tokens per Character')
-        ax2.set_xlabel('Tokenizer')
-        ax2.set_xticks(x_pos)
-        ax2.set_xticklabels(labels, rotation=45)
-        if char_fertilities:
-            ax2.set_ylim(self._get_dynamic_ylim(char_fertilities))
+        # Handle legacy dual fertility structure for backward compatibility
+        elif 'whitespace_fertility' in results and 'character_fertility' in results:
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+            fig.suptitle('Global Fertility Metrics Comparison (Legacy)', fontsize=16)
+            
+            ws_fertilities = []
+            char_fertilities = []
+            labels = []
+            for name in self.tokenizer_names:
+                if (name in results['whitespace_fertility']['per_tokenizer'] and
+                    name in results['character_fertility']['per_tokenizer']):
+                    ws_fertilities.append(results['whitespace_fertility']['per_tokenizer'][name]['global']['mean'])
+                    char_fertilities.append(results['character_fertility']['per_tokenizer'][name]['global']['mean'])
+                    labels.append(name)
+            
+            x_pos = np.arange(len(labels))
+            bars1 = ax1.bar(x_pos, ws_fertilities, color='skyblue', alpha=0.8, label='Whitespace-Delimited')
+            ax1.set_title('Global Whitespace-Delimited Fertility')
+            ax1.set_ylabel('Tokens per Word')
+            ax1.set_xlabel('Tokenizer')
+            ax1.set_xticks(x_pos)
+            ax1.set_xticklabels(labels, rotation=45)
+            if ws_fertilities:
+                ax1.set_ylim(self._get_dynamic_ylim(ws_fertilities))
+            
+            bars2 = ax2.bar(x_pos, char_fertilities, color='lightcoral', alpha=0.8, label='Character-Based')
+            ax2.set_title('Global Character-Based Fertility')
+            ax2.set_ylabel('Tokens per Character')
+            ax2.set_xlabel('Tokenizer')
+            ax2.set_xticks(x_pos)
+            ax2.set_xticklabels(labels, rotation=45)
+            if char_fertilities:
+                ax2.set_ylim(self._get_dynamic_ylim(char_fertilities))
 
-        plt.tight_layout()
-        plt.savefig(f"{self.save_dir}/fertility_comparison.png", dpi=300, bbox_inches='tight')
-        plt.close()
+            plt.tight_layout()
+            plt.savefig(f"{self.save_dir}/fertility_comparison.png", dpi=300, bbox_inches='tight')
+            plt.close()
     
     def plot_tokenizer_fairness_gini(self, results: Dict[str, Any]) -> None:
         """Plot Tokenizer Fairness Gini coefficient and related metrics."""
@@ -605,7 +782,7 @@ class TokenizerVisualizer:
         if not gini_results:
             return
         
-        fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+        fig, axes = plt.subplots(2, 2, figsize=(18, 12))
         fig.suptitle('Tokenizer Fairness Analysis', fontsize=16)
         
         # 1. Gini Coefficients Comparison
@@ -639,7 +816,12 @@ class TokenizerVisualizer:
         if cost_ratios:
             bars = axes[0, 1].bar(labels, cost_ratios, color='skyblue', alpha=0.7)
             axes[0, 1].set_title('Cost Ratio (Max/Min)')
-            axes[0, 1].set_ylabel('Ratio (lower = more equitable)')
+            
+            # Use dynamic label based on normalization method
+            metadata = results.get('tokenizer_fairness_gini', {}).get('metadata', {})
+            cost_unit = metadata.get('cost_unit', 'tokens per unit')
+            axes[0, 1].set_ylabel(f'Ratio ({cost_unit}) - lower = more equitable')
+            
             axes[0, 1].tick_params(axis='x', rotation=45)
             axes[0, 1].grid(True, alpha=0.3)
             
@@ -648,28 +830,63 @@ class TokenizerVisualizer:
                 axes[0, 1].text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
                                f'{value:.2f}', ha='center', va='bottom', fontsize=10)
         
-        # 3. Language Cost Distribution (for first tokenizer as example)
-        first_tokenizer = list(gini_results.keys())[0]
-        if 'warning' not in gini_results[first_tokenizer]:
-            data = gini_results[first_tokenizer]
-            sorted_langs = data['sorted_language_costs']
+        # 3. Token Costs by Language (All Tokenizers Comparison)
+        if gini_results:
+            # Extract language costs for all tokenizers
+            all_language_costs = {}
+            valid_tokenizers = []
             
-            if sorted_langs:
-                languages = [item[0] for item in sorted_langs]
-                costs = [item[1] for item in sorted_langs]
+            for tok_name, data in gini_results.items():
+                if 'warning' not in data and 'language_costs' in data:
+                    all_language_costs[tok_name] = data['language_costs']
+                    valid_tokenizers.append(tok_name)
+            
+            if valid_tokenizers and all_language_costs:
+                # Get all languages and sort by average cost across tokenizers
+                all_languages = set()
+                for costs in all_language_costs.values():
+                    all_languages.update(costs.keys())
                 
-                bars = axes[1, 0].bar(range(len(languages)), costs, color='lightgreen', alpha=0.7)
-                axes[1, 0].set_title(f'Token Costs by Language ({first_tokenizer})')
-                axes[1, 0].set_ylabel('Token Cost (tokens/byte)')
+                lang_avg_costs = {}
+                for lang in all_languages:
+                    costs = [all_language_costs[tok][lang] for tok in valid_tokenizers 
+                            if lang in all_language_costs[tok]]
+                    if costs:
+                        lang_avg_costs[lang] = np.mean(costs)
+                
+                # Sort languages by average cost (most efficient first)
+                sorted_languages = sorted(lang_avg_costs.keys(), key=lambda x: lang_avg_costs[x])
+                
+                # Create grouped bar chart
+                n_langs = len(sorted_languages)
+                n_toks = len(valid_tokenizers)
+                bar_width = 0.8 / n_toks
+                x_pos = np.arange(n_langs)
+                
+                colors = plt.cm.Set3(np.linspace(0, 1, n_toks))
+                
+                for i, tok_name in enumerate(valid_tokenizers):
+                    costs = [all_language_costs[tok_name].get(lang, 0) for lang in sorted_languages]
+                    offset = (i - n_toks/2) * bar_width + bar_width/2
+                    axes[1, 0].bar(x_pos + offset, costs, width=bar_width, 
+                                  label=tok_name, alpha=0.8, color=colors[i])
+                
+                # Get cost unit from metadata
+                metadata = results.get('tokenizer_fairness_gini', {}).get('metadata', {})
+                cost_unit = metadata.get('cost_unit', 'tokens per unit')
+                
+                axes[1, 0].set_title('Token Costs by Language (All Tokenizers)')
+                axes[1, 0].set_ylabel(f'Cost ({cost_unit.title()})')
                 axes[1, 0].set_xlabel('Languages (sorted by efficiency)')
-                axes[1, 0].set_xticks(range(len(languages)))
-                axes[1, 0].set_xticklabels(languages, rotation=45)
-                axes[1, 0].grid(True, alpha=0.3)
+                axes[1, 0].set_xticks(x_pos)
+                axes[1, 0].set_xticklabels(sorted_languages, rotation=45, ha='right')
+                axes[1, 0].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+                axes[1, 0].grid(True, alpha=0.3, axis='y')
                 
-                # Highlight most and least efficient
-                if len(costs) > 1:
-                    bars[0].set_color('green')  # Most efficient
-                    bars[-1].set_color('red')   # Least efficient
+                # Set dynamic y-limits
+                all_costs = [cost for costs in all_language_costs.values() for cost in costs.values()]
+                if all_costs:
+                    axes[1, 0].set_ylim(self._get_dynamic_ylim(all_costs))
         
         # 4. Summary statistics
         axes[1, 1].axis('off')  # Turn off axis for text summary

@@ -5,83 +5,26 @@ import logging
 import unicodedata
 
 from .base import BaseMetrics
+from ..config import NormalizationConfig, TextNormalizer, DEFAULT_NORMALIZATION_CONFIG
 
 logger = logging.getLogger(__name__)
 
 
 class BasicTokenizationMetrics(BaseMetrics):
     
-    def compute_compression_ratio(self, language_texts: Dict[str, List[str]], 
-                                          all_encodings: Optional[Dict[str, Dict[str, List[List[int]]]]] = None,
-                                          use_bytes: bool = True) -> Dict[str, Any]:
-        """
-        Compute compression ratios: average of individual (tokens/bytes) ratios.
-        
-        Args:
-            language_texts: Text data by language
-            all_encodings: Pre-computed encodings
-            use_bytes: If True, use byte length; if False, use character length
-        """
-        if all_encodings is None:
-            all_encodings = self.encode_texts_batch(language_texts)
-        
-        language_texts, all_encodings = self.filter_valid_data(language_texts, all_encodings)
-        
-        results = {
-            'per_tokenizer': {},
-            'per_language': {},
-            'pairwise_comparisons': {}
-        }
-        
-        for tok_name in self.tokenizer_names:
-            per_lang_ratios = {}
-            all_individual_ratios = []  # Store individual text ratios
-            
-            for lang, texts in language_texts.items():
-                if not texts or lang not in all_encodings[tok_name]:
-                    continue
-                
-                lang_ratios = []
-                for text, tokens in zip(texts, all_encodings[tok_name][lang]):
-                    if len(text) > 0:
-                        # Use bytes or characters as specified
-                        text_length = len(text.encode('utf-8')) if use_bytes else len(text)
-                        ratio = text_length / len(tokens)
-                        lang_ratios.append(ratio)
-                        all_individual_ratios.append(ratio)
-                
-                if lang_ratios:
-                    # Average of individual ratios for this language
-                    per_lang_ratios[lang] = np.mean(lang_ratios)
-            
-            # Global compression: average of all individual ratios
-            global_compression = np.mean(all_individual_ratios) if all_individual_ratios else 1.0
-            
-            results['per_tokenizer'][tok_name] = {
-                'global': global_compression,
-                'per_language': per_lang_ratios,
-                'num_texts_analyzed': len(all_individual_ratios)
-            }
-        
-        # Add metadata
-        results['metadata'] = {'unit': 'bytes' if use_bytes else 'characters'}
-        
-        # Compute pairwise comparisons
-        global_ratios = {name: results['per_tokenizer'][name]['global'] 
-                        for name in self.tokenizer_names}
-        results['pairwise_comparisons'] = self.compute_pairwise_ratios(
-            global_ratios, 'compression_ratio'
-        )
-        
-        return results
+    def __init__(self, tokenizers: Dict[str, Any], tokenizer_names: List[str], 
+                 normalization_config: Optional[NormalizationConfig] = None):
+        super().__init__(tokenizers, tokenizer_names)
+        self.norm_config = normalization_config or DEFAULT_NORMALIZATION_CONFIG
+        self.normalizer = TextNormalizer(self.norm_config)
     
     def compute_fertility_analysis(self, language_texts: Dict[str, List[str]], 
                                     all_encodings: Optional[Dict[str, Dict[str, List[List[int]]]]] = None) -> Dict[str, Any]:
         """
-        Compute comprehensive fertility analysis: both whitespace-delimited and character-based.
+        Compute fertility analysis using the configured normalization method.
         
         Returns:
-            Dict with 'whitespace_fertility' and 'character_fertility' results
+            Dict with 'fertility' results based on the configured normalization
         """
         if all_encodings is None:
             all_encodings = self.encode_texts_batch(language_texts)
@@ -89,109 +32,84 @@ class BasicTokenizationMetrics(BaseMetrics):
         language_texts, all_encodings = self.filter_valid_data(language_texts, all_encodings)
         
         results = {
-            'whitespace_fertility': {
+            'fertility': {
                 'per_tokenizer': {},
                 'per_language': {},
-                'pairwise_comparisons': {}
-            },
-            'character_fertility': {
-                'per_tokenizer': {},
-                'per_language': {},
-                'pairwise_comparisons': {}
-            },
-            'metadata': {
-                'whitespace_description': 'Tokens per whitespace-delimited word',
-                'character_description': 'Tokens per character'
+                'pairwise_comparisons': {},
+                'metadata': {
+                    'normalization_method': self.norm_config.method.value,
+                    'description': self.normalizer.get_description(),
+                    'short_description': self.normalizer.get_short_description()
+                }
             }
         }
         
         for tok_name in self.tokenizer_names:
-            # Whitespace-delimited fertility (tokens per word)
-            ws_per_lang_fertility = {}
-            ws_all_fertilities = []
-            
-            # Character-based fertility (tokens per character)
-            char_per_lang_fertility = {}
-            char_all_fertilities = []
+            per_lang_fertility = {}
+            all_fertilities = []
             
             for lang, texts in language_texts.items():
                 if not texts or lang not in all_encodings[tok_name]:
                     continue
                 
-                ws_lang_fertilities = []
-                char_lang_fertilities = []
+                lang_fertilities = []
                 
                 for text, tokens in zip(texts, all_encodings[tok_name][lang]):
                     if text.strip():
-                        # Whitespace-delimited fertility (tokens per word)
-                        words = text.split()
-                        if len(words) > 0:
-                            ws_fertility = len(tokens) / len(words)
-                            ws_lang_fertilities.append(ws_fertility)
-                            ws_all_fertilities.append(ws_fertility)
-                        
-                        # Character-based fertility (tokens per character)
-                        chars = len(text)
-                        if chars > 0:
-                            char_fertility = len(tokens) / chars
-                            char_lang_fertilities.append(char_fertility)
-                            char_all_fertilities.append(char_fertility)
+                        # Get normalization count using configured method
+                        norm_count = self.normalizer.get_normalization_count(text)
+                        if norm_count > 0:
+                            fertility = len(tokens) / norm_count
+                            lang_fertilities.append(fertility)
+                            all_fertilities.append(fertility)
                 
                 # Store per-language statistics
-                if ws_lang_fertilities:
-                    ws_per_lang_fertility[lang] = {
-                        'mean': np.mean(ws_lang_fertilities),
-                        'std': np.std(ws_lang_fertilities),
-                        'median': np.median(ws_lang_fertilities)
-                    }
-                
-                if char_lang_fertilities:
-                    char_per_lang_fertility[lang] = {
-                        'mean': np.mean(char_lang_fertilities),
-                        'std': np.std(char_lang_fertilities),
-                        'median': np.median(char_lang_fertilities)
+                if lang_fertilities:
+                    per_lang_fertility[lang] = {
+                        'mean': np.mean(lang_fertilities),
+                        'std': np.std(lang_fertilities),
+                        'median': np.median(lang_fertilities)
                     }
             
             # Global fertility statistics
-            ws_global_stats = self.compute_basic_stats(ws_all_fertilities)
-            char_global_stats = self.compute_basic_stats(char_all_fertilities)
+            global_stats = self.compute_basic_stats(all_fertilities)
             
-            results['whitespace_fertility']['per_tokenizer'][tok_name] = {
-                'global': ws_global_stats,
-                'per_language': ws_per_lang_fertility
-            }
-            
-            results['character_fertility']['per_tokenizer'][tok_name] = {
-                'global': char_global_stats,
-                'per_language': char_per_lang_fertility
+            results['fertility']['per_tokenizer'][tok_name] = {
+                'global': global_stats,
+                'per_language': per_lang_fertility
             }
         
-        # Compute pairwise comparisons for both fertility types
-        ws_global_fertilities = {name: results['whitespace_fertility']['per_tokenizer'][name]['global']['mean'] 
-                                for name in self.tokenizer_names}
-        char_global_fertilities = {name: results['character_fertility']['per_tokenizer'][name]['global']['mean'] 
-                                  for name in self.tokenizer_names}
+        # Compute pairwise comparisons
+        global_fertilities = {name: results['fertility']['per_tokenizer'][name]['global']['mean'] 
+                             for name in self.tokenizer_names}
         
-        results['whitespace_fertility']['pairwise_comparisons'] = self.compute_pairwise_ratios(
-            ws_global_fertilities, 'whitespace_fertility'
-        )
-        results['character_fertility']['pairwise_comparisons'] = self.compute_pairwise_ratios(
-            char_global_fertilities, 'character_fertility'
+        results['fertility']['pairwise_comparisons'] = self.compute_pairwise_ratios(
+            global_fertilities, 'fertility'
         )
         
         return results
     
-    def compute_token_length_analysis(self, use_bytes: bool = True) -> Dict[str, Any]:
+    def compute_token_length_analysis(self) -> Dict[str, Any]:
         """
         Analyze token lengths with proper handling of special tokens.
-        
-        Args:
-            use_bytes: If True, use byte lengths as primary metric; if False, use character lengths
+        Uses the configured normalization method to determine the primary unit.
         """
+        # Determine primary unit based on normalization method
+        if self.norm_config.method == self.norm_config.method.BYTES:
+            primary_unit = 'bytes'
+            use_bytes = True
+        else:
+            primary_unit = 'characters'
+            use_bytes = False
+            
         results = {
             'per_tokenizer': {}, 
             'detailed_analysis': {},
-            'metadata': {'primary_unit': 'bytes' if use_bytes else 'characters'}
+            'metadata': {
+                'primary_unit': primary_unit,
+                'normalization_method': self.norm_config.method.value,
+                'encoding': getattr(self.norm_config, 'encoding', 'utf-8')
+            }
         }
         
         for name in self.tokenizer_names:
@@ -271,6 +189,216 @@ class BasicTokenizationMetrics(BaseMetrics):
             )
         
         return results
+
+    def compute_type_token_ratio(self, language_texts: Dict[str, List[str]], 
+                               all_encodings: Optional[Dict[str, Dict[str, List[List[int]]]]] = None) -> Dict[str, Any]:
+        """
+        Compute type-token ratio (TTR) for all tokenizers.
+        """
+        if all_encodings is None:
+            all_encodings = self.encode_texts_batch(language_texts)
+        
+        language_texts, all_encodings = self.filter_valid_data(language_texts, all_encodings)
+        
+        results = {
+            'per_tokenizer': {},
+            'per_language': {},
+            'pairwise_comparisons': {}
+        }
+        
+        for tok_name in self.tokenizer_names:
+            per_lang_ttr = {}
+            global_types = set()
+            global_tokens = 0
+            
+            for lang, encodings in all_encodings[tok_name].items():
+                if not encodings:
+                    continue
+                
+                lang_types = set()
+                lang_tokens = 0
+                
+                for token_sequence in encodings:
+                    for token in token_sequence:
+                        lang_types.add(token)
+                        global_types.add(token)
+                        lang_tokens += 1
+                        global_tokens += 1
+                
+                if lang_tokens > 0:
+                    lang_ttr = len(lang_types) / lang_tokens
+                    per_lang_ttr[lang] = {
+                        'ttr': lang_ttr,
+                        'types': len(lang_types),
+                        'tokens': lang_tokens
+                    }
+            
+            # Global TTR
+            global_ttr = len(global_types) / global_tokens if global_tokens > 0 else 0.0
+            
+            results['per_tokenizer'][tok_name] = {
+                'global_ttr': global_ttr,
+                'global_types': len(global_types),
+                'global_tokens': global_tokens,
+                'per_language': per_lang_ttr
+            }
+        
+        # Aggregate per-language results
+        all_languages = set()
+        for tok_results in results['per_tokenizer'].values():
+            all_languages.update(tok_results['per_language'].keys())
+        
+        for lang in all_languages:
+            results['per_language'][lang] = {}
+            for tok_name in self.tokenizer_names:
+                if lang in results['per_tokenizer'][tok_name]['per_language']:
+                    results['per_language'][lang][tok_name] = results['per_tokenizer'][tok_name]['per_language'][lang]['ttr']
+        
+        # Compute pairwise comparisons
+        global_ttrs = {name: results['per_tokenizer'][name]['global_ttr'] 
+                      for name in self.tokenizer_names}
+        results['pairwise_comparisons'] = self.compute_pairwise_ratios(
+            global_ttrs, 'type_token_ratio'
+        )
+        
+        return results
+    
+    def compute_vocabulary_utilization(self, language_texts: Dict[str, List[str]], 
+                                     all_encodings: Optional[Dict[str, Dict[str, List[List[int]]]]] = None) -> Dict[str, Any]:
+        """
+        Compute vocabulary utilization (percentage of vocabulary actually used).
+        """
+        if all_encodings is None:
+            all_encodings = self.encode_texts_batch(language_texts)
+        
+        language_texts, all_encodings = self.filter_valid_data(language_texts, all_encodings)
+        
+        results = {
+            'per_tokenizer': {},
+            'per_language': {},
+            'pairwise_comparisons': {}
+        }
+        
+        for tok_name in self.tokenizer_names:
+            # Get full vocabulary size
+            try:
+                full_vocab_size = len(self.tokenizers[tok_name].get_vocab())
+            except AttributeError:
+                logger.warning(f"Could not get vocabulary size for {tok_name}")
+                full_vocab_size = 1  # Avoid division by zero
+            
+            per_lang_utilization = {}
+            used_tokens_global = set()
+            
+            for lang, encodings in all_encodings[tok_name].items():
+                if not encodings:
+                    continue
+                
+                used_tokens_lang = set()
+                for token_sequence in encodings:
+                    for token in token_sequence:
+                        used_tokens_lang.add(token)
+                        used_tokens_global.add(token)
+                
+                lang_utilization = len(used_tokens_lang) / full_vocab_size
+                per_lang_utilization[lang] = {
+                    'utilization': lang_utilization,
+                    'used_tokens': len(used_tokens_lang),
+                    'vocab_size': full_vocab_size
+                }
+            
+            # Global utilization
+            global_utilization = len(used_tokens_global) / full_vocab_size
+            
+            results['per_tokenizer'][tok_name] = {
+                'global_utilization': global_utilization,
+                'used_tokens': len(used_tokens_global),
+                'vocab_size': full_vocab_size,
+                'per_language': per_lang_utilization
+            }
+        
+        # Aggregate per-language results
+        all_languages = set()
+        for tok_results in results['per_tokenizer'].values():
+            all_languages.update(tok_results['per_language'].keys())
+        
+        for lang in all_languages:
+            results['per_language'][lang] = {}
+            for tok_name in self.tokenizer_names:
+                if lang in results['per_tokenizer'][tok_name]['per_language']:
+                    results['per_language'][lang][tok_name] = results['per_tokenizer'][tok_name]['per_language'][lang]['utilization']
+        
+        # Compute pairwise comparisons
+        global_utilizations = {name: results['per_tokenizer'][name]['global_utilization'] 
+                             for name in self.tokenizer_names}
+        results['pairwise_comparisons'] = self.compute_pairwise_ratios(
+            global_utilizations, 'vocabulary_utilization'
+        )
+        
+        return results
+    
+    def compute_average_tokens_per_line(self, language_texts: Dict[str, List[str]], 
+                                      all_encodings: Optional[Dict[str, Dict[str, List[List[int]]]]] = None) -> Dict[str, Any]:
+        """
+        Compute average tokens per line for all tokenizers.
+        """
+        if all_encodings is None:
+            all_encodings = self.encode_texts_batch(language_texts)
+        
+        language_texts, all_encodings = self.filter_valid_data(language_texts, all_encodings)
+        
+        results = {
+            'per_tokenizer': {},
+            'per_language': {},
+            'pairwise_comparisons': {}
+        }
+        
+        for tok_name in self.tokenizer_names:
+            per_lang_avg = {}
+            all_token_counts = []
+            
+            for lang, encodings in all_encodings[tok_name].items():
+                if not encodings:
+                    continue
+                
+                lang_token_counts = [len(tokens) for tokens in encodings]
+                if lang_token_counts:
+                    per_lang_avg[lang] = {
+                        'avg_tokens_per_line': np.mean(lang_token_counts),
+                        'std_tokens_per_line': np.std(lang_token_counts),
+                        'total_lines': len(lang_token_counts)
+                    }
+                    all_token_counts.extend(lang_token_counts)
+            
+            # Global average
+            global_avg = np.mean(all_token_counts) if all_token_counts else 0.0
+            
+            results['per_tokenizer'][tok_name] = {
+                'global_avg': global_avg,
+                'global_std': np.std(all_token_counts) if all_token_counts else 0.0,
+                'total_lines': len(all_token_counts),
+                'per_language': per_lang_avg
+            }
+        
+        # Aggregate per-language results
+        all_languages = set()
+        for tok_results in results['per_tokenizer'].values():
+            all_languages.update(tok_results['per_language'].keys())
+        
+        for lang in all_languages:
+            results['per_language'][lang] = {}
+            for tok_name in self.tokenizer_names:
+                if lang in results['per_tokenizer'][tok_name]['per_language']:
+                    results['per_language'][lang][tok_name] = results['per_tokenizer'][tok_name]['per_language'][lang]['avg_tokens_per_line']
+        
+        # Compute pairwise comparisons
+        global_avgs = {name: results['per_tokenizer'][name]['global_avg'] 
+                      for name in self.tokenizer_names}
+        results['pairwise_comparisons'] = self.compute_pairwise_ratios(
+            global_avgs, 'avg_tokens_per_line'
+        )
+        
+        return results
     
     def validate_metric_sanity(self, results: Dict[str, Any]) -> Dict[str, List[str]]:
         """
@@ -279,7 +407,7 @@ class BasicTokenizationMetrics(BaseMetrics):
         Returns:
             Dict mapping metric names to lists of warning messages
         """
-        warnings = {'compression_ratio': [], 'fertility (whitespace-delimited)': [], 'token_length': []}
+        warnings = {'compression_ratio': [], 'fertility': [], 'token_length': []}
         
         # Compression ratio checks
         if 'compression_ratio' in results:
@@ -293,13 +421,13 @@ class BasicTokenizationMetrics(BaseMetrics):
                     warnings['compression_ratio'].append(f"{tok_name}: High compression ratio ({ratio:.3f}) - check if correct")
         
         # Fertility checks
-        if 'fertility (whitespace-delimited)' in results:
-            for tok_name, tok_results in results['fertility (whitespace-delimited)']['per_tokenizer'].items():
+        if 'fertility' in results:
+            for tok_name, tok_results in results['fertility']['per_tokenizer'].items():
                 fertility = tok_results['global']['mean']
-                if fertility < 0.5:
-                    warnings['fertility (whitespace-delimited)'].append(f"{tok_name}: Very low fertility ({fertility:.2f}) - check calculation")
+                if fertility < 0.1:
+                    warnings['fertility'].append(f"{tok_name}: Very low fertility ({fertility:.2f}) - check calculation")
                 elif fertility > 10.0:
-                    warnings['fertility (whitespace-delimited)'].append(f"{tok_name}: Very high fertility ({fertility:.2f}) - may indicate character-level tokenization")
+                    warnings['fertility'].append(f"{tok_name}: Very high fertility ({fertility:.2f}) - may indicate character-level tokenization")
         
         # Token length checks  
         if 'token_length' in results:
@@ -408,19 +536,19 @@ class BasicTokenizationMetrics(BaseMetrics):
 
     
     def compute(self, language_texts: Dict[str, List[str]], 
-                all_encodings: Optional[Dict[str, Dict[str, List[List[int]]]]] = None,
-                use_bytes: bool = True) -> Dict[str, Any]:
-        """Compute all corrected basic tokenization metrics using bytes as default unit."""
+                all_encodings: Optional[Dict[str, Dict[str, List[List[int]]]]] = None) -> Dict[str, Any]:
+        """Compute all basic tokenization metrics using configured normalization."""
         results = {}
-        
-        results['compression_ratio'] = self.compute_compression_ratio(language_texts, all_encodings, use_bytes=use_bytes)
-        
-        # Comprehensive fertility analysis (both whitespace-delimited and character-based)
+                
+        # Fertility analysis using configured normalization
         fertility_results = self.compute_fertility_analysis(language_texts, all_encodings)
         results.update(fertility_results)
         
-        results['token_length'] = self.compute_token_length_analysis(use_bytes=use_bytes)
+        results['token_length'] = self.compute_token_length_analysis()
         results['vocabulary_overlap'] = self.compute_vocabulary_overlap()
+        results['type_token_ratio'] = self.compute_type_token_ratio(language_texts, all_encodings)
+        results['vocabulary_utilization'] = self.compute_vocabulary_utilization(language_texts, all_encodings)
+        results['avg_tokens_per_line'] = self.compute_average_tokens_per_line(language_texts, all_encodings)
         
         # Perform sanity checks
         validation_warnings = self.validate_metric_sanity(results)

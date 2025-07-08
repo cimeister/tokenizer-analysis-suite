@@ -6,6 +6,7 @@ import numpy as np
 from .metrics import BasicTokenizationMetrics, InformationTheoreticMetrics, MorphologicalMetrics, TokenizerGiniMetrics
 from .loaders import MorphologicalDataLoader, load_multilingual_data
 from .visualization import TokenizerVisualizer
+from .config import NormalizationConfig, DEFAULT_NORMALIZATION_CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +17,8 @@ class TokenizerAnalyzer:
     def __init__(self, tokenizer_configs: Dict[str, Dict], 
                  morphological_config: Optional[Dict[str, str]] = None,
                  renyi_alphas: Optional[List[float]] = None,
-                 plot_save_dir: str = "tokenizer_analysis_plots"):
+                 plot_save_dir: str = "tokenizer_analysis_plots",
+                 normalization_config: Optional[NormalizationConfig] = None):
         """
         Initialize tokenizer analyzer.
         
@@ -25,6 +27,7 @@ class TokenizerAnalyzer:
             morphological_config: Configuration for morphological datasets
             renyi_alphas: List of alpha values for Rényi entropy computation
             plot_save_dir: Directory to save plots
+            normalization_config: Configuration for normalization method
         """
         from .utils import load_tokenizer_from_config
         
@@ -32,6 +35,7 @@ class TokenizerAnalyzer:
         self.tokenizers = {}
         self.tokenizer_names = list(tokenizer_configs.keys())
         self.renyi_alphas = renyi_alphas or [0.5, 1.0, 2.0, 3.0]
+        self.norm_config = normalization_config or DEFAULT_NORMALIZATION_CONFIG
         
         # Load all tokenizers
         for name, config in tokenizer_configs.items():
@@ -39,14 +43,14 @@ class TokenizerAnalyzer:
             self.tokenizers[name] = load_tokenizer_from_config(config)
         
         # Initialize metrics classes
-        self.basic_metrics = BasicTokenizationMetrics(self.tokenizers, self.tokenizer_names)
+        self.basic_metrics = BasicTokenizationMetrics(self.tokenizers, self.tokenizer_names, self.norm_config)
         self.info_metrics = InformationTheoreticMetrics(
-            self.tokenizers, self.tokenizer_names, self.renyi_alphas
+            self.tokenizers, self.tokenizer_names, self.renyi_alphas, self.norm_config
         )
         self.morphological_metrics = MorphologicalMetrics(
             self.tokenizers, self.tokenizer_names, morphological_config
         )
-        self.gini_metrics = TokenizerGiniMetrics(self.tokenizers, self.tokenizer_names)
+        self.gini_metrics = TokenizerGiniMetrics(self.tokenizers, self.tokenizer_names, self.norm_config)
         
         # Initialize visualizer
         self.visualizer = TokenizerVisualizer(self.tokenizer_names, plot_save_dir)
@@ -135,9 +139,9 @@ class TokenizerAnalyzer:
         
         results = {}
         
-        # Run basic tokenization metrics (using bytes as default unit)
-        logger.info("Computing basic tokenization metrics (using bytes as base unit)...")
-        basic_results = self.basic_metrics.compute(language_texts, all_encodings, use_bytes=True)
+        # Run basic tokenization metrics using configured normalization
+        logger.info("Computing basic tokenization metrics...")
+        basic_results = self.basic_metrics.compute(language_texts, all_encodings)
         results.update(basic_results)
         
         if verbose:
@@ -226,47 +230,22 @@ class TokenizerAnalyzer:
                     # Very old structure fallback
                     print(f"  {name}: {stats.get('mean', 0):.2f} ± {stats.get('std', 0):.2f}")
         
-        # Compression ratios
-        if 'compression_ratio' in results:
-            # Check what unit was used
-            unit = 'characters'  # Default
-            if 'metadata' in results['compression_ratio']:
-                unit = results['compression_ratio']['metadata'].get('unit', 'characters')
+        # Fertility metrics using configured normalization
+        if 'fertility' in results:
+            fertility_description = "Fertility"
+            if 'metadata' in results['fertility']:
+                fertility_description = results['fertility']['metadata'].get('description', 'Fertility')
             
-            print(f"\nGlobal Compression Ratios ({unit}/token):")
-            for name, stats in results['compression_ratio']['per_tokenizer'].items():
-                print(f"  {name}: {stats['global']:.4f}")
-        
-        # Fertility metrics (both types)
-        if 'whitespace_fertility' in results:
-            print("\nWhitespace-Delimited Fertility (tokens/word):")
-            for name, stats in results['whitespace_fertility']['per_tokenizer'].items():
+            print(f"\n{fertility_description}:")
+            for name, stats in results['fertility']['per_tokenizer'].items():
                 print(f"  {name}: {stats['global']['mean']:.4f} ± {stats['global']['std']:.4f}")
-        
-        if 'character_fertility' in results:
-            print("\nCharacter-Based Fertility (tokens/character):")
-            for name, stats in results['character_fertility']['per_tokenizer'].items():
-                print(f"  {name}: {stats['global']['mean']:.4f} ± {stats['global']['std']:.4f}")
-    
-    def _print_information_theoretic_results(self, results: Dict[str, Any]) -> None:
-        """Print information-theoretic results."""
-        print(f"\n{'='*60}")
-        print("INFORMATION-THEORETIC METRICS")
-        print(f"{'='*60}")
-        
+
         # Type-Token Ratio
         if 'type_token_ratio' in results:
             print("\nGlobal Type-Token Ratio:")
             for name, stats in results['type_token_ratio']['per_tokenizer'].items():
                 print(f"  {name}: {stats['global_ttr']:.6f}")
-        
-        # Shannon Entropy
-        if 'renyi_efficiency' in results:
-            print("\nShannon Entropy (α=1.0):")
-            for name, stats in results['renyi_efficiency']['per_tokenizer'].items():
-                if 'renyi_1.0' in stats:
-                    print(f"  {name}: {stats['renyi_1.0']['overall']:.3f} bits")
-        
+
         # Vocabulary Utilization
         if 'vocabulary_utilization' in results:
             print("\nVocabulary Utilization:")
@@ -278,6 +257,30 @@ class TokenizerAnalyzer:
             print("\nAverage Tokens per Line:")
             for name, stats in results['avg_tokens_per_line']['per_tokenizer'].items():
                 print(f"  {name}: {stats['global_avg']:.2f}")
+    
+    def _print_information_theoretic_results(self, results: Dict[str, Any]) -> None:
+        """Print information-theoretic results."""
+        print(f"\n{'='*60}")
+        print("INFORMATION-THEORETIC METRICS")
+        print(f"{'='*60}")
+
+        # Compression ratios
+        if 'compression_ratio' in results:
+            # Check what unit was used
+            unit = 'characters'  # Default
+            if 'metadata' in results['compression_ratio']:
+                unit = results['compression_ratio']['metadata'].get('unit', 'characters')
+            
+            print(f"\nGlobal Compression Ratios ({unit}/token):")
+            for name, stats in results['compression_ratio']['per_tokenizer'].items():
+                print(f"  {name}: {stats['global']:.4f}")
+        
+        # Shannon Entropy
+        if 'renyi_efficiency' in results:
+            print("\nShannon Entropy (α=1.0):")
+            for name, stats in results['renyi_efficiency']['per_tokenizer'].items():
+                if 'renyi_1.0' in stats:
+                    print(f"  {name}: {stats['renyi_1.0']['overall']:.3f} bits")
 
         if 'unigram_distribution_metrics' in results:
             print("\nAverage Unigram Entropy:")

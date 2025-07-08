@@ -10,6 +10,7 @@ import numpy as np
 import logging
 
 from .base import BaseMetrics
+from ..config import NormalizationConfig, TextNormalizer, DEFAULT_NORMALIZATION_CONFIG, LINES_CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,12 @@ class TokenizerGiniMetrics(BaseMetrics):
     calculating the Gini coefficient of the distribution of these costs.
     """
     
+    def __init__(self, tokenizers: Dict[str, Any], tokenizer_names: List[str], 
+                 normalization_config: Optional[NormalizationConfig] = None):
+        super().__init__(tokenizers, tokenizer_names)
+        self.norm_config = LINES_CONFIG # normalization_config or DEFAULT_NORMALIZATION_CONFIG
+        self.normalizer = TextNormalizer(self.norm_config)
+    
     def compute_tokenizer_fairness_gini(self, language_texts: Dict[str, List[str]], 
                                        all_encodings: Optional[Dict[str, Dict[str, List[List[int]]]]] = None) -> Dict[str, Any]:
         """
@@ -30,7 +37,7 @@ class TokenizerGiniMetrics(BaseMetrics):
         The TFG is defined as:
         
         1. For each language ℓ, compute token cost on parallel corpus:
-           c_ℓ = (number of tokens) / (number of raw bytes)
+           c_ℓ = (number of tokens) / (number of raw bytes, characters or lines)
            
         2. Compute mean cost: μ = (1/n) * Σ c_ℓ
         
@@ -54,7 +61,10 @@ class TokenizerGiniMetrics(BaseMetrics):
             'metadata': {
                 'description': 'Tokenizer Fairness Gini coefficient measures equitable treatment across languages',
                 'formula': 'TFG = Σᵢ Σⱼ |c_i - c_j| / (2 * n² * μ)',
-                'interpretation': 'Lower values indicate more equitable treatment (0 = perfect equality)'
+                'interpretation': 'Lower values indicate more equitable treatment (0 = perfect equality)',
+                'normalization_method': self.norm_config.method.value,
+                'normalization_description': self.normalizer.get_description(),
+                'cost_unit': self.normalizer.get_short_description()
             }
         }
         
@@ -72,22 +82,22 @@ class TokenizerGiniMetrics(BaseMetrics):
                 if lang not in all_encodings[tok_name] or not language_texts[lang]:
                     continue
                 
-                # Aggregate tokens and bytes for this language
+                # Aggregate tokens and normalization units for this language
                 total_tokens = 0
-                total_bytes = 0
+                total_normalization_units = 0
                 
                 for text, tokens in zip(language_texts[lang], all_encodings[tok_name][lang]):
                     if text.strip():  # Skip empty texts
                         total_tokens += len(tokens)
-                        total_bytes += len(text.encode('utf-8'))
+                        total_normalization_units += self.normalizer.get_normalization_count(text)
                 
-                if total_bytes > 0:
-                    # Token cost: tokens per byte
-                    cost = total_tokens / total_bytes
+                if total_normalization_units > 0:
+                    # Token cost: tokens per normalization unit
+                    cost = total_tokens / total_normalization_units
                     language_costs[lang] = cost
                     total_costs.append(cost)
                     
-                    logger.debug(f"  {lang}: {total_tokens} tokens / {total_bytes} bytes = {cost:.4f}")
+                    logger.debug(f"  {lang}: {total_tokens} tokens / {total_normalization_units} {self.norm_config.method.value} = {cost:.4f}")
             
             if len(language_costs) < 2:
                 logger.warning(f"Insufficient language data for TFG calculation for {tok_name}")

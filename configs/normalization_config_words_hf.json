@@ -1,0 +1,5 @@
+{
+  "method": "words",
+  "pretokenization": "hf_whitespace",
+  "include_empty_splits": false
+}

@@ -198,6 +198,11 @@ Examples:
         help="JSON file with morphological dataset configurations"
     )
     parser.add_argument(
+        "--normalization-config",
+        type=str,
+        help="JSON file with normalization configuration (method, pretokenization, etc.)"
+    )
+    parser.add_argument(
         "--use-sample-data",
         action="store_true",
         help="Use sample/demo data for testing"
@@ -265,6 +270,7 @@ Examples:
         tokenizer_configs = create_sample_configs()
         language_files = create_sample_language_files()
         morphological_config = create_sample_morphological_config() if not args.no_morphological else None
+        normalization_config = None  # Use default for sample data
     else:
         # Load from files
         if not args.tokenizer_config:
@@ -284,6 +290,13 @@ Examples:
         morphological_config = None
         if not args.no_morphological and args.morphological_config:
             morphological_config = load_config_from_file(args.morphological_config)
+        
+        # Load normalization configuration
+        normalization_config = None
+        if args.normalization_config:
+            from tokenizer_analysis.config import NormalizationConfig
+            norm_config_dict = load_config_from_file(args.normalization_config)
+            normalization_config = NormalizationConfig.from_dict(norm_config_dict)
     
     # Validate tokenizer configs
     if len(tokenizer_configs) < 1:
@@ -302,7 +315,8 @@ Examples:
         tokenizer_configs=tokenizer_configs,
         morphological_config=morphological_config,
         renyi_alphas=args.renyi_alphas,
-        plot_save_dir=args.output_dir
+        plot_save_dir=args.output_dir,
+        normalization_config=normalization_config
     )
     if args.test:
         analyzer.basic_metrics.test_token_length_analysis_validity()
