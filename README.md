@@ -75,14 +75,14 @@ python scripts/compare_tokenizers.py \
 ### Multilingual Fairness
 - **Tokenizer Gini**: Measures equitable treatment across languages, defined as:  
 
-* \(L = \{1, \dots, n\}\) be the set of languages, each weighted equally.  
-* For every language \(\ell \in L\), define the **token cost**  
+* $`L = \{1, \dots, n\}`$ be the set of languages, each weighted equally.  
+* For every language $`\ell \in L`$, define the **token cost**  
 ```math
   c_\ell \;=\;
   \frac{\text{number of tokens produced by the tokenizer on language }\ell}
-       {\text{number of raw **bytes** in the same text}}
+       {\text{number of raw bytes (or lines for parallel ds) in the same text}}
 ```
-  (lower $`\(c_\ell\)`$ ⇒ cheaper encoding, higher ⇒ more byte-hungry).
+  (lower $`c_\ell`$ ⇒ cheaper encoding, higher ⇒ more byte-hungry).
 
 * Let the mean cost be  
 ```math
@@ -92,13 +92,13 @@ python scripts/compare_tokenizers.py \
 Then the **Tokenizer Fairness Gini** with equal weights is  
 
 ```math
-\operatorname{TFG}
+\mathrm{TFG}
 =\frac{\displaystyle\sum_{i=1}^{n}\sum_{j=1}^{n} \lvert c_i - c_j \rvert}
         {2\,n^2\,\mu}
 ```
-* **Range:** $`\(0 \le \operatorname{TFG} \le 1\)`$  
-  * $`\(0\)`$: perfect parity (every language has identical byte-normalised token cost).  
-  * $`\(1\)`$: maximal unfairness.
+* **Range:** $`0 \le \mathrm{TFG} \le 1`$  
+  * $`0`$: perfect parity (every language has identical byte-normalised token cost).  
+  * $`1`$: maximal unfairness.
 
 ## Module Structure
 
