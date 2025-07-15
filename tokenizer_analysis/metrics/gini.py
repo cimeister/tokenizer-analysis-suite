@@ -9,8 +9,12 @@ from typing import Dict, List, Any, Optional
 import numpy as np
 import logging
 
-from .base import BaseMetrics
+from .base_unified import BaseMetrics, TokenizedDataProcessor
+from ..core.input_types import TokenizedData
+from ..core.input_providers import InputProvider
 from ..config import NormalizationConfig, TextNormalizer, DEFAULT_NORMALIZATION_CONFIG, LINES_CONFIG
+from ..config.language_metadata import LanguageMetadata
+from ..constants import MIN_LANGUAGES_FOR_GINI
 
 logger = logging.getLogger(__name__)
 
@@ -23,14 +27,15 @@ class TokenizerGiniMetrics(BaseMetrics):
     calculating the Gini coefficient of the distribution of these costs.
     """
     
-    def __init__(self, tokenizers: Dict[str, Any], tokenizer_names: List[str], 
-                 normalization_config: Optional[NormalizationConfig] = None):
-        super().__init__(tokenizers, tokenizer_names)
-        self.norm_config = LINES_CONFIG # normalization_config or DEFAULT_NORMALIZATION_CONFIG
+    def __init__(self, input_provider: InputProvider, 
+                 normalization_config: Optional[NormalizationConfig] = None,
+                 language_metadata: Optional[LanguageMetadata] = None):
+        super().__init__(input_provider)
+        self.norm_config = normalization_config or DEFAULT_NORMALIZATION_CONFIG
         self.normalizer = TextNormalizer(self.norm_config)
+        self.language_metadata = language_metadata
     
-    def compute_tokenizer_fairness_gini(self, language_texts: Dict[str, List[str]], 
-                                       all_encodings: Optional[Dict[str, Dict[str, List[List[int]]]]] = None) -> Dict[str, Any]:
+    def compute_tokenizer_fairness_gini(self, tokenized_data: Dict[str, List[TokenizedData]]) -> Dict[str, Any]:
         """
         Compute Tokenizer Fairness Gini (TFG) coefficient.
         
@@ -45,16 +50,11 @@ class TokenizerGiniMetrics(BaseMetrics):
            TFG = Σᵢ Σⱼ |c_i - c_j| / (2 * n² * μ)
         
         Args:
-            language_texts: Dict mapping language codes to lists of texts
-            all_encodings: Pre-computed encodings (optional)
+            tokenized_data: Dict mapping tokenizer names to TokenizedData lists
             
         Returns:
             Dict containing TFG coefficients and related metrics for each tokenizer
         """
-        if all_encodings is None:
-            all_encodings = self.encode_texts_batch(language_texts)
-        
-        language_texts, all_encodings = self.filter_valid_data(language_texts, all_encodings)
         
         results = {
             'per_tokenizer': {},
@@ -63,33 +63,47 @@ class TokenizerGiniMetrics(BaseMetrics):
                 'formula': 'TFG = Σᵢ Σⱼ |c_i - c_j| / (2 * n² * μ)',
                 'interpretation': 'Lower values indicate more equitable treatment (0 = perfect equality)',
                 'normalization_method': self.norm_config.method.value,
-                'normalization_description': self.normalizer.get_description(),
-                'cost_unit': self.normalizer.get_short_description()
             }
         }
         
-        languages = list(language_texts.keys())
+        # Extract all languages from the tokenized data
+        all_languages = set()
+        for tok_data in tokenized_data.values():
+            for data in tok_data:
+                all_languages.add(data.language)
+        
+        languages = list(all_languages)
         n_languages = len(languages)
         
         for tok_name in self.tokenizer_names:
+            if tok_name not in tokenized_data:
+                continue
+                
             logger.info(f"Computing TFG for tokenizer: {tok_name}")
+            
+            tok_data = tokenized_data[tok_name]
             
             # Step 1: Compute token costs per language
             language_costs = {}
             total_costs = []
             
+            # Group data by language
+            lang_groups = TokenizedDataProcessor.group_by_language(tok_data)
+            
             for lang in languages:
-                if lang not in all_encodings[tok_name] or not language_texts[lang]:
+                if lang not in lang_groups:
                     continue
+                    
+                lang_data = lang_groups[lang]
                 
                 # Aggregate tokens and normalization units for this language
                 total_tokens = 0
                 total_normalization_units = 0
                 
-                for text, tokens in zip(language_texts[lang], all_encodings[tok_name][lang]):
-                    if text.strip():  # Skip empty texts
-                        total_tokens += len(tokens)
-                        total_normalization_units += self.normalizer.get_normalization_count(text)
+                for data in lang_data:
+                    if data.text and data.text.strip():  # Skip empty texts
+                        total_tokens += len(data.tokens)
+                        total_normalization_units += self.normalizer.get_normalization_count(data.text)
                 
                 if total_normalization_units > 0:
                     # Token cost: tokens per normalization unit
@@ -99,7 +113,7 @@ class TokenizerGiniMetrics(BaseMetrics):
                     
                     logger.debug(f"  {lang}: {total_tokens} tokens / {total_normalization_units} {self.norm_config.method.value} = {cost:.4f}")
             
-            if len(language_costs) < 2:
+            if len(language_costs) < MIN_LANGUAGES_FOR_GINI:
                 logger.warning(f"Insufficient language data for TFG calculation for {tok_name}")
                 results['per_tokenizer'][tok_name] = {
                     'gini_coefficient': 0.0,
@@ -158,8 +172,7 @@ class TokenizerGiniMetrics(BaseMetrics):
         
         return results
     
-    def compute_lorenz_curve_data(self, language_texts: Dict[str, List[str]], 
-                                 all_encodings: Optional[Dict[str, Dict[str, List[List[int]]]]] = None) -> Dict[str, Any]:
+    def compute_lorenz_curve_data(self, tokenized_data: Dict[str, List[TokenizedData]]) -> Dict[str, Any]:
         """
         Compute Lorenz curve data for visualizing tokenizer fairness.
         
@@ -167,16 +180,11 @@ class TokenizerGiniMetrics(BaseMetrics):
         useful for visualizing inequality across languages.
         
         Args:
-            language_texts: Dict mapping language codes to lists of texts
-            all_encodings: Pre-computed encodings (optional)
+            tokenized_data: Dict mapping tokenizer names to TokenizedData lists
             
         Returns:
             Dict containing Lorenz curve data for each tokenizer
         """
-        if all_encodings is None:
-            all_encodings = self.encode_texts_batch(language_texts)
-        
-        language_texts, all_encodings = self.filter_valid_data(language_texts, all_encodings)
         
         results = {
             'per_tokenizer': {},
@@ -188,26 +196,31 @@ class TokenizerGiniMetrics(BaseMetrics):
         }
         
         for tok_name in self.tokenizer_names:
+            if tok_name not in tokenized_data:
+                continue
+                
+            tok_data = tokenized_data[tok_name]
+            
             # Get token costs per language
             language_costs = {}
             
-            for lang, texts in language_texts.items():
-                if lang not in all_encodings[tok_name] or not texts:
-                    continue
-                
+            # Group data by language
+            lang_groups = TokenizedDataProcessor.group_by_language(tok_data)
+            
+            for lang, lang_data in lang_groups.items():
                 total_tokens = 0
-                total_bytes = 0
+                total_normalization_units = 0
                 
-                for text, tokens in zip(texts, all_encodings[tok_name][lang]):
-                    if text.strip():
-                        total_tokens += len(tokens)
-                        total_bytes += len(text.encode('utf-8'))
+                for data in lang_data:
+                    if data.text and data.text.strip():
+                        total_tokens += len(data.tokens)
+                        total_normalization_units += self.normalizer.get_normalization_count(data.text)
                 
-                if total_bytes > 0:
-                    cost = total_tokens / total_bytes
+                if total_normalization_units > 0:
+                    cost = total_tokens / total_normalization_units
                     language_costs[lang] = cost
             
-            if len(language_costs) < 2:
+            if len(language_costs) < MIN_LANGUAGES_FOR_GINI:
                 results['per_tokenizer'][tok_name] = {
                     'warning': 'Insufficient data for Lorenz curve'
                 }
@@ -248,26 +261,39 @@ class TokenizerGiniMetrics(BaseMetrics):
         
         return results
     
-    def compute(self, language_texts: Dict[str, List[str]], 
-                all_encodings: Optional[Dict[str, Dict[str, List[List[int]]]]] = None) -> Dict[str, Any]:
+    def compute(self, tokenized_data: Optional[Dict[str, List[TokenizedData]]] = None) -> Dict[str, Any]:
         """
         Compute all Gini-related metrics.
         
         Args:
-            language_texts: Dict mapping language codes to lists of texts
-            all_encodings: Pre-computed encodings (optional)
+            tokenized_data: Optional dict mapping tokenizer names to TokenizedData lists.
+                          If None, will use input_provider's data.
             
         Returns:
             Dict containing all Gini metrics and Lorenz curve data
         """
+        if tokenized_data is None:
+            tokenized_data = self.get_tokenized_data()
+            
         results = {}
         
         # Compute TFG
-        tfg_results = self.compute_tokenizer_fairness_gini(language_texts, all_encodings)
+        tfg_results = self.compute_tokenizer_fairness_gini(tokenized_data)
         results['tokenizer_fairness_gini'] = tfg_results
         
         # Compute Lorenz curve data
-        lorenz_results = self.compute_lorenz_curve_data(language_texts, all_encodings)
+        lorenz_results = self.compute_lorenz_curve_data(tokenized_data)
         results['lorenz_curve_data'] = lorenz_results
         
         return results
+    
+    # Convenience methods for common groupings
+    def compute_by_script_family(self, language_texts: Dict[str, List[str]], 
+                                all_encodings: Optional[Dict[str, Dict[str, List[List[int]]]]] = None) -> Dict[str, Any]:
+        """Compute TFG metrics grouped by script family."""
+        return self.compute_by_groups(language_texts, all_encodings, 'script_families', self.compute)
+    
+    def compute_by_resource_level(self, language_texts: Dict[str, List[str]], 
+                                 all_encodings: Optional[Dict[str, Dict[str, List[List[int]]]]] = None) -> Dict[str, Any]:
+        """Compute TFG metrics grouped by resource level."""
+        return self.compute_by_groups(language_texts, all_encodings, 'resource_levels', self.compute)

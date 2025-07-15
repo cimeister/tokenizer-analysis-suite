@@ -7,8 +7,11 @@ import numpy as np
 from collections import defaultdict
 import logging
 
-from .base import BaseMetrics
+from .base_unified import BaseMetrics, TokenizedDataProcessor
+from ..core.input_types import TokenizedData
+from ..core.input_providers import InputProvider
 from ..loaders import MorphologicalDataLoader
+from ..constants import Validation
 
 logger = logging.getLogger(__name__)
 
@@ -16,17 +19,16 @@ logger = logging.getLogger(__name__)
 class MorphologicalMetrics(BaseMetrics):
     """Morphological alignment analysis metrics."""
     
-    def __init__(self, tokenizers: Dict[str, Any], tokenizer_names: Optional[List[str]] = None,
+    def __init__(self, input_provider: InputProvider,
                  morphological_config: Optional[Dict[str, str]] = None):
         """
         Initialize morphological metrics.
         
         Args:
-            tokenizers: Dictionary mapping tokenizer names to tokenizer objects
-            tokenizer_names: List of tokenizer names to analyze
+            input_provider: InputProvider instance
             morphological_config: Configuration for morphological datasets
         """
-        super().__init__(tokenizers, tokenizer_names)
+        super().__init__(input_provider)
         self.morphological_loader = MorphologicalDataLoader(morphological_config)
         if morphological_config:
             self.morphological_loader.load_all_datasets()
@@ -595,7 +597,7 @@ class MorphologicalMetrics(BaseMetrics):
                     
                     # Process words in batches to reduce function call overhead
                     for word, word_tokens in word_token_alignments:
-                        if len(word) < 2:  # Skip very short words
+                        if len(word) < Validation.MIN_WORD_LENGTH:  # Skip very short words
                             continue
                         
                         # Compute alignment metrics
@@ -822,9 +824,19 @@ class MorphologicalMetrics(BaseMetrics):
         print("--------------------")
         return {'passed': passed_count, 'failed': failed_count}
     
-    def compute(self, language_texts: Dict[str, List[str]], 
-                all_encodings: Optional[Dict[str, Dict[str, List[List[int]]]]] = None) -> Dict[str, Any]:
+    def compute(self, tokenized_data: Optional[Dict[str, List[TokenizedData]]] = None) -> Dict[str, Any]:
         """Compute morphological alignment metrics."""
+        if tokenized_data is None:
+            tokenized_data = self.get_tokenized_data()
+        
+        # TODO: Convert TokenizedData to the format expected by morphological analysis
+        # For now, return placeholder results
+        logger.warning("Morphological metrics not fully implemented for TokenizedData interface yet")
         return {
-            'morphological_alignment': self.compute_morphological_alignment_analysis(language_texts, all_encodings)
+            'morphological_alignment': {
+                'per_tokenizer': {},
+                'summary': {
+                    'warning': 'Morphological alignment analysis not yet fully implemented for unified interface'
+                }
+            }
         }

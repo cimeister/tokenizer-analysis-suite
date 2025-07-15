@@ -174,32 +174,6 @@ class TextNormalizer:
         else:
             raise ValueError(f"Unknown pretokenization method: {self.config.pretokenization}")
     
-    def get_description(self) -> str:
-        """Get human-readable description of the normalization method."""
-        if self.config.method == NormalizationMethod.LINES:
-            return "tokens per line"
-        
-        elif self.config.method == NormalizationMethod.BYTES:
-            if self.config.encoding == "hf":
-                return "tokens per byte (HF ByteLevel)"
-            else:
-                return f"tokens per byte ({self.config.encoding})"
-        
-        elif self.config.method == NormalizationMethod.CHARACTERS:
-            return "tokens per character"
-        
-        elif self.config.method == NormalizationMethod.WORDS:
-            pretok_desc = {
-                PretokenizationMethod.PYTHON_SPLIT: "Python split()",
-                PretokenizationMethod.HUGGINGFACE_WHITESPACE: f"HF whitespace",
-                PretokenizationMethod.REGEX_WHITESPACE: "regex whitespace",
-                PretokenizationMethod.CUSTOM_REGEX: f"custom regex ({self.config.custom_regex})"
-            }
-            return f"tokens per word ({pretok_desc[self.config.pretokenization]})"
-        
-        else:
-            return f"tokens per {self.config.method.value}"
-    
     def get_short_description(self) -> str:
         """Get short description for plot labels."""
         if self.config.method == NormalizationMethod.LINES:

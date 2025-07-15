@@ -7,44 +7,83 @@ import os
 import json
 import glob
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import pandas as pd
+from ..config.language_metadata import LanguageMetadata
+from ..constants import (
+    DEFAULT_MAX_TEXTS_PER_LANGUAGE,
+    TEXT_COLUMN_NAMES,
+    DEFAULT_ENCODING,
+    FileFormats
+)
+from ..utils.text_utils import (
+    extract_texts_with_fallback_strategies,
+    normalize_text_for_processing
+)
 
 logger = logging.getLogger(__name__)
 
 
-def load_multilingual_data(language_config_path: str, max_texts_per_language: int = 1000) -> Dict[str, List[str]]:
+def load_multilingual_data(language_metadata: LanguageMetadata, 
+                          max_texts_per_language: int = DEFAULT_MAX_TEXTS_PER_LANGUAGE,
+                          filter_by_group: Optional[Tuple[str, str]] = None) -> Dict[str, List[str]]:
     """
-    Load multilingual data from directories or files (JSON, Parquet, or text files).
+    Load multilingual data using LanguageMetadata configuration.
     
     Args:
-        language_config_path: Path to JSON config file with language->directory/file mappings
+        language_metadata: LanguageMetadata instance with language configurations
         max_texts_per_language: Maximum number of texts to load per language
+        filter_by_group: Optional tuple of (group_type, group_name) to filter languages
         
     Returns:
         Dictionary mapping language codes to lists of text samples
     """
-    with open(language_config_path, 'r') as f:
-        language_config = json.load(f)
+    # Get language paths
+    if filter_by_group:
+        group_type, group_name = filter_by_group
+        if group_type == 'script_families':
+            target_languages = language_metadata.get_languages_by_script_family(group_name)
+        elif group_type == 'resource_levels':
+            target_languages = language_metadata.get_languages_by_resource_level(group_name)
+        else:
+            # Support any group type defined in analysis_groups
+            all_groups = language_metadata.get_all_analysis_groups()
+            groups = all_groups.get(group_type, {})
+            target_languages = groups.get(group_name, [])
+        
+        # Filter to only languages that exist in the metadata and have data paths
+        language_paths = {}
+        for lang_code in target_languages:
+            data_path = language_metadata.get_data_path(lang_code)
+            if data_path:
+                language_paths[lang_code] = data_path
+    else:
+        # Load all languages
+        language_paths = language_metadata.get_language_paths()
     
     language_texts = {}
     
-    for lang_code, data_path in language_config['languages'].items():
-        logger.info(f"Loading data for {lang_code} from {data_path}")
+    for lang_code, data_path in language_paths.items():
+        lang_name = language_metadata.get_language_name(lang_code)
+        logger.info(f"Loading data for {lang_name} ({lang_code}) from {data_path}")
         
         try:
             texts = load_language_data(data_path, max_texts_per_language)
             if texts:
                 language_texts[lang_code] = texts
-                logger.info(f"✅ Loaded {len(texts)} texts for {lang_code}")
+                logger.info(f"✅ Loaded {len(texts)} texts for {lang_name} ({lang_code})")
             else:
-                logger.warning(f"❌ No texts found for {lang_code}")
+                logger.warning(f"❌ No texts found for {lang_name} ({lang_code})")
         
         except Exception as e:
-            logger.error(f"❌ Failed to load data for {lang_code}: {e}")
+            logger.error(f"❌ Failed to load data for {lang_name} ({lang_code}): {e}")
             continue
     
-    logger.info(f"Successfully loaded data for {len(language_texts)} languages")
+    if filter_by_group:
+        logger.info(f"Successfully loaded data for {len(language_texts)} languages in {group_type}={group_name}")
+    else:
+        logger.info(f"Successfully loaded data for {len(language_texts)} languages")
+    
     return language_texts
 
 
@@ -196,7 +235,7 @@ def load_from_parquet(parquet_file: str, max_texts: int) -> List[str]:
         
         # Look for text column (try common names)
         text_column = None
-        for col_name in ['text', 'content', 'sentence', 'document', 'passage']:
+        for col_name in TEXT_COLUMN_NAMES:
             if col_name in df.columns:
                 text_column = col_name
                 break
@@ -240,11 +279,11 @@ def load_single_file(file_path: str, max_texts: int) -> List[str]:
     """
     file_ext = os.path.splitext(file_path)[1].lower()
     
-    if file_ext == '.json':
+    if file_ext in FileFormats.JSON_EXTENSIONS:
         return load_from_json(file_path, max_texts)
-    elif file_ext == '.parquet':
+    elif file_ext in FileFormats.PARQUET_EXTENSIONS:
         return load_from_parquet(file_path, max_texts)
-    elif file_ext in ['.txt', '.text']:
+    elif file_ext in FileFormats.TEXT_EXTENSIONS:
         return load_from_text(file_path, max_texts)
     else:
         # Try to detect format by attempting to load
@@ -289,78 +328,20 @@ def load_from_text(text_file: str, max_texts: int) -> List[str]:
     texts = []
     
     try:
-        with open(text_file, 'r', encoding='utf-8', errors='replace') as f:
+        with open(text_file, 'r', encoding=DEFAULT_ENCODING, errors=FileFormats.ERROR_HANDLING) as f:
             content = f.read().strip()
             
             if not content:
                 return []
             
-            # Try different splitting strategies
+            # Normalize content for consistent processing
+            content = normalize_text_for_processing(content)
             
-            # Strategy 1: Split by double newlines (paragraph-like)
-            if '\n\n' in content:
-                paragraphs = content.split('\n\n')
-                for para in paragraphs:
-                    if len(texts) >= max_texts:
-                        break
-                    para = para.strip()
-                    if para and len(para) > 10:  # Skip very short paragraphs
-                        texts.append(para)
-            
-            # Strategy 2: Split by single newlines if we don't have enough texts
-            if len(texts) < max_texts:
-                lines = content.split('\n')
-                for line in lines:
-                    if len(texts) >= max_texts:
-                        break
-                    line = line.strip()
-                    if line and len(line) > 10:  # Skip very short lines
-                        texts.append(line)
-            
-            # Strategy 3: Split by sentences if we still don't have enough
-            if len(texts) < max_texts and len(texts) < 10:
-                # Use simple sentence splitting
-                import re
-                sentences = re.split(r'[.!?]+\s+', content)
-                for sentence in sentences:
-                    if len(texts) >= max_texts:
-                        break
-                    sentence = sentence.strip()
-                    if sentence and len(sentence) > 20:  # Skip very short sentences
-                        texts.append(sentence)
-            
-            # Strategy 4: If still no luck, chunk the text
-            if len(texts) == 0 and len(content) > 50:
-                chunk_size = min(500, len(content) // max(1, max_texts))
-                for i in range(0, len(content), chunk_size):
-                    if len(texts) >= max_texts:
-                        break
-                    chunk = content[i:i + chunk_size].strip()
-                    if chunk:
-                        texts.append(chunk)
+            # Use shared text extraction logic
+            texts = extract_texts_with_fallback_strategies(content, max_texts)
     
     except Exception as e:
         logger.error(f"Error reading text file {text_file}: {e}")
         return []
     
     return texts
-
-
-def sample_texts(texts: List[str], max_samples: int, random_seed: int = 42) -> List[str]:
-    """
-    Sample texts randomly if there are more than max_samples.
-    
-    Args:
-        texts: List of all texts
-        max_samples: Maximum number of texts to return
-        random_seed: Random seed for reproducibility
-        
-    Returns:
-        Sampled list of texts
-    """
-    if len(texts) <= max_samples:
-        return texts
-    
-    import random
-    random.seed(random_seed)
-    return random.sample(texts, max_samples)

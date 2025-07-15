@@ -7,8 +7,12 @@ import numpy as np
 from collections import Counter
 import logging
 
-from .base import BaseMetrics
+from .base_unified import BaseMetrics, TokenizedDataProcessor
+from ..core.input_types import TokenizedData
+from ..core.input_providers import InputProvider
 from ..config import NormalizationConfig, TextNormalizer, DEFAULT_NORMALIZATION_CONFIG, LINES_CONFIG
+from ..config.language_metadata import LanguageMetadata
+from ..constants import DEFAULT_RENYI_ALPHAS, SHANNON_ENTROPY_ALPHA
 
 logger = logging.getLogger(__name__)
 
@@ -16,20 +20,24 @@ logger = logging.getLogger(__name__)
 class InformationTheoreticMetrics(BaseMetrics):
     """Information-theoretic analysis metrics."""
     
-    def __init__(self, tokenizers: Dict[str, Any], tokenizer_names: Optional[List[str]] = None,
-                 renyi_alphas: Optional[List[float]] = None, normalization_config: Optional[NormalizationConfig] = None):
+    def __init__(self, input_provider: InputProvider,
+                 renyi_alphas: Optional[List[float]] = None, 
+                 normalization_config: Optional[NormalizationConfig] = None,
+                 language_metadata: Optional[LanguageMetadata] = None):
         """
         Initialize information-theoretic metrics.
-        
+
         Args:
-            tokenizers: Dictionary mapping tokenizer names to tokenizer objects
-            tokenizer_names: List of tokenizer names to analyze
+            input_provider: InputProvider instance
             renyi_alphas: List of alpha values for Rényi entropy (default: [1.0, 2.0, 3.0])
+            normalization_config: Configuration for normalization method
+            language_metadata: Optional language metadata for grouping
         """
-        super().__init__(tokenizers, tokenizer_names)
-        self.renyi_alphas = renyi_alphas or [1.0, 2.0, 3.0]
-        self.norm_config = LINES_CONFIG #normalization_config or DEFAULT_NORMALIZATION_CONFIG
+        super().__init__(input_provider)
+        self.renyi_alphas = renyi_alphas or DEFAULT_RENYI_ALPHAS
+        self.norm_config = normalization_config or DEFAULT_NORMALIZATION_CONFIG
         self.normalizer = TextNormalizer(self.norm_config)
+        self.language_metadata = language_metadata
     
     def compute_renyi_entropy(self, token_counts: Counter, alpha: float) -> float:
         """
@@ -48,7 +56,7 @@ class InformationTheoreticMetrics(BaseMetrics):
         total_count = sum(token_counts.values())
         probabilities = [count / total_count for count in token_counts.values()]
         
-        if alpha == 1.0:
+        if alpha == SHANNON_ENTROPY_ALPHA:
             # Shannon entropy (limit case)
             return -sum(p * np.log2(p) for p in probabilities if p > 0)
         else:
@@ -58,15 +66,16 @@ class InformationTheoreticMetrics(BaseMetrics):
                 return 0.0
             return (1 / (1 - alpha)) * np.log2(sum_p_alpha)
     
-    def compute_renyi_efficiency_analysis(self, language_texts: Dict[str, List[str]], 
-                                        all_encodings: Optional[Dict[str, Dict[str, List[List[int]]]]] = None) -> Dict[str, Any]:
+    def compute_renyi_efficiency_analysis(self, tokenized_data: Dict[str, List[TokenizedData]]) -> Dict[str, Any]:
         """
         Compute Rényi efficiency metrics for all tokenizers.
-        """
-        if all_encodings is None:
-            all_encodings = self.encode_texts_batch(language_texts)
         
-        language_texts, all_encodings = self.filter_valid_data(language_texts, all_encodings)
+        Args:
+            tokenized_data: Dict mapping tokenizer names to TokenizedData lists
+            
+        Returns:
+            Dict with Rényi efficiency results
+        """
         
         results = {
             'per_tokenizer': {},
@@ -75,19 +84,24 @@ class InformationTheoreticMetrics(BaseMetrics):
         }
         
         for tok_name in self.tokenizer_names:
+            if tok_name not in tokenized_data:
+                continue
+                
             tok_results = {}
+            tok_data = tokenized_data[tok_name]
             
             # Collect all tokens for global entropy
             global_token_counts = Counter()
             per_lang_token_counts = {}
             
-            for lang, encodings in all_encodings[tok_name].items():
-                if not encodings:
-                    continue
-                
+            # Group data by language
+            lang_groups = TokenizedDataProcessor.group_by_language(tok_data)
+            
+            for lang, lang_data in lang_groups.items():
                 lang_token_counts = Counter()
-                for token_sequence in encodings:
-                    for token in token_sequence:
+                
+                for data in lang_data:
+                    for token in data.tokens:
                         global_token_counts[token] += 1
                         lang_token_counts[token] += 1
                 
@@ -131,25 +145,22 @@ class InformationTheoreticMetrics(BaseMetrics):
         if 1.0 in self.renyi_alphas:
             shannon_entropies = {name: results['per_tokenizer'][name]['renyi_1.0']['overall'] 
                                for name in self.tokenizer_names}
-            results['pairwise_comparisons']['shannon'] = self.compute_pairwise_ratios(
+            results['pairwise_comparisons']['shannon'] = self.compute_pairwise_comparisons(
                 shannon_entropies, 'shannon_entropy'
             )
         
         return results
     
-    def compute_compression_ratio(self, language_texts: Dict[str, List[str]], 
-                                          all_encodings: Optional[Dict[str, Dict[str, List[List[int]]]]] = None) -> Dict[str, Any]:
+    def compute_compression_ratio(self, tokenized_data: Dict[str, List[TokenizedData]]) -> Dict[str, Any]:
         """
         Compute compression ratios: average of individual (normalization_unit / tokens) ratios.
         
         Args:
-            language_texts: Text data by language
-            all_encodings: Pre-computed encodings
+            tokenized_data: Dict mapping tokenizer names to TokenizedData lists
+            
+        Returns:
+            Dict with compression ratio results
         """
-        if all_encodings is None:
-            all_encodings = self.encode_texts_batch(language_texts)
-        
-        language_texts, all_encodings = self.filter_valid_data(language_texts, all_encodings)
         
         results = {
             'per_tokenizer': {},
@@ -158,20 +169,25 @@ class InformationTheoreticMetrics(BaseMetrics):
         }
         
         for tok_name in self.tokenizer_names:
+            if tok_name not in tokenized_data:
+                continue
+                
+            tok_data = tokenized_data[tok_name]
             per_lang_ratios = {}
             all_individual_ratios = []  # Store individual text ratios
             
-            for lang, texts in language_texts.items():
-                if not texts or lang not in all_encodings[tok_name]:
-                    continue
-                
+            # Group data by language
+            lang_groups = TokenizedDataProcessor.group_by_language(tok_data)
+            
+            for lang, lang_data in lang_groups.items():
                 lang_ratios = []
-                for text, tokens in zip(texts, all_encodings[tok_name][lang]):
-                    if text.strip():  # Skip empty texts
+                
+                for data in lang_data:
+                    if data.text and data.text.strip():  # Skip empty texts
                         # Use configurable normalization
-                        normalization_count = self.normalizer.get_normalization_count(text)
-                        if normalization_count > 0:
-                            ratio = normalization_count / len(tokens)
+                        normalization_count = self.normalizer.get_normalization_count(data.text)
+                        if normalization_count > 0 and data.tokens:
+                            ratio = normalization_count / len(data.tokens)
                             lang_ratios.append(ratio)
                             all_individual_ratios.append(ratio)
                 
@@ -190,15 +206,13 @@ class InformationTheoreticMetrics(BaseMetrics):
         
         # Add metadata
         results['metadata'] = {
-            'normalization_method': self.norm_config.method.value,
-            'description': self.normalizer.get_description(),
-            'unit': 'lines'
+            'normalization_method': self.norm_config.method.value
         }
         
         # Compute pairwise comparisons
         global_ratios = {name: results['per_tokenizer'][name]['global'] 
                         for name in self.tokenizer_names}
-        results['pairwise_comparisons'] = self.compute_pairwise_ratios(
+        results['pairwise_comparisons'] = self.compute_pairwise_comparisons(
             global_ratios, 'compression_ratio'
         )
         
@@ -206,8 +220,7 @@ class InformationTheoreticMetrics(BaseMetrics):
         
     
 
-    def compute_unigram_distribution_metrics(self, language_texts: Dict[str, List[str]], 
-                                             all_encodings: Optional[Dict[str, Dict[str, List[List[int]]]]] = None) -> Dict[str, Any]:
+    def compute_unigram_distribution_metrics(self, tokenized_data: Dict[str, List[TokenizedData]]) -> Dict[str, Any]:
         """
         Computes metrics based on the unigram distribution of tokens for each language.
     
@@ -218,17 +231,12 @@ class InformationTheoreticMetrics(BaseMetrics):
             in the corpus for each language.
     
         Args:
-            language_texts: A dictionary mapping language codes to lists of text samples.
-            all_encodings: Pre-computed tokenizations. If None, they will be computed.
+            tokenized_data: Dict mapping tokenizer names to TokenizedData lists
     
         Returns:
             A dictionary containing the computed metrics, structured by tokenizer and language,
             including global metrics and pairwise comparisons.
         """
-        if all_encodings is None:
-            all_encodings = self.encode_texts_batch(language_texts)
-        
-        language_texts, all_encodings = self.filter_valid_data(language_texts, all_encodings)
         
         results = {
             'per_tokenizer': {},
@@ -240,16 +248,20 @@ class InformationTheoreticMetrics(BaseMetrics):
         }
     
         for tok_name in self.tokenizer_names:
+            if tok_name not in tokenized_data:
+                continue
+                
+            tok_data = tokenized_data[tok_name]
             per_lang_metrics = {}
             global_token_counts = Counter()
             all_token_sequences = []
     
-            for lang, encodings in all_encodings[tok_name].items():
-                if not encodings:
-                    continue
+            # Group data by language
+            lang_groups = TokenizedDataProcessor.group_by_language(tok_data)
     
-                # Flatten all encodings for the language
-                lang_tokens = [token for seq in encodings for token in seq]
+            for lang, lang_data in lang_groups.items():
+                # Flatten all tokens for the language
+                lang_tokens = TokenizedDataProcessor.flatten_all_tokens(lang_data)
                 if not lang_tokens:
                     continue
     
@@ -272,7 +284,7 @@ class InformationTheoreticMetrics(BaseMetrics):
     
                 # Aggregate for global metrics
                 global_token_counts.update(lang_tokens)
-                all_token_sequences.extend(encodings)
+                all_token_sequences.extend([data.tokens for data in lang_data])
     
             # 2. Compute global metrics for the tokenizer
             global_unigram_entropy = self.compute_renyi_entropy(global_token_counts, alpha=1.0)
@@ -309,26 +321,38 @@ class InformationTheoreticMetrics(BaseMetrics):
         global_entropies = {name: res['global_unigram_entropy'] for name, res in results['per_tokenizer'].items()}
         global_ranks = {name: res['global_avg_token_rank'] for name, res in results['per_tokenizer'].items()}
         
-        results['pairwise_comparisons']['global_unigram_entropy'] = self.compute_pairwise_ratios(
+        results['pairwise_comparisons']['global_unigram_entropy'] = self.compute_pairwise_comparisons(
             global_entropies, 'global_unigram_entropy'
         )
-        results['pairwise_comparisons']['global_avg_token_rank'] = self.compute_pairwise_ratios(
+        results['pairwise_comparisons']['global_avg_token_rank'] = self.compute_pairwise_comparisons(
             global_ranks, 'global_avg_token_rank'
         )
     
         return results
 
 
-    def compute(self, language_texts: Dict[str, List[str]], 
-                all_encodings: Optional[Dict[str, Dict[str, List[List[int]]]]] = None) -> Dict[str, Any]:
+    def compute(self, tokenized_data: Optional[Dict[str, List[TokenizedData]]] = None) -> Dict[str, Any]:
         """Compute all information-theoretic metrics."""
+        if tokenized_data is None:
+            tokenized_data = self.get_tokenized_data()
+            
         results = {}
         
-        if all_encodings is None:
-            all_encodings = self.encode_texts_batch(language_texts)
-
-        results['compression_ratio'] = self.compute_compression_ratio(language_texts, all_encodings)
-        results['renyi_efficiency'] = self.compute_renyi_efficiency_analysis(language_texts, all_encodings)
-        results['unigram_distribution_metrics'] = self.compute_unigram_distribution_metrics(language_texts, all_encodings)
+        results['compression_ratio'] = self.compute_compression_ratio(tokenized_data)
+        results['renyi_efficiency'] = self.compute_renyi_efficiency_analysis(tokenized_data)
+        results['unigram_distribution_metrics'] = self.compute_unigram_distribution_metrics(tokenized_data)
 
         return results
+    
+    # Convenience methods for common groupings
+    def compute_by_script_family(self, tokenized_data: Optional[Dict[str, List[TokenizedData]]] = None) -> Dict[str, Any]:
+        """Compute information-theoretic metrics grouped by script family."""
+        # This functionality should be handled by the analyzer's grouped analysis
+        # For now, just return regular compute results
+        return self.compute(tokenized_data)
+    
+    def compute_by_resource_level(self, tokenized_data: Optional[Dict[str, List[TokenizedData]]] = None) -> Dict[str, Any]:
+        """Compute information-theoretic metrics grouped by resource level."""
+        # This functionality should be handled by the analyzer's grouped analysis
+        # For now, just return regular compute results
+        return self.compute(tokenized_data)

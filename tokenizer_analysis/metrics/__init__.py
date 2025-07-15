@@ -5,9 +5,8 @@ Contains base classes and implementations for various tokenizer evaluation metri
 including basic statistics, information-theoretic measures, and morphological analysis.
 """
 
-from .base import BaseMetrics
-from .basic import BasicTokenizationMetrics
-
+from .base_unified import BaseMetrics
+from .basic_unified import BasicTokenizationMetrics
 from .information_theoretic import InformationTheoreticMetrics  
 from .morphological import MorphologicalMetrics
 from .gini import TokenizerGiniMetrics
