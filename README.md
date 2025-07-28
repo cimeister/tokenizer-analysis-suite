@@ -1,6 +1,6 @@
-# Tokenizer Analysis Framework
+# Tok##Suite
 
-A comprehensive framework for analyzing and comparing tokenizers across multiple languages and metrics.
+A comprehensive framework for analyzing and comparing tokenizers across multiple languages and types of metrics.
 
 ## Features
 
@@ -121,4 +121,14 @@ tokenizer_analysis/
 └── visualization/           # Plotting and visualization
     ├── __init__.py
     └── plotter.py          # TokenizerVisualizer class
+```
+If you use this tokenizer analysis framework in your research, please cite it as follows:
+
+```bibtex
+@software{meister_tokenizer_analysis_2025,
+  title = {Tok##Suite: A Comprehensive Tokenizer Analysis Suite},
+  author = {Meister, Clara and others},
+  year = {2025},
+  url = {https://github.com/cimeister/tokenizer-analysis}
+}
 ```
