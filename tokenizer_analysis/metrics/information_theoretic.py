@@ -1,5 +1,5 @@
 """
-Information-theoretic metrics including entropy, type-token ratio, and vocabulary utilization.
+Information-theoretic metrics including entropy, compression, and vocabulary utilization.
 """
 
 from typing import Dict, List, Any, Optional
@@ -7,7 +7,7 @@ import numpy as np
 from collections import Counter
 import logging
 
-from .base_unified import BaseMetrics, TokenizedDataProcessor
+from .base import BaseMetrics, TokenizedDataProcessor
 from ..core.input_types import TokenizedData
 from ..core.input_providers import InputProvider
 from ..config import NormalizationConfig, TextNormalizer, DEFAULT_NORMALIZATION_CONFIG, LINES_CONFIG
@@ -35,7 +35,7 @@ class InformationTheoreticMetrics(BaseMetrics):
         """
         super().__init__(input_provider)
         self.renyi_alphas = renyi_alphas or DEFAULT_RENYI_ALPHAS
-        self.norm_config = normalization_config or DEFAULT_NORMALIZATION_CONFIG
+        self.norm_config = LINES_CONFIG#normalization_config or DEFAULT_NORMALIZATION_CONFIG
         self.normalizer = TextNormalizer(self.norm_config)
         self.language_metadata = language_metadata
     
@@ -195,11 +195,15 @@ class InformationTheoreticMetrics(BaseMetrics):
                     # Average of individual ratios for this language
                     per_lang_ratios[lang] = np.mean(lang_ratios)
             
-            # Global compression: average of all individual ratios
-            global_compression = np.mean(all_individual_ratios) if all_individual_ratios else 1.0
+            # Global compression: compute full statistics from individual ratios
+            if all_individual_ratios:
+                global_stats = self.compute_basic_stats(all_individual_ratios)
+            else:
+                global_stats = self.empty_stats()
+                global_stats['mean'] = 1.0  # Default compression ratio
             
             results['per_tokenizer'][tok_name] = {
-                'global': global_compression,
+                'global': global_stats,
                 'per_language': per_lang_ratios,
                 'num_texts_analyzed': len(all_individual_ratios)
             }
@@ -210,8 +214,8 @@ class InformationTheoreticMetrics(BaseMetrics):
         }
         
         # Compute pairwise comparisons
-        global_ratios = {name: results['per_tokenizer'][name]['global'] 
-                        for name in self.tokenizer_names}
+        global_ratios = {name: results['per_tokenizer'][name]['global']['mean'] 
+                        for name in self.tokenizer_names if name in results['per_tokenizer']}
         results['pairwise_comparisons'] = self.compute_pairwise_comparisons(
             global_ratios, 'compression_ratio'
         )

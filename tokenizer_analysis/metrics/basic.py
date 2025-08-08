@@ -7,14 +7,13 @@ import numpy as np
 from collections import Counter
 import logging
 
-from .base_unified import BaseMetrics, TokenizedDataProcessor
+from .base import BaseMetrics, TokenizedDataProcessor
 from ..core.input_types import TokenizedData
 from ..core.input_providers import InputProvider
 from ..config import NormalizationConfig, DEFAULT_NORMALIZATION_CONFIG
 from ..config.language_metadata import LanguageMetadata
 from ..constants import (
-    FALLBACK_WORDS_PER_TOKEN,
-    MIN_TOKENIZERS_FOR_COMPARISON
+    FALLBACK_WORDS_PER_TOKEN
 )
 
 logger = logging.getLogger(__name__)
@@ -123,7 +122,7 @@ class BasicTokenizationMetrics(BaseMetrics):
             global_values[tok_name] = global_fertility.get('mean', 0.0)
         
         # Compute pairwise comparisons
-        if len(global_values) >= MIN_TOKENIZERS_FOR_COMPARISON:
+        if len(global_values) >= 2:
             results['fertility']['pairwise_comparisons'] = self.compute_pairwise_comparisons(
                 global_values, 'fertility'
             )
@@ -400,6 +399,7 @@ class BasicTokenizationMetrics(BaseMetrics):
                 results['avg_tokens_per_line']['per_tokenizer'][tok_name] = {
                     'global_avg': tpl_stats['mean'],
                     'global_std': tpl_stats['std'],
+                    'global_std_err': tpl_stats['std_err'],
                     'total_lines': total_lines,
                     'stats': tpl_stats
                 }
@@ -407,6 +407,7 @@ class BasicTokenizationMetrics(BaseMetrics):
                 results['avg_tokens_per_line']['per_tokenizer'][tok_name] = {
                     'global_avg': 0.0,
                     'global_std': 0.0,
+                    'global_std_err': 0.0,
                     'total_lines': 0,
                     'stats': self.empty_stats()
                 }

@@ -125,6 +125,82 @@ class InputLoader:
             pickle.dump(tokenized_data, f)
         
         logger.info(f"Saved {len(tokenized_data)} tokenized data entries to {file_path}")
+    
+    @staticmethod
+    def load_from_file(file_path: Union[str, Path]) -> Dict[str, List[TokenizedData]]:
+        """
+        Load tokenized data from file (auto-detects format).
+        
+        Args:
+            file_path: Path to tokenized data file (.json or .pkl)
+            
+        Returns:
+            Dictionary mapping tokenizer names to tokenized data lists
+        """
+        file_path = Path(file_path)
+        
+        if file_path.suffix == '.json':
+            # JSON format - expect dict with tokenizer names as keys
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data_dict = json.load(f)
+            
+            result = {}
+            for tok_name, data_list in data_dict.items():
+                tokenized_data = []
+                for item in data_list:
+                    data = TokenizedData.from_dict(item)
+                    tokenized_data.append(data)
+                result[tok_name] = tokenized_data
+            
+            return result
+            
+        elif file_path.suffix == '.pkl':
+            # Pickle format - expect dict mapping tokenizer names to data lists
+            with open(file_path, 'rb') as f:
+                data_dict = pickle.load(f)
+            
+            # Validate structure
+            if not isinstance(data_dict, dict):
+                raise ValueError("Pickle file should contain a dictionary mapping tokenizer names to data lists")
+            
+            for tok_name, data_list in data_dict.items():
+                if not isinstance(data_list, list):
+                    raise ValueError(f"Data for tokenizer '{tok_name}' should be a list")
+                if not all(isinstance(item, TokenizedData) for item in data_list):
+                    raise ValueError(f"All items for tokenizer '{tok_name}' should be TokenizedData objects")
+            
+            return data_dict
+            
+        else:
+            raise ValueError(f"Unsupported file format: {file_path.suffix}. Use .json or .pkl")
+    
+    @staticmethod
+    def load_vocabularies_from_config(vocab_config: Dict[str, str]) -> Dict[str, List[str]]:
+        """
+        Load vocabularies from text files specified in configuration.
+        
+        Args:
+            vocab_config: Dictionary mapping tokenizer names to vocabulary file paths
+            
+        Returns:
+            Dictionary mapping tokenizer names to vocabulary lists
+        """
+        vocabularies = {}
+        for tok_name, vocab_file_path in vocab_config.items():
+            vocab_path = Path(vocab_file_path)
+            
+            if vocab_path.exists():
+                try:
+                    with open(vocab_path, 'r', encoding='utf-8') as f:
+                        vocab_tokens = [line.strip() for line in f if line.strip()]
+                    vocabularies[tok_name] = vocab_tokens
+                    logger.info(f"Loaded vocabulary for {tok_name} from {vocab_path} ({len(vocab_tokens)} tokens)")
+                except Exception as e:
+                    logger.warning(f"Failed to load vocabulary for {tok_name} from {vocab_path}: {e}")
+            else:
+                logger.warning(f"Vocabulary file not found for {tok_name}: {vocab_path}")
+        
+        return vocabularies
 
 
 class InputValidator:

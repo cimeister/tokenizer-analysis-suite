@@ -8,7 +8,7 @@ import re
 import logging
 from typing import Dict, List, Optional
 import pandas as pd
-from .constants import ISO639_1_to_ISO639_2, FINEWEB_to_ISO639_2
+from .constants import ISO639_1_to_ISO639_2, FLORES_to_ISO639_2
 
 logger = logging.getLogger(__name__)
 
@@ -247,8 +247,8 @@ class MorphologicalDataLoader:
         if language not in self.morphological_data:
             if language in ISO639_1_to_ISO639_2 and ISO639_1_to_ISO639_2[language] in self.morphological_data:
                 language = ISO639_1_to_ISO639_2[language]
-            elif language in FINEWEB_to_ISO639_2 and FINEWEB_to_ISO639_2[language] in self.morphological_data:
-                language = FINEWEB_to_ISO639_2[language]
+            elif language in FLORES_to_ISO639_2 and FLORES_to_ISO639_2[language] in self.morphological_data:
+                language = FLORES_to_ISO639_2[language]
             else:
                 self._lookup_cache[cache_key] = None
                 return None

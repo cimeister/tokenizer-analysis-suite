@@ -8,6 +8,7 @@ from .input_types import (
     InputProvider, TokenizedData, InputSpecification, 
     TokenizerProtocol, VocabularyProvider
 )
+from ..utils import encode_text
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ class RawTokenizationProvider(InputProvider):
         
         for tok_name, spec in self.specifications.items():
             tokenized_data[tok_name] = []
-            
+            logger.info(f"Tokenizing data for {tok_name} tokenizer...")
             for language, text_data in spec.texts.items():
                 try:
                     # Handle both single strings and lists of strings
@@ -69,12 +70,14 @@ class RawTokenizationProvider(InputProvider):
                             continue
                         
                         # Tokenize the text
-                        tokens_raw = spec.tokenizer.encode(text)
+                        tokens_raw = encode_text(spec.tokenizer, text) #spec.tokenizer.encode(text)
                         
                         # Ensure tokens is a list of integers
                         if hasattr(tokens_raw, 'ids'):
                             # Handle tokenizers library Encoding object
                             tokens = tokens_raw.ids
+                        elif isinstance(tokens_raw, dict) and "input_ids" in tokens_raw:
+                            tokens = tokens_raw["input_ids"]
                         elif isinstance(tokens_raw, list):
                             tokens = tokens_raw
                         else:

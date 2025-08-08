@@ -12,10 +12,10 @@ class TextProcessing:
     """Constants for text processing and loading operations."""
     
     # Text length thresholds
-    MIN_PARAGRAPH_LENGTH = 10
-    MIN_LINE_LENGTH = 10  
-    MIN_SENTENCE_LENGTH = 20
-    MIN_CONTENT_LENGTH = 50
+    MIN_PARAGRAPH_LENGTH = 5
+    MIN_LINE_LENGTH = 5  
+    MIN_SENTENCE_LENGTH = 5
+    MIN_CONTENT_LENGTH = 5
     
     # Text chunking and processing
     DEFAULT_CHUNK_SIZE = 500
@@ -31,7 +31,7 @@ class Statistics:
     """Constants for statistical computations and analysis."""
     
     # Entropy analysis defaults
-    DEFAULT_RENYI_ALPHAS: List[float] = [1.0, 2.0, 3.0]
+    DEFAULT_RENYI_ALPHAS: List[float] = [1.0, 2.0, 2.5, 3.0]
     SHANNON_ENTROPY_ALPHA = 1.0
     
     # Fallback values and ratios
@@ -50,8 +50,7 @@ class Validation:
     MIN_WORD_LENGTH = 2
     MIN_LANGUAGES_FOR_GINI = 2
     MIN_LANGUAGES_FOR_COMPARISON = 1
-    MIN_TOKENIZERS_FOR_COMPARISON = 2
-    MIN_TOKENIZERS_FOR_PLOTS = 2
+    MIN_TOKENIZERS_FOR_PLOTS = 1
     
     # Display limits for error messages and debugging
     MAX_ERROR_DISPLAY_COUNT = 5
@@ -112,22 +111,6 @@ class Morphology:
     PUNCTUATION = '.,!?;:"()[]{}'
 
 
-class PlotConfiguration:
-    """Constants for visualization and plotting."""
-    
-    # Plot dimensions and styling
-    DEFAULT_FIGURE_SIZE = (12, 8)
-    DEFAULT_DPI = 300
-    
-    # Color and style defaults
-    DEFAULT_COLORMAP = 'viridis'
-    DEFAULT_ALPHA = 0.7
-    
-    # Text and label limits
-    MAX_LABEL_LENGTH = 50
-    MAX_LEGEND_ITEMS = 10
-
-
 # Convenience imports for commonly used constants
 MIN_PARAGRAPH_LENGTH = TextProcessing.MIN_PARAGRAPH_LENGTH
 MIN_LINE_LENGTH = TextProcessing.MIN_LINE_LENGTH
@@ -141,7 +124,6 @@ FALLBACK_WORDS_PER_TOKEN = Statistics.FALLBACK_WORDS_PER_TOKEN
 DEFAULT_SAFE_DIVIDE_VALUE = Statistics.DEFAULT_SAFE_DIVIDE_VALUE
 
 MIN_LANGUAGES_FOR_GINI = Validation.MIN_LANGUAGES_FOR_GINI
-MIN_TOKENIZERS_FOR_COMPARISON = Validation.MIN_TOKENIZERS_FOR_COMPARISON
 MIN_TOKENIZERS_FOR_PLOTS = Validation.MIN_TOKENIZERS_FOR_PLOTS
 MAX_ERROR_DISPLAY_COUNT = Validation.MAX_ERROR_DISPLAY_COUNT
 MAX_TOKEN_DISPLAY_COUNT = Validation.MAX_TOKEN_DISPLAY_COUNT

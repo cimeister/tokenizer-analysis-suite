@@ -23,7 +23,7 @@ _original_encode_text = None
 _original_load_tokenizer_from_config = None
 # Try to import original functions using multiple strategies
 try:
-    from unimixlm.code.utils import encode_text as _original_encode_text
+    from unimixlm.code.utils import encode_text_minimal as _original_encode_text
     from unimixlm.code.utils import load_tokenizer_from_config as _original_load_tokenizer_from_config
     _ORIGINAL_FUNCTIONS_AVAILABLE = True
 except ImportError:
@@ -101,16 +101,15 @@ def encode_text(
     
     Tries to use original implementation first, falls back to simplified version.
     """
+    if isinstance(tokenizer, AutoTokenizer):
+        return tokenizer(text, add_special_tokens=add_special_tokens)
+    elif isinstance(tokenizer, Tokenizer):
+        return tokenizer.encode(text, add_special_tokens=add_special_tokens)
     if _ORIGINAL_FUNCTIONS_AVAILABLE:
         try:
             return _original_encode_text(
                 tokenizer, text,
-                add_special_tokens=add_special_tokens,
-                padding=padding,
-                truncation=truncation,
-                max_length=max_length,
-                return_attention_mask=return_attention_mask,
-                **kwargs
+                add_special_tokens=add_special_tokens
             )
         except Exception as e:
             logger.warning(f"Original encode_text failed ({e}), using fallback")

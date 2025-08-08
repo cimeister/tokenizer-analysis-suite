@@ -2,12 +2,12 @@
 Unified tokenizer analysis script supporting both raw tokenizers and pre-tokenized data.
 
 Raw tokenizer examples:
-python scripts/compare_tokenizers.py --use-sample-data
-python scripts/compare_tokenizers.py --tokenizer-config configs/tokenizer_config.json --language-config configs/language_config.json --morphological-config configs/morphological_config.json --normalization-config configs/normalization_config_bytes.json --samples-per-lang 3000 --output-dir analysis_results --verbose --run-grouped-analysis
+python scripts/run_tokenizer_analysis.py --use-sample-data
+python scripts/run_tokenizer_analysis.py --tokenizer-config configs/tokenizer_config.json --language-config configs/language_config.json --morphological-config configs/morphological_config.json --normalization-config configs/normalization_config_bytes.json --samples-per-lang 3000 --output-dir analysis_results --verbose --run-grouped-analysis
 
 Pre-tokenized data examples:
-python scripts/compare_tokenizers.py --tokenized-data-file tokenized_data.json --language-config configs/language_config.json
-python scripts/compare_tokenizers.py --tokenized-data-file tokenized_data.pkl --tokenized-data-config tokenized_config.json --language-config configs/language_config.json --run-grouped-analysis
+python scripts/run_tokenizer_analysis.py --tokenized-data-file tokenized_data.json --language-config configs/language_config.json
+python scripts/run_tokenizer_analysis.py --tokenized-data-file tokenized_data.pkl --tokenized-data-config tokenized_config.json --language-config configs/language_config.json --run-grouped-analysis
 """
 import logging
 import argparse
@@ -15,15 +15,17 @@ import json
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from tokenizer_analysis.main_unified import UnifiedTokenizerAnalyzer, create_analyzer_from_raw_inputs, create_analyzer_from_tokenized_data
+from tokenizer_analysis import create_analyzer_from_raw_inputs, create_analyzer_from_tokenized_data
 from tokenizer_analysis.utils import setup_environment, load_tokenizer_from_config
 from tokenizer_analysis.config.language_metadata import LanguageMetadata
 from tokenizer_analysis.loaders.multilingual_data import load_multilingual_data
 from tokenizer_analysis.core.input_utils import InputLoader
 from tokenizer_analysis.constants import (
     TextProcessing,
-    DataProcessing
+    DataProcessing,
+    MIN_TOKENIZERS_FOR_PLOTS
 )
+from tokenizer_analysis.visualization.visualization_config import LaTeXFormatting
 
 # Setup environment
 setup_environment()
@@ -48,30 +50,14 @@ def load_config_from_file(config_path: str) -> Dict:
 
 def create_sample_configs() -> Dict[str, Dict]:
     """Create sample tokenizer configurations for testing."""
-    dirr = "data_large_128k_byte/"
     return {
-        "standard_soft": {
+        "bpe": {
             "class": "standard",
-            "path": dirr + "tokenizers_correct_loss/standard_unigramlm_soft.json"
+            "path": "sample_tokenizers/bpe.json"
         },
-        "langspec_soft": {
-            "class": "langspec",
-            "base_path": dirr + "tokenizers_correct_loss/standard_unigramlm_soft.json",
-            "language_paths": {
-                "en": dirr + "tokenizers_correct_loss/langspec_soft_en_em_probs.json",
-                "es": dirr + "tokenizers_correct_loss/langspec_soft_es_em_probs.json",
-                "de": dirr + "tokenizers_correct_loss/langspec_soft_de_em_probs.json",
-                "ar": dirr + "tokenizers_correct_loss/langspec_soft_ar_em_probs.json",
-                "ru": dirr + "tokenizers_correct_loss/langspec_soft_ru_em_probs.json"
-            }
-        },
-        "tokmix": {
+        "unigramlm": {
             "class": "standard",
-            "path": dirr + "tokenizers_correct_loss/tokmix.json"
-        },
-        "multigram_soft": {
-            "class": "standard",
-            "path": dirr + "tokenizers_correct_loss/multigramlm_soft.json"
+            "path": "sample_tokenizers/unigramlm.json"
         }
     }
 
@@ -109,15 +95,24 @@ def create_sample_language_metadata() -> str:
             }
         },
         "analysis_groups": {
-            "script_families": {
+            "script_family": {
                 "Latin": ["eng_Latn", "spa_Latn", "deu_Latn"],
                 "Arabic": ["arb_Arab"],
                 "Cyrillic": ["rus_Cyrl"]
             },
-            "resource_levels": {
-                "high": ["eng_Latn", "spa_Latn", "deu_Latn", "arb_Arab", "rus_Cyrl"],
-                "medium": [],
+            "resource_level": {
+                "high": ["eng_Latn", "spa_Latn", "deu_Latn"],
+                "medium": ["arb_Arab", "rus_Cyrl"],
                 "low": []
+            },
+            "geographic_region": {
+                "Western_Europe": ["eng_Latn", "spa_Latn", "deu_Latn"],
+                "Middle_East": ["arb_Arab"],
+                "Eastern_Europe": ["rus_Cyrl"]
+            },
+            "language_family": {
+                "Indo_European": ["eng_Latn", "spa_Latn", "deu_Latn", "rus_Cyrl"],
+                "Afro_Asiatic": ["arb_Arab"]
             }
         }
     }
@@ -130,35 +125,18 @@ def create_sample_language_metadata() -> str:
 
 def create_sample_morphological_config() -> Dict[str, str]:
     """Create sample morphological dataset configuration."""
+    return {}
+
+
+def create_sample_morphscore_config(data_dir: str = "morphscore_data") -> Dict[str, any]:
+    """Create sample MorphScore configuration with default settings."""
     return {
-        "morphynet": "morph_data/MORPHYNET/morphynet_multilingual.tsv"
+        "data_dir": data_dir,
+        "language_subset": None,
+        "by_split": False,
+        "freq_scale": True,
+        "exclude_single_tok": False
     }
-
-
-def load_tokenized_data(tokenized_data_file: str, tokenized_data_config: Optional[str] = None) -> Dict:
-    """
-    Load pre-tokenized data from file.
-    
-    Args:
-        tokenized_data_file: Path to the tokenized data file (JSON or pickle)
-        tokenized_data_config: Optional configuration file for tokenized data
-        
-    Returns:
-        Dictionary containing tokenized data
-    """
-    logger.info(f"Loading pre-tokenized data from {tokenized_data_file}")
-    
-    # Load the tokenized data
-    tokenized_data = InputLoader.load_from_file(tokenized_data_file)
-    
-    # Load config if provided
-    if tokenized_data_config:
-        config = load_config_from_file(tokenized_data_config)
-        # Merge or apply config as needed
-        logger.info(f"Applied tokenized data configuration from {tokenized_data_config}")
-    
-    return tokenized_data
-
 
 def slim_results_for_json(results: Dict) -> Dict:
     """Create a slimmed-down version of results for JSON export."""
@@ -219,12 +197,16 @@ def slim_results_for_json(results: Dict) -> Dict:
             if metric_name == 'morphological_alignment' and 'summary' in metric_data:
                 slimmed_metric['summary'] = metric_data['summary']
             
+            # Keep summary stats for MorphScore analysis
+            if metric_name == 'morphscore' and 'summary' in metric_data:
+                slimmed_metric['summary'] = metric_data['summary']
+            
             # Keep metadata for Gini metrics
             if metric_name in ['tokenizer_fairness_gini', 'lorenz_curve_data'] and 'metadata' in metric_data:
                 slimmed_metric['metadata'] = metric_data['metadata']
             
             # Keep global results
-            if 'global' in metric_data and metric_name != 'morphological_alignment':
+            if 'global' in metric_data and metric_name not in ['morphological_alignment', 'morphscore']:
                 slimmed_metric['global'] = metric_data['global']
             
             # Include per-language results at the top level
@@ -246,34 +228,73 @@ def main():
         epilog="""
 Examples:
   # Multi-tokenizer analysis with raw tokenizers (supports any number of tokenizers)
-  python scripts/compare_tokenizers.py --use-sample-data
+  python scripts/run_tokenizer_analysis.py --use-sample-data
   
-  # Load from configuration files (supports 2+ tokenizers)
-  python scripts/compare_tokenizers.py --tokenizer-config tokenizers.json --language-config languages.json
+  # Load from configuration files (supports 1+ tokenizers)
+  python scripts/run_tokenizer_analysis.py --tokenizer-config tokenizers.json --language-config languages.json
   
   # Use pre-tokenized data from file
-  python scripts/compare_tokenizers.py --tokenized-data-file tokenized_data.json --language-config languages.json
+  python scripts/run_tokenizer_analysis.py --tokenized-data-file tokenized_data.json --language-config languages.json
   
   # Use pre-tokenized data with configuration
-  python scripts/compare_tokenizers.py --tokenized-data-file tokenized_data.pkl --tokenized-data-config tokenized_config.json --language-config languages.json
+  python scripts/run_tokenizer_analysis.py --tokenized-data-file tokenized_data.pkl --tokenized-data-config tokenized_config.json --language-config languages.json
   
   # Filter by script family and run grouped analysis (includes grouped plots)
-  python scripts/compare_tokenizers.py --use-sample-data --filter-script-family Latin --run-grouped-analysis
+  python scripts/run_tokenizer_analysis.py --use-sample-data --filter-script-family Latin --run-grouped-analysis
   
   # Filter by resource level  
-  python scripts/compare_tokenizers.py --use-sample-data --filter-resource-level high
+  python scripts/run_tokenizer_analysis.py --use-sample-data --filter-resource-level high
   
-  # Run comprehensive grouped analysis across all script families and resource levels
-  python scripts/compare_tokenizers.py --use-sample-data --run-grouped-analysis
+  # Run grouped analysis across all script families and resource levels
+  python scripts/run_tokenizer_analysis.py --use-sample-data --run-grouped-analysis
   
   # Pairwise comparison only (restricts to 2 specific tokenizers)
-  python scripts/compare_tokenizers.py --pairwise tok1 tok2 --use-sample-data
+  python scripts/run_tokenizer_analysis.py --pairwise tok1 tok2 --use-sample-data
   
   # Skip morphological analysis and plots for faster processing
-  python scripts/compare_tokenizers.py --use-sample-data --no-morphological --no-plots
+  python scripts/run_tokenizer_analysis.py --use-sample-data --no-plots
+  
+  # Enable MorphScore analysis with default settings
+  python scripts/run_tokenizer_analysis.py --use-sample-data --morphscore
+  
+  # Use custom MorphScore configuration
+  python scripts/run_tokenizer_analysis.py --tokenizer-config tokenizers.json --language-config languages.json --morphscore-config morphscore.json
+  
+  # Explicitly disable MorphScore (useful when config file has it enabled)
+  python scripts/run_tokenizer_analysis.py --use-sample-data
+  
+  # Generate LaTeX tables for results
+  python scripts/run_tokenizer_analysis.py --use-sample-data --generate-latex-tables
+  
+  # Generate specific LaTeX table types
+  python scripts/run_tokenizer_analysis.py --use-sample-data --generate-latex-tables --latex-table-types basic morphological
+  
+  # Generate per-language plots in addition to standard plots
+  python scripts/run_tokenizer_analysis.py --use-sample-data --per-language-plots
+  
+  # Generate per-language plots with additional faceted plots (subplots per tokenizer)
+  python scripts/run_tokenizer_analysis.py --use-sample-data --per-language-plots --faceted-plots
+  
+  # Generate grouped analysis with additional faceted plots for grouped metrics
+  python scripts/run_tokenizer_analysis.py --use-sample-data --run-grouped-analysis --faceted-plots
+  
+  # Generate custom LaTeX tables from configuration file
+  python scripts/run_tokenizer_analysis.py --use-sample-data --custom-latex-config custom_tables.json
   
   # Save both summary and full detailed results
-  python scripts/compare_tokenizers.py --use-sample-data --save-full-results
+  python scripts/run_tokenizer_analysis.py --use-sample-data --save-full-results
+  
+  # Save tokenized data for later reuse
+  python scripts/run_tokenizer_analysis.py --use-sample-data --save-tokenized-data
+  
+  # Save tokenized data to specific path
+  python scripts/run_tokenizer_analysis.py --tokenizer-config tokenizers.json --language-config languages.json --save-tokenized-data --tokenized-data-output-path my_tokenized_data.pkl
+  
+  # Complete workflow: generate tokenized data, then reuse it
+  # Step 1: Generate and save tokenized data
+  python scripts/run_tokenizer_analysis.py --use-sample-data --save-tokenized-data --tokenized-data-output-path results/tokenized_data.pkl
+  # Step 2: Use the saved tokenized data (much faster)
+  python scripts/run_tokenizer_analysis.py --tokenized-data-file results/tokenized_data.pkl --tokenized-data-config configs/sample_tokenized_config.json --language-config languages.json
         """
     )
     
@@ -294,6 +315,22 @@ Examples:
         help="JSON file with morphological dataset configurations"
     )
     parser.add_argument(
+        "--morphscore-config",
+        type=str,
+        help="JSON file with MorphScore configuration (requires raw tokenization)"
+    )
+    parser.add_argument(
+        "--morphscore",
+        action="store_true",
+        help="Enable MorphScore analysis with default settings (requires raw tokenization)"
+    )
+    parser.add_argument(
+        "--morphscore-data-dir",
+        type=str,
+        default="morphscore_data",
+        help="Directory containing morphological data for MorphScore analysis"
+    )
+    parser.add_argument(
         "--normalization-config",
         type=str,
         help="JSON file with normalization configuration (method, pretokenization, etc.)"
@@ -308,7 +345,7 @@ Examples:
     parser.add_argument(
         "--tokenized-data-config",
         type=str,
-        help="JSON file with pre-tokenized data configuration"
+        help="JSON file with pre-tokenized data configuration including vocabulary file paths"
     )
     parser.add_argument(
         "--tokenized-data-file",
@@ -329,6 +366,11 @@ Examples:
         help="Skip plot generation"
     )
     parser.add_argument(
+        "--no-global-lines",
+        action="store_true",
+        help="Hide global average reference lines in grouped/per-language plots"
+    )
+    parser.add_argument(
         "--samples-per-lang",
         type=int,
         default=DataProcessing.DEFAULT_MAX_SAMPLES,
@@ -339,7 +381,7 @@ Examples:
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="tokenizer_analysis_results",
+        default="results",
         help="Directory for output plots and logs"
     )
     parser.add_argument(
@@ -371,11 +413,58 @@ Examples:
         help="Filter languages by resource level (e.g., 'high', 'medium', 'low')"
     )
     
-    # NEW: Grouped analysis option
     parser.add_argument(
         "--run-grouped-analysis",
         action="store_true",
         help="Run analysis grouped by script families and resource levels"
+    )
+    
+    # LaTeX table generation options
+    parser.add_argument(
+        "--generate-latex-tables",
+        action="store_true",
+        help="Generate LaTeX tables for analysis results"
+    )
+    parser.add_argument(
+        "--latex-table-types",
+        nargs="+",
+        default=["basic", "comprehensive"],
+        choices=["basic", "information", "morphological", "comprehensive"],
+        help="Types of (default) LaTeX tables to generate"
+    )
+    parser.add_argument(
+        "--latex-output-dir",
+        type=str,
+        help="Directory for LaTeX table output (default: same as --output-dir)"
+    )
+    parser.add_argument(
+        "--custom-latex-config",
+        type=str,
+        help="JSON configuration file for custom LaTeX tables"
+    )
+    
+    # Plot generation options
+    parser.add_argument(
+        "--per-language-plots",
+        action="store_true",
+        help="Generate per-language plots in addition to individual plots (does not apply to grouped analysis)"
+    )
+    parser.add_argument(
+        "--faceted-plots",
+        action="store_true",
+        help="Generate additional faceted plots (one subplot per tokenizer with shared y-axis) for grouped analysis (--run-grouped-analysis) and per-language plots (--per-language-plots). Normal plots are still generated."
+    )
+    
+    # Tokenized data saving options
+    parser.add_argument(
+        "--save-tokenized-data",
+        action="store_true",
+        help="Save tokenized data to file (only when processing raw data)"
+    )
+    parser.add_argument(
+        "--tokenized-data-output-path",
+        type=str,
+        help="Path to save tokenized data (default: output_dir/tokenized_data.pkl)"
     )
     
     args = parser.parse_args()
@@ -394,13 +483,33 @@ Examples:
         language_config_path = create_sample_language_metadata()
         morphological_config = create_sample_morphological_config()
         normalization_config = None  # Use default for sample data
+        
+        # Configure MorphScore for sample data
+        morphscore_config = None
+        if args.morphscore or args.morphscore_config:
+            if args.morphscore_config:
+                morphscore_config = load_config_from_file(args.morphscore_config)
+                morphscore_config['data_dir'] = args.morphscore_data_dir
+            else:
+                morphscore_config = create_sample_morphscore_config(args.morphscore_data_dir)
     elif use_tokenized_data:
         # Pre-tokenized data mode
         if not args.tokenized_data_file:
             raise ValueError("Must specify --tokenized-data-file for pre-tokenized mode")
         
-        tokenizer_configs = None  # Will be inferred from tokenized data
-        tokenized_data = load_tokenized_data(args.tokenized_data_file, args.tokenized_data_config)
+        # Load tokenized data
+        tokenized_data = InputLoader.load_from_file(args.tokenized_data_file)
+        
+        # Load vocabulary files if config provided
+        vocabularies = {}
+        if args.tokenized_data_config:
+            config = load_config_from_file(args.tokenized_data_config)
+            if 'vocabulary_files' in config:
+                vocabularies = InputLoader.load_vocabularies_from_config(config['vocabulary_files'])
+        
+        # If no vocabularies loaded, estimate from data
+        if not vocabularies:
+            logger.warning("No vocabulary files loaded, will estimate vocabulary sizes from tokenized data")
         
         # Still need language config for metadata
         if args.language_config:
@@ -419,6 +528,12 @@ Examples:
             from tokenizer_analysis.config import NormalizationConfig
             norm_config_dict = load_config_from_file(args.normalization_config)
             normalization_config = NormalizationConfig.from_dict(norm_config_dict)
+        
+        # MorphScore not supported with pre-tokenized data
+        morphscore_config = None
+        if args.morphscore or args.morphscore_config:
+            logger.warning("MorphScore analysis not supported with pre-tokenized data. Requires raw tokenization.")
+            morphscore_config = None
     else:
         # Raw tokenizer mode
         if not args.tokenizer_config:
@@ -443,6 +558,15 @@ Examples:
             from tokenizer_analysis.config import NormalizationConfig
             norm_config_dict = load_config_from_file(args.normalization_config)
             normalization_config = NormalizationConfig.from_dict(norm_config_dict)
+        
+        # Configure MorphScore for raw tokenizer mode
+        morphscore_config = None
+        if args.morphscore or args.morphscore_config:
+            if args.morphscore_config:
+                morphscore_config = load_config_from_file(args.morphscore_config)
+                morphscore_config['data_dir'] = args.morphscore_data_dir
+            else:
+                morphscore_config = create_sample_morphscore_config(args.morphscore_data_dir)
     
     # Load language metadata
     logger.info("Loading language metadata...")
@@ -455,16 +579,20 @@ Examples:
         # Pre-tokenized data mode
         analyzer = create_analyzer_from_tokenized_data(
             tokenized_data=tokenized_data,
+            vocabularies=vocabularies,
             normalization_config=normalization_config,
             language_metadata=language_metadata,
             plot_save_dir=args.output_dir,
-            morphological_config=morphological_config
+            morphological_config=morphological_config,
+            morphscore_config=morphscore_config,
+            show_global_lines=not args.no_global_lines,
+            per_language_plots=args.per_language_plots,
+            faceted_plots=args.faceted_plots
         )
     else:
         # Raw tokenizer mode
         # Validate tokenizer configs
-        from tokenizer_analysis.constants import MIN_TOKENIZERS_FOR_COMPARISON
-        if not tokenizer_configs or len(tokenizer_configs) < MIN_TOKENIZERS_FOR_COMPARISON:
+        if not tokenizer_configs or len(tokenizer_configs) < 1:
             raise ValueError("At least one tokenizer must be configured")
         
         if args.pairwise and len(args.pairwise) == 2:
@@ -478,9 +606,9 @@ Examples:
         logger.info("Loading language texts...")
         filter_by_group = None
         if args.filter_script_family:
-            filter_by_group = ('script_families', args.filter_script_family)
+            filter_by_group = ('script_family', args.filter_script_family)
         elif args.filter_resource_level:
-            filter_by_group = ('resource_levels', args.filter_resource_level)
+            filter_by_group = ('resource_level', args.filter_resource_level)
         
         language_texts = load_multilingual_data(
             language_metadata=language_metadata,
@@ -498,10 +626,13 @@ Examples:
             normalization_config=normalization_config,
             language_metadata=language_metadata,
             plot_save_dir=args.output_dir,
-            morphological_config=morphological_config
+            morphological_config=morphological_config,
+            morphscore_config=morphscore_config,
+            show_global_lines=not args.no_global_lines,
+            per_language_plots=args.per_language_plots,
+            faceted_plots=args.faceted_plots
         )
     if args.test:
-        # TODO: Update test methods for unified system
         logger.warning("Test methods not yet updated for unified system")
         exit(0)
     
@@ -514,24 +645,31 @@ Examples:
         results = analyzer.run_analysis(
             save_plots=not args.no_plots,
             include_morphological=morphological_config is not None,
-            verbose=args.verbose
+            include_morphscore=morphscore_config is not None,
+            verbose=args.verbose,
+            save_tokenized_data=args.save_tokenized_data,
+            tokenized_data_path=args.tokenized_data_output_path
         )
     else:
         # Full multi-tokenizer analysis
         results = analyzer.run_analysis(
             save_plots=not args.no_plots,
             include_morphological=morphological_config is not None,
-            verbose=args.verbose
+            include_morphscore=morphscore_config is not None,
+            verbose=args.verbose,
+            save_tokenized_data=args.save_tokenized_data,
+            tokenized_data_path=args.tokenized_data_output_path
         )
         
-        # NEW: Run grouped analysis if requested
         if args.run_grouped_analysis and analyzer.language_metadata:
             logger.info("Running grouped analysis by script families and resource levels...")
             
             # Use the unified analyzer's built-in grouped analysis
+            # Pass base results to avoid recomputing morphological metrics
             grouped_results = analyzer.run_grouped_analysis(
-                group_by=['script_families', 'resource_levels'],
-                save_plots=not args.no_plots
+                group_by=analyzer.language_metadata.analysis_groups.keys(),
+                save_plots=not args.no_plots,
+                base_results=results
             )
             
             # Add grouped results to main results
@@ -565,6 +703,81 @@ Examples:
         full_results_json = convert_for_json(results)
         with open(full_results_file, 'w') as f:
             json.dump(full_results_json, f, indent=2)
+    
+    # Generate LaTeX tables if requested
+    if args.generate_latex_tables:
+        logger.info("Generating LaTeX tables...")
+        latex_output_dir = args.latex_output_dir or os.path.join(args.output_dir, "latex_tables")
+        
+        formatting_options = {
+            'bold_best': LaTeXFormatting.BOLD_BEST,
+            'include_std_err': LaTeXFormatting.INCLUDE_STD_ERR,
+            'std_err_size': LaTeXFormatting.STD_ERROR_SIZE
+        }
+        
+        try:
+            latex_tables = analyzer.generate_latex_tables(
+                results=results,
+                output_dir=latex_output_dir,
+                table_types=args.latex_table_types,
+                **formatting_options
+            )
+            
+            logger.info(f"Generated {len(latex_tables)} LaTeX tables in {latex_output_dir}")
+            for table_type, content in latex_tables.items():
+                print(f"LaTeX {table_type} table: {latex_output_dir}/{table_type}_metrics_table.tex")
+                
+        except Exception as e:
+            logger.error(f"Error generating LaTeX tables: {e}")
+    
+    # Generate custom LaTeX tables if config provided
+    if args.custom_latex_config:
+        logger.info(f"Loading custom LaTeX configuration from {args.custom_latex_config}")
+        try:
+            custom_config = load_config_from_file(args.custom_latex_config)
+            latex_output_dir = args.latex_output_dir or args.output_dir
+            
+            # Prepare formatting options
+            formatting_options = {
+                'bold_best': LaTeXFormatting.BOLD_BEST,
+                'include_std_err': LaTeXFormatting.INCLUDE_STD_ERR,
+                'std_err_size': LaTeXFormatting.STD_ERROR_SIZE
+            }
+            
+            # Generate each custom table defined in config
+            for table_name, table_config in custom_config.items():
+                if not isinstance(table_config, dict):
+                    logger.warning(f"Skipping invalid table config: {table_name}")
+                    continue
+                
+                metrics = table_config.get('metrics', [])
+                caption = table_config.get('caption', f"Custom Table: {table_name}")
+                label = table_config.get('label', f"tab:custom_{table_name}")
+                
+                if not metrics:
+                    logger.warning(f"No metrics specified for table {table_name}")
+                    continue
+                
+                logger.info(f"Generating custom LaTeX table '{table_name}' with metrics: {metrics}")
+                
+                custom_output_path = f"{latex_output_dir}/custom_{table_name}_table.tex"
+                custom_table = analyzer.generate_custom_latex_table(
+                    results=results,
+                    custom_metrics=metrics,
+                    output_path=custom_output_path,
+                    caption=caption,
+                    label=label,
+                    **formatting_options
+                )
+                
+                if custom_table:
+                    logger.info(f"Custom LaTeX table '{table_name}' saved to {custom_output_path}")
+                    print(f"Custom LaTeX table '{table_name}': {custom_output_path}")
+                else:
+                    logger.warning(f"Custom LaTeX table '{table_name}' generation failed")
+                    
+        except Exception as e:
+            logger.error(f"Error generating custom LaTeX tables: {e}")
     
     logger.info("Analysis complete!")
     print(f"\nResults saved to: {args.output_dir}")

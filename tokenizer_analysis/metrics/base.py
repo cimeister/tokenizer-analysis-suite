@@ -5,6 +5,7 @@ Base metrics class for unified TokenizedData interface - skeleton only.
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Any
 import numpy as np
+import scipy
 from collections import defaultdict
 import logging
 
@@ -54,6 +55,7 @@ class BaseMetrics(ABC):
                 'mean': 0.0,
                 'median': 0.0,
                 'std': 0.0,
+                'std_err': 0.0,
                 'min': 0.0,
                 'max': 0.0,
                 'count': 0,
@@ -64,6 +66,7 @@ class BaseMetrics(ABC):
             'mean': np.mean(values),
             'median': np.median(values),
             'std': np.std(values),
+            'std_err': scipy.stats.sem(values),
             'min': np.min(values),
             'max': np.max(values),
             'count': len(values),
@@ -104,6 +107,7 @@ class BaseMetrics(ABC):
             'mean': 0.0,
             'median': 0.0,
             'std': 0.0,
+            'std_err': 0.0,
             'min': 0.0,
             'max': 0.0,
             'count': 0,

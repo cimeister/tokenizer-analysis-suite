@@ -16,7 +16,28 @@ ISO639_1_to_ISO639_2 = {
     'sh': 'hbs'
 }
 
-FINEWEB_to_ISO639_2 = {
+ISO639_1_to_FLORES = {
+    'en': 'eng_Latn',
+    'es': 'spa_Latn',
+    'ar': 'arb_Arab',
+    'cy': 'cym_Latn',
+    'de': 'deu_Latn',
+    'zh': 'cmn_Hans',  # Mandarin Chinese in Simplified script
+    'ru': 'rus_Cyrl',
+    'hi': 'hin_Deva',
+    'sw': 'swh_Latn',
+    'yo': 'yor_Latn',
+    'el': 'ell_Grek',
+    'gn': 'grn_Latn',
+    'id': 'ind_Latn',
+    'ku': 'kmr_Latn',  # Central Kurdish
+    'mg': 'plt_Latn',  # Malagasy Plateau dialect
+    'pl': 'pol_Latn',
+    'tr': 'tur_Latn',
+    'vi': 'vie_Latn',
+    'ga': 'gle_Latn'
+}
+FLORES_to_ISO639_2 = {
     'eng_Latn': 'eng',
     'spa_Latn': 'spa',
     'deu_Latn': 'deu',
@@ -36,6 +57,7 @@ FINEWEB_to_ISO639_2 = {
     'fas_Arab': 'fas',
     'ell_Grek': 'ell',
     'cmn_Hani': 'zho',  # Mandarin Chinese — ISO 639-2 for Chinese is 'zho'
+    'cmn_Hans': 'zho',  # Mandarin Chinese — ISO 639-2 for Chinese is 'zho'
     'hin_Deva': 'hin',
     'kor_Hang': 'kor',
     'tha_Thai': 'tha',
