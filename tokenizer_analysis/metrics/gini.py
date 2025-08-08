@@ -9,7 +9,7 @@ from typing import Dict, List, Any, Optional
 import numpy as np
 import logging
 
-from .base_unified import BaseMetrics, TokenizedDataProcessor
+from .base import BaseMetrics, TokenizedDataProcessor
 from ..core.input_types import TokenizedData
 from ..core.input_providers import InputProvider
 from ..config import NormalizationConfig, TextNormalizer, DEFAULT_NORMALIZATION_CONFIG, LINES_CONFIG
@@ -31,7 +31,7 @@ class TokenizerGiniMetrics(BaseMetrics):
                  normalization_config: Optional[NormalizationConfig] = None,
                  language_metadata: Optional[LanguageMetadata] = None):
         super().__init__(input_provider)
-        self.norm_config = normalization_config or DEFAULT_NORMALIZATION_CONFIG
+        self.norm_config = LINES_CONFIG#normalization_config or DEFAULT_NORMALIZATION_CONFIG
         self.normalizer = TextNormalizer(self.norm_config)
         self.language_metadata = language_metadata
     

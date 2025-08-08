@@ -7,7 +7,7 @@ import numpy as np
 from collections import defaultdict
 import logging
 
-from .base_unified import BaseMetrics, TokenizedDataProcessor
+from .base import BaseMetrics, TokenizedDataProcessor
 from ..core.input_types import TokenizedData
 from ..core.input_providers import InputProvider
 from ..loaders import MorphologicalDataLoader
@@ -100,10 +100,10 @@ class MorphologicalMetrics(BaseMetrics):
         # Reconstruct the word from the cleaned tokens to get accurate boundaries.
         reconstructed_from_clean = "".join(clean_tokens)
     
-        # Use robust morpheme boundary calculation
+        # Calculate morpheme boundaries
         morpheme_boundaries = self._fix_morpheme_boundaries(morphemes, word)
         
-        # Enhanced token boundary calculation with validation 
+        # Calculate token boundaries with validation 
         token_boundaries = []
         word_lower = word.lower()
         reconstructed_lower = reconstructed_from_clean.lower()
@@ -541,112 +541,7 @@ class MorphologicalMetrics(BaseMetrics):
         
         return alignments
     
-    def compute_morphological_alignment_analysis(self, language_texts: Dict[str, List[str]], 
-                                               all_encodings: Optional[Dict[str, Dict[str, List[List[int]]]]] = None) -> Dict[str, Any]:
-        """
-        Analyze morphological alignment for all tokenizers.
-        """
-        if not self.morphological_loader.morphological_data:
-            logger.info("No morphological data loaded. Skipping morphological analysis.")
-            return {'message': 'No morphological data available'}
-        
-        if all_encodings is None:
-            all_encodings = self.encode_texts_batch(language_texts)
-        
-        language_texts, all_encodings = self.filter_valid_data(language_texts, all_encodings)
-        
-        results = {
-            'per_tokenizer': {},
-            'per_language': {},
-            'summary': {}
-        }
-        
-        # Initialize metrics for each tokenizer
-        for name in self.tokenizer_names:
-            results['per_tokenizer'][name] = {
-                'boundary_precision': {},
-                'boundary_recall': {},
-                'boundary_f1': {},
-                'morpheme_preservation': {},
-                'over_segmentation': {}
-            }
-        
-        total_words_analyzed = 0
-        
-        for name in self.tokenizer_names:
-            for lang, texts in language_texts.items():
-                if lang not in all_encodings[name] or not texts:
-                    continue
-                
-                logger.info(f"Analyzing morphological alignment for {lang} with {name}...")
-                
-                # Initialize metrics for this language
-                for metric in results['per_tokenizer'][name]:
-                    if lang not in results['per_tokenizer'][name][metric]:
-                        results['per_tokenizer'][name][metric][lang] = {'values': [], 'count': 0, 'mean': 0.0}
-                
-                lang_words_analyzed = 0
-                # Batch process texts for better performance
-                tokenizer_obj = self.tokenizers[name]
-                for text, token_ids in zip(texts, all_encodings[name][lang]):
-                    # CRITICAL FIX: Enhanced token ID conversion with multiple fallbacks
-                    tokens = self._convert_ids_to_tokens(tokenizer_obj, token_ids)
-                    
-                    # Get word-token alignment for this text
-                    word_token_alignments = self._align_words_to_tokens(text, tokens)
-                    
-                    # Process words in batches to reduce function call overhead
-                    for word, word_tokens in word_token_alignments:
-                        if len(word) < Validation.MIN_WORD_LENGTH:  # Skip very short words
-                            continue
-                        
-                        # Compute alignment metrics
-                        alignment = self.compute_morphological_alignment(
-                            word, word_tokens, lang
-                        )
-                        
-                        if alignment:
-                            lang_words_analyzed += 1
-                            # Update metrics efficiently
-                            for metric, value in alignment.items():
-                                if metric in results['per_tokenizer'][name] and isinstance(value, (int, float)):
-                                    results['per_tokenizer'][name][metric][lang]['values'].append(value)
-                
-                # Compute statistics for this language
-                for metric in ['boundary_precision', 'boundary_recall', 'boundary_f1',
-                             'morpheme_preservation', 'over_segmentation']:
-                    if lang in results['per_tokenizer'][name][metric]:
-                        values = results['per_tokenizer'][name][metric][lang]['values']
-                        if values:
-                            results['per_tokenizer'][name][metric][lang]['count'] = len(values)
-                            results['per_tokenizer'][name][metric][lang]['mean'] = np.mean(values)
-                            results['per_tokenizer'][name][metric][lang]['std'] = np.std(values)
-                        else:
-                            results['per_tokenizer'][name][metric][lang]['count'] = 0
-                            results['per_tokenizer'][name][metric][lang]['mean'] = 0.0
-                
-                total_words_analyzed += lang_words_analyzed
-        
-        # Compute summary statistics
-        for name in self.tokenizer_names:
-            if any(results['per_tokenizer'][name]['boundary_f1'].values()):
-                f1_values = []
-                preservation_values = []
-                
-                for lang in results['per_tokenizer'][name]['boundary_f1']:
-                    if results['per_tokenizer'][name]['boundary_f1'][lang]['count'] > 0:
-                        f1_values.append(results['per_tokenizer'][name]['boundary_f1'][lang]['mean'])
-                        preservation_values.append(results['per_tokenizer'][name]['morpheme_preservation'][lang]['mean'])
-                
-                if f1_values:
-                    results['summary'][name] = {
-                        'avg_boundary_f1': np.mean(f1_values),
-                        'avg_morpheme_preservation': np.mean(preservation_values),
-                        'languages_analyzed': len(f1_values),
-                        'total_words_analyzed': total_words_analyzed
-                    }
-        
-        return results
+
 
     def test_morphological_alignment_logic(self):
         """
@@ -827,16 +722,190 @@ class MorphologicalMetrics(BaseMetrics):
     def compute(self, tokenized_data: Optional[Dict[str, List[TokenizedData]]] = None) -> Dict[str, Any]:
         """Compute morphological alignment metrics."""
         if tokenized_data is None:
-            tokenized_data = self.get_tokenized_data()
+            tokenized_data = self.input_provider.get_tokenized_data()
         
-        # TODO: Convert TokenizedData to the format expected by morphological analysis
-        # For now, return placeholder results
-        logger.warning("Morphological metrics not fully implemented for TokenizedData interface yet")
-        return {
-            'morphological_alignment': {
-                'per_tokenizer': {},
-                'summary': {
-                    'warning': 'Morphological alignment analysis not yet fully implemented for unified interface'
+        if not self.morphological_loader.morphological_data:
+            logger.info("No morphological data loaded. Skipping morphological analysis.")
+            return {
+                'morphological_alignment': {
+                    'message': 'No morphological data available'
                 }
             }
+        
+        results = {
+            'per_tokenizer': {},
+            'per_language': {},
+            'summary': {}
         }
+        
+        # Initialize metrics for each tokenizer
+        for name in self.tokenizer_names:
+            results['per_tokenizer'][name] = {
+                'boundary_precision': {},
+                'boundary_recall': {},
+                'boundary_f1': {},
+                'morpheme_preservation': {},
+                'over_segmentation': {}
+            }
+        
+        total_words_analyzed = 0
+        
+        for name in self.tokenizer_names:
+            
+            if name not in tokenized_data:
+                continue
+            
+            # Group tokenized data by language
+            lang_data = {}
+            for data in tokenized_data[name]:
+                lang = data.language
+                if lang not in lang_data:
+                    lang_data[lang] = []
+                lang_data[lang].append(data)
+            
+            for lang, data_list in lang_data.items():
+                logger.info(f"Analyzing morphological alignment for {lang} with {name}...")
+                
+                # Initialize metrics for this language
+                for metric in results['per_tokenizer'][name]:
+                    if lang not in results['per_tokenizer'][name][metric]:
+                        results['per_tokenizer'][name][metric][lang] = {'values': [], 'count': 0, 'mean': 0.0}
+                
+                lang_words_analyzed = 0
+                tokenizer_obj = self.input_provider.get_tokenizer(name)
+                
+                for tokenized_data_item in data_list:
+                    # Convert token IDs to tokens
+                    tokens = self._convert_ids_to_tokens(tokenizer_obj, tokenized_data_item.tokens)
+                    
+                    # Get word-token alignment for this text
+                    word_token_alignments = self._align_words_to_tokens(tokenized_data_item.text, tokens)
+                    
+                    # Process words in batches to reduce function call overhead
+                    for word, word_tokens in word_token_alignments:
+                        if len(word) < Validation.MIN_WORD_LENGTH:  # Skip very short words
+                            continue
+                        
+                        # Compute alignment metrics
+                        alignment = self.compute_morphological_alignment(
+                            word, word_tokens, lang
+                        )
+                        
+                        if alignment:
+                            lang_words_analyzed += 1
+                            # Update metrics efficiently
+                            for metric, value in alignment.items():
+                                if metric in results['per_tokenizer'][name] and isinstance(value, (int, float)):
+                                    results['per_tokenizer'][name][metric][lang]['values'].append(value)
+                
+                # Compute statistics for this language
+                for metric in ['boundary_precision', 'boundary_recall', 'boundary_f1',
+                             'morpheme_preservation', 'over_segmentation']:
+                    if lang in results['per_tokenizer'][name][metric]:
+                        values = results['per_tokenizer'][name][metric][lang]['values']
+                        if values:
+                            results['per_tokenizer'][name][metric][lang]['count'] = len(values)
+                            results['per_tokenizer'][name][metric][lang]['mean'] = np.mean(values)
+                            results['per_tokenizer'][name][metric][lang]['std'] = np.std(values)
+                        else:
+                            results['per_tokenizer'][name][metric][lang]['count'] = 0
+                            results['per_tokenizer'][name][metric][lang]['mean'] = 0.0
+                
+                total_words_analyzed += lang_words_analyzed
+        
+        # Compute summary statistics
+        for name in self.tokenizer_names:
+            if any(results['per_tokenizer'][name]['boundary_f1'].values()):
+                f1_values = []
+                preservation_values = []
+                
+                for lang in results['per_tokenizer'][name]['boundary_f1']:
+                    if results['per_tokenizer'][name]['boundary_f1'][lang]['count'] > 0:
+                        f1_values.append(results['per_tokenizer'][name]['boundary_f1'][lang]['mean'])
+                        preservation_values.append(results['per_tokenizer'][name]['morpheme_preservation'][lang]['mean'])
+                
+                if f1_values:
+                    n_languages = len(f1_values)
+                    results['summary'][name] = {
+                        'avg_boundary_f1': np.mean(f1_values),
+                        'avg_morpheme_preservation': np.mean(preservation_values),
+                        'languages_analyzed': n_languages,
+                        'total_words_analyzed': total_words_analyzed,
+                        'avg_boundary_f1_std_err': np.std(f1_values) / np.sqrt(n_languages) if n_languages > 1 else 0.0,
+                        'avg_morpheme_preservation_std_err': np.std(preservation_values) / np.sqrt(n_languages) if n_languages > 1 else 0.0
+                    }
+        
+        return {'morphological_alignment': results}
+    
+    def print_results(self, results: Dict[str, Any]):
+        """Print morphological metrics results."""
+        if 'morphological_alignment' not in results:
+            return
+            
+        morphological_data = results['morphological_alignment']
+        
+        # Handle case where no morphological data is available
+        if 'message' in morphological_data:
+            print(f"\n🔤 MORPHOLOGICAL ANALYSIS")
+            print("-" * 40)
+            print(f"Status: {morphological_data['message']}")
+            return
+        
+        print("\n" + "="*60)
+        print("MORPHOLOGICAL ALIGNMENT RESULTS")
+        print("="*60)
+        
+        # Print summary statistics
+        if 'summary' in morphological_data:
+            print(f"\n🎯 SUMMARY STATISTICS")
+            print("-" * 40)
+            
+            for tok_name in self.tokenizer_names:
+                if tok_name in morphological_data['summary']:
+                    summary = morphological_data['summary'][tok_name]
+                    avg_f1 = summary.get('avg_boundary_f1', 0.0)
+                    avg_preservation = summary.get('avg_morpheme_preservation', 0.0)
+                    languages_count = summary.get('languages_analyzed', 0)
+                    words_count = summary.get('total_words_analyzed', 0)
+                    
+                    print(f"{tok_name:20}:")
+                    print(f"  {'Boundary F1':15}: {avg_f1:.3f}")
+                    print(f"  {'Preservation':15}: {avg_preservation:.3f}")
+                    print(f"  {'Languages':15}: {languages_count}")
+                    print(f"  {'Words analyzed':15}: {words_count:,}")
+        
+        # Print detailed per-tokenizer results
+        if 'per_tokenizer' in morphological_data:
+            print(f"\n📊 DETAILED METRICS")
+            print("-" * 60)
+            
+            for tok_name in self.tokenizer_names:
+                if tok_name not in morphological_data['per_tokenizer']:
+                    continue
+                    
+                tok_data = morphological_data['per_tokenizer'][tok_name]
+                
+                print(f"\n{tok_name}:")
+                print("-" * 30)
+                
+                # Print boundary F1 scores by language
+                if 'boundary_f1' in tok_data:
+                    print("  Boundary F1 by language:")
+                    for lang, lang_data in tok_data['boundary_f1'].items():
+                        if lang_data.get('count', 0) > 0:
+                            mean_f1 = lang_data.get('mean', 0.0)
+                            std_f1 = lang_data.get('std', 0.0)
+                            count = lang_data.get('count', 0)
+                            print(f"    {lang:12}: {mean_f1:.3f} ± {std_f1:.3f} (n={count})")
+                
+                # Print morpheme preservation by language
+                if 'morpheme_preservation' in tok_data:
+                    print("  Morpheme preservation by language:")
+                    for lang, lang_data in tok_data['morpheme_preservation'].items():
+                        if lang_data.get('count', 0) > 0:
+                            mean_pres = lang_data.get('mean', 0.0)
+                            std_pres = lang_data.get('std', 0.0)
+                            count = lang_data.get('count', 0)
+                            print(f"    {lang:12}: {mean_pres:.3f} ± {std_pres:.3f} (n={count})")
+        
+        print("\n" + "="*60)

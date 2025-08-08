@@ -8,16 +8,16 @@ segmentation analysis.
 """
 
 __version__ = "1.0.0"
-__author__ = "UniMixLM Project"
+__author__ = "Tokenizer Analysis Project"
 
-from .metrics.base_unified import BaseMetrics
-from .metrics.basic_unified import BasicTokenizationMetrics
+from .metrics.base import BaseMetrics
+from .metrics.basic import BasicTokenizationMetrics
 from .metrics.information_theoretic import InformationTheoreticMetrics
 from .metrics.morphological import MorphologicalMetrics
 from .metrics.gini import TokenizerGiniMetrics
 from .loaders import MorphologicalDataLoader
 from .visualization import TokenizerVisualizer
-from .main_unified import UnifiedTokenizerAnalyzer, create_analyzer_from_raw_inputs, create_analyzer_from_tokenized_data
+from .main import UnifiedTokenizerAnalyzer, create_analyzer_from_raw_inputs, create_analyzer_from_tokenized_data
 
 __all__ = [
     "BaseMetrics",
