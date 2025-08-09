@@ -221,7 +221,7 @@ If you use this tokenizer analysis framework in your research, please cite it as
 
 ```bibtex
 @software{meister_tokenizer_analysis_2025,
-  title = {TokEval: A Comprehensive Tokenizer Analysis Suite},
+  title = {TokEval: A Tokenizer Analysis Suite},
   author = {Meister, Clara},
   year = {2025},
   url = {https://github.com/cimeister/tokenizer-analysis}
