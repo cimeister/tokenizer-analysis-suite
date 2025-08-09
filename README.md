@@ -6,9 +6,9 @@ A framework for evaluating tokenizers across languages with comprehensive metric
 
 - **Multi-tokenizer comparison**: Compare any number of tokenizers simultaneously
 - **Comprehensive metrics**: Basic tokenization, information-theoretic, morphological, and fairness metrics
-- **Multilingual fairness**: Gini coefficient analysis for cross-language equity
-- **MorphScore integration**: State-of-the-art morphological analysis
-- **Flexible data inputs**: Raw texts, pre-tokenized data, JSON, and text files
+- **Multilingual fairness**: Gini coefficient analysis for cross-language compression equity
+- **MorphScore integration**: Carefully crafted morphological analysis ([Arnett et. al. 2025](https://arxiv.org/abs/2507.06378))
+- **Flexible data inputs**: Raw texts, pre-tokenized data, JSON, and parquet files
 - **Academic outputs**: LaTeX table generation and publication-ready plots
 - **Performance optimized**: Efficient analysis with pre-tokenized data caching
 
@@ -91,7 +91,8 @@ python scripts/run_tokenizer_analysis.py \
 results/
 ├── fertility.png              # Tokens per word/character
 ├── compression_rate.png       # Text compression efficiency
-└── vocabulary_utilization.png # Vocabulary usage
+├── vocabulary_utilization.png # Vocabulary usage
+├── <metric name>.png          # Other supported metrics
 ├── grouped_plots/                  # Cross-tokenizer comparisons
 │   ├── script_family_comparison.png
 │   └── resource_level_analysis.png
