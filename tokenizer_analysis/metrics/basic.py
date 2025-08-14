@@ -10,7 +10,7 @@ import logging
 from .base import BaseMetrics, TokenizedDataProcessor
 from ..core.input_types import TokenizedData
 from ..core.input_providers import InputProvider
-from ..config import NormalizationConfig, DEFAULT_NORMALIZATION_CONFIG
+from ..config import TextMeasurementConfig, TextMeasurer, DEFAULT_TEXT_MEASUREMENT_CONFIG
 from ..config.language_metadata import LanguageMetadata
 from ..constants import (
     FALLBACK_WORDS_PER_TOKEN
@@ -24,19 +24,20 @@ class BasicTokenizationMetrics(BaseMetrics):
     
     def __init__(self, 
                  input_provider: InputProvider,
-                 normalization_config: Optional[NormalizationConfig] = None,
+                 measurement_config: Optional[TextMeasurementConfig] = None,
                  language_metadata: Optional[LanguageMetadata] = None):
         """
         Initialize basic metrics.
         
         Args:
             input_provider: InputProvider instance
-            normalization_config: Configuration for normalization method
+            measurement_config: Configuration for text measurement method
             language_metadata: Optional language metadata for grouping
         """
         super().__init__(input_provider)
-        self.norm_config = normalization_config or DEFAULT_NORMALIZATION_CONFIG
+        self.measurement_config = measurement_config or DEFAULT_TEXT_MEASUREMENT_CONFIG
         self.language_metadata = language_metadata
+        self.text_measurer = TextMeasurer(self.measurement_config)
     
     def compute(self, tokenized_data: Optional[Dict[str, List[TokenizedData]]] = None) -> Dict[str, Any]:
         """
@@ -80,7 +81,7 @@ class BasicTokenizationMetrics(BaseMetrics):
         Returns:
             Dict with fertility results
         """
-        normalization_unit = self.norm_config.method.value.lower()
+        normalization_unit = self.measurement_config.method.value.lower()
         
         results = {
             'fertility': {
@@ -140,28 +141,13 @@ class BasicTokenizationMetrics(BaseMetrics):
         for data in tokenized_data:
             num_tokens = len(data.tokens)
             
-            if normalization_unit == 'words':
-                if data.text:
-                    num_units = len(data.text.split())
-                else:
-                    num_units = max(1, int(num_tokens * FALLBACK_WORDS_PER_TOKEN))  # Rough estimate
-            elif normalization_unit == 'characters':
-                if data.text:
-                    num_units = len(data.text)
-                else:
-                    continue  # Skip if no text
-            elif normalization_unit == 'bytes':
-                if data.text:
-                    num_units = len(data.text.encode('utf-8'))
-                else:
-                    continue  # Skip if no text
-            elif normalization_unit == 'lines':
-                if data.text:
-                    num_units = len(data.text.split('\n'))
-                else:
-                    num_units = 1
+            if data.text:
+                num_units = self.text_measurer.get_unit_count(data.text)
             else:
-                raise ValueError(f"Unsupported normalization unit: {normalization_unit}")
+                if normalization_unit == 'words':
+                    num_units = max(1, int(num_tokens * FALLBACK_WORDS_PER_TOKEN))  # Rough estimate
+                else:
+                    continue  # Skip if no text
             
             if num_units > 0:
                 fertility = num_tokens / num_units

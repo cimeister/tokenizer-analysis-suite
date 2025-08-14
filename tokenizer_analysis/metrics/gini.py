@@ -12,7 +12,7 @@ import logging
 from .base import BaseMetrics, TokenizedDataProcessor
 from ..core.input_types import TokenizedData
 from ..core.input_providers import InputProvider
-from ..config import NormalizationConfig, TextNormalizer, DEFAULT_NORMALIZATION_CONFIG, LINES_CONFIG
+from ..config import TextMeasurementConfig, TextMeasurer, DEFAULT_LINE_MEASUREMENT_CONFIG
 from ..config.language_metadata import LanguageMetadata
 from ..constants import MIN_LANGUAGES_FOR_GINI
 
@@ -28,11 +28,12 @@ class TokenizerGiniMetrics(BaseMetrics):
     """
     
     def __init__(self, input_provider: InputProvider, 
-                 normalization_config: Optional[NormalizationConfig] = None,
+                 measurement_config: Optional[TextMeasurementConfig] = None,
                  language_metadata: Optional[LanguageMetadata] = None):
         super().__init__(input_provider)
-        self.norm_config = LINES_CONFIG#normalization_config or DEFAULT_NORMALIZATION_CONFIG
-        self.normalizer = TextNormalizer(self.norm_config)
+        # Default to lines for fairness analysis (as was hardcoded before)
+        self.measurement_config = measurement_config or DEFAULT_LINE_MEASUREMENT_CONFIG
+        self.text_measurer = TextMeasurer(self.measurement_config)
         self.language_metadata = language_metadata
     
     def compute_tokenizer_fairness_gini(self, tokenized_data: Dict[str, List[TokenizedData]]) -> Dict[str, Any]:
@@ -62,7 +63,7 @@ class TokenizerGiniMetrics(BaseMetrics):
                 'description': 'Tokenizer Fairness Gini coefficient measures equitable treatment across languages',
                 'formula': 'TFG = Σᵢ Σⱼ |c_i - c_j| / (2 * n² * μ)',
                 'interpretation': 'Lower values indicate more equitable treatment (0 = perfect equality)',
-                'normalization_method': self.norm_config.method.value,
+                'normalization_method': self.measurement_config.method.value,
             }
         }
         
@@ -103,7 +104,7 @@ class TokenizerGiniMetrics(BaseMetrics):
                 for data in lang_data:
                     if data.text and data.text.strip():  # Skip empty texts
                         total_tokens += len(data.tokens)
-                        total_normalization_units += self.normalizer.get_normalization_count(data.text)
+                        total_normalization_units += self.text_measurer.get_unit_count(data.text)
                 
                 if total_normalization_units > 0:
                     # Token cost: tokens per normalization unit
@@ -111,7 +112,7 @@ class TokenizerGiniMetrics(BaseMetrics):
                     language_costs[lang] = cost
                     total_costs.append(cost)
                     
-                    logger.debug(f"  {lang}: {total_tokens} tokens / {total_normalization_units} {self.norm_config.method.value} = {cost:.4f}")
+                    logger.debug(f"  {lang}: {total_tokens} tokens / {total_normalization_units} {self.measurement_config.method.value} = {cost:.4f}")
             
             if len(language_costs) < MIN_LANGUAGES_FOR_GINI:
                 logger.warning(f"Insufficient language data for TFG calculation for {tok_name}")
@@ -214,7 +215,7 @@ class TokenizerGiniMetrics(BaseMetrics):
                 for data in lang_data:
                     if data.text and data.text.strip():
                         total_tokens += len(data.tokens)
-                        total_normalization_units += self.normalizer.get_normalization_count(data.text)
+                        total_normalization_units += self.text_measurer.get_unit_count(data.text)
                 
                 if total_normalization_units > 0:
                     cost = total_tokens / total_normalization_units

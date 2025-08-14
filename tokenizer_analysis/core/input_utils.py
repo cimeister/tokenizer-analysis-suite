@@ -175,7 +175,7 @@ class InputLoader:
             raise ValueError(f"Unsupported file format: {file_path.suffix}. Use .json or .pkl")
     
     @staticmethod
-    def load_vocabularies_from_config(vocab_config: Dict[str, str]) -> Dict[str, List[str]]:
+    def load_vocabularies_from_config(vocab_config: Dict[str, str]) -> Dict[str, SimpleVocabulary]:
         """
         Load vocabularies from text files specified in configuration.
         
@@ -183,7 +183,7 @@ class InputLoader:
             vocab_config: Dictionary mapping tokenizer names to vocabulary file paths
             
         Returns:
-            Dictionary mapping tokenizer names to vocabulary lists
+            Dictionary mapping tokenizer names to SimpleVocabulary objects
         """
         vocabularies = {}
         for tok_name, vocab_file_path in vocab_config.items():
@@ -193,7 +193,10 @@ class InputLoader:
                 try:
                     with open(vocab_path, 'r', encoding='utf-8') as f:
                         vocab_tokens = [line.strip() for line in f if line.strip()]
-                    vocabularies[tok_name] = vocab_tokens
+                    
+                    # Create vocab dict mapping tokens to indices
+                    vocab_dict = {token: idx for idx, token in enumerate(vocab_tokens)}
+                    vocabularies[tok_name] = SimpleVocabulary(len(vocab_tokens), vocab_dict)
                     logger.info(f"Loaded vocabulary for {tok_name} from {vocab_path} ({len(vocab_tokens)} tokens)")
                 except Exception as e:
                     logger.warning(f"Failed to load vocabulary for {tok_name} from {vocab_path}: {e}")

@@ -1,20 +1,25 @@
 """Configuration modules for tokenizer analysis."""
 
-from .normalization import (
-    NormalizationConfig,
+from .text_measurement import (
+    TextMeasurementConfig,
     NormalizationMethod,
-    PretokenizationMethod,
-    TextNormalizer,
-    DEFAULT_NORMALIZATION_CONFIG,
-    create_default_configs,
-    LINES_CONFIG
+    ByteCountingMethod,
+    WordCountingMethod,
+    LineCountingMethod,
+    TextMeasurer,
+    DEFAULT_TEXT_MEASUREMENT_CONFIG,
+    DEFAULT_LINE_MEASUREMENT_CONFIG,
+    DEFAULT_WORD_MEASUREMENT_CONFIG,
+    create_default_configs
 )
 
 __all__ = [
-    'NormalizationConfig',
-    'NormalizationMethod', 
-    'PretokenizationMethod',
-    'TextNormalizer',
-    'DEFAULT_NORMALIZATION_CONFIG',
+    'TextMeasurementConfig',
+    'NormalizationMethod',
+    'ByteCountingMethod',
+    'WordCountingMethod', 
+    'LineCountingMethod',
+    'TextMeasurer',
+    'DEFAULT_TEXT_MEASUREMENT_CONFIG',
     'create_default_configs'
 ]

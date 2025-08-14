@@ -1,0 +1,4 @@
+{
+  "method": "bytes",
+  "byte_counting_method": "hf_tokenizer"
+}

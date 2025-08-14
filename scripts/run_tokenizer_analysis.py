@@ -3,7 +3,7 @@ Unified tokenizer analysis script supporting both raw tokenizers and pre-tokeniz
 
 Raw tokenizer examples:
 python scripts/run_tokenizer_analysis.py --use-sample-data
-python scripts/run_tokenizer_analysis.py --tokenizer-config configs/tokenizer_config.json --language-config configs/language_config.json --morphological-config configs/morphological_config.json --normalization-config configs/normalization_config_bytes.json --samples-per-lang 3000 --output-dir analysis_results --verbose --run-grouped-analysis
+python scripts/run_tokenizer_analysis.py --tokenizer-config configs/tokenizer_config.json --language-config configs/language_config.json --morphological-config configs/morphological_config.json --measurement-config configs/text_measurement_config_bytes.json --samples-per-lang 3000 --output-dir analysis_results --verbose --run-grouped-analysis
 
 Pre-tokenized data examples:
 python scripts/run_tokenizer_analysis.py --tokenized-data-file tokenized_data.json --language-config configs/language_config.json
@@ -331,9 +331,9 @@ Examples:
         help="Directory containing morphological data for MorphScore analysis"
     )
     parser.add_argument(
-        "--normalization-config",
+        "--measurement-config",
         type=str,
-        help="JSON file with normalization configuration (method, pretokenization, etc.)"
+        help="JSON file with text measurement configuration (method, counting functions, etc.)"
     )
     parser.add_argument(
         "--use-sample-data",
@@ -482,7 +482,7 @@ Examples:
         tokenizer_configs = create_sample_configs()
         language_config_path = create_sample_language_metadata()
         morphological_config = create_sample_morphological_config()
-        normalization_config = None  # Use default for sample data
+        measurement_config = None  # Use default for sample data
         
         # Configure MorphScore for sample data
         morphscore_config = None
@@ -522,12 +522,12 @@ Examples:
         if args.morphological_config:
             morphological_config = load_config_from_file(args.morphological_config)
         
-        # Load normalization configuration
-        normalization_config = None
-        if args.normalization_config:
-            from tokenizer_analysis.config import NormalizationConfig
-            norm_config_dict = load_config_from_file(args.normalization_config)
-            normalization_config = NormalizationConfig.from_dict(norm_config_dict)
+        # Load text measurement configuration
+        measurement_config = None
+        if args.measurement_config:
+            from tokenizer_analysis.config import TextMeasurementConfig
+            measurement_config_dict = load_config_from_file(args.measurement_config)
+            measurement_config = TextMeasurementConfig.from_dict(measurement_config_dict)
         
         # MorphScore not supported with pre-tokenized data
         morphscore_config = None
@@ -552,12 +552,12 @@ Examples:
         if args.morphological_config:
             morphological_config = load_config_from_file(args.morphological_config)
         
-        # Load normalization configuration
-        normalization_config = None
-        if args.normalization_config:
-            from tokenizer_analysis.config import NormalizationConfig
-            norm_config_dict = load_config_from_file(args.normalization_config)
-            normalization_config = NormalizationConfig.from_dict(norm_config_dict)
+        # Load text measurement configuration
+        measurement_config = None
+        if args.measurement_config:
+            from tokenizer_analysis.config import TextMeasurementConfig
+            measurement_config_dict = load_config_from_file(args.measurement_config)
+            measurement_config = TextMeasurementConfig.from_dict(measurement_config_dict)
         
         # Configure MorphScore for raw tokenizer mode
         morphscore_config = None
@@ -580,7 +580,7 @@ Examples:
         analyzer = create_analyzer_from_tokenized_data(
             tokenized_data=tokenized_data,
             vocabularies=vocabularies,
-            normalization_config=normalization_config,
+            measurement_config=measurement_config,
             language_metadata=language_metadata,
             plot_save_dir=args.output_dir,
             morphological_config=morphological_config,
@@ -623,7 +623,7 @@ Examples:
         analyzer = create_analyzer_from_raw_inputs(
             tokenizer_configs=tokenizer_configs,
             language_texts=language_texts,
-            normalization_config=normalization_config,
+            measurement_config=measurement_config,
             language_metadata=language_metadata,
             plot_save_dir=args.output_dir,
             morphological_config=morphological_config,

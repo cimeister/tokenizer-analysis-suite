@@ -18,7 +18,7 @@ from .metrics.morphological import MorphologicalMetrics
 from .metrics.morphscore import MorphScoreMetrics
 from .visualization import TokenizerVisualizer
 from .visualization.latex_tables import LaTeXTableGenerator
-from .config import NormalizationConfig, DEFAULT_NORMALIZATION_CONFIG
+from .config import TextMeasurementConfig, DEFAULT_TEXT_MEASUREMENT_CONFIG
 from .config.language_metadata import LanguageMetadata
 
 logger = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ class UnifiedTokenizerAnalyzer:
     
     def __init__(self, 
                  input_provider: InputProvider,
-                 normalization_config: Optional[NormalizationConfig] = None,
+                 measurement_config: Optional[TextMeasurementConfig] = None,
                  language_metadata: Optional[LanguageMetadata] = None,
                  plot_save_dir: str = "results",
                  morphological_config: Optional[Dict[str, str]] = None,
@@ -48,7 +48,7 @@ class UnifiedTokenizerAnalyzer:
         
         Args:
             input_provider: InputProvider instance with tokenized data
-            normalization_config: Configuration for normalization method
+            measurement_config: Configuration for text measurement method
             language_metadata: Optional language metadata for grouping
             plot_save_dir: Directory to save plots
             morphological_config: Optional morphological dataset configuration
@@ -68,7 +68,7 @@ class UnifiedTokenizerAnalyzer:
         
         self.input_provider = input_provider
         self.tokenizer_names = input_provider.get_tokenizer_names()
-        self.norm_config = normalization_config or DEFAULT_NORMALIZATION_CONFIG
+        self.measurement_config = measurement_config or DEFAULT_TEXT_MEASUREMENT_CONFIG
         self.language_metadata = language_metadata
         self.plot_save_dir = plot_save_dir
         
@@ -84,17 +84,17 @@ class UnifiedTokenizerAnalyzer:
         
         # Initialize metrics classes
         self.basic_metrics = BasicTokenizationMetrics(
-            input_provider, normalization_config, language_metadata
+            input_provider, measurement_config, language_metadata
         )
         
         # Initialize information-theoretic metrics
         self.info_metrics = InformationTheoreticMetrics(
-            input_provider, normalization_config=normalization_config, language_metadata=language_metadata
+            input_provider, measurement_config=measurement_config, language_metadata=language_metadata
         )
         
         # Initialize Gini metrics
         self.gini_metrics = TokenizerGiniMetrics(
-            input_provider, normalization_config=normalization_config, language_metadata=language_metadata
+            input_provider, measurement_config=measurement_config, language_metadata=language_metadata
         )
         
         # Initialize morphological metrics if config provided
@@ -199,7 +199,7 @@ class UnifiedTokenizerAnalyzer:
         
         # Save tokenized data if requested
         if save_tokenized_data:
-            if tokenized_data_path is None:
+            if not tokenized_data_path:
                 tokenized_data_path = f"{self.plot_save_dir}/tokenized_data.pkl"
             self._save_tokenized_data(tokenized_data, tokenized_data_path)
         
@@ -473,9 +473,9 @@ class UnifiedTokenizerAnalyzer:
         if 'fertility' in results:
             fertility_data = results['fertility']
             metadata = fertility_data.get('metadata', {})
-            norm_method = metadata.get('normalization_method', 'units')
+            measurement_method = metadata.get('normalization_method', 'units')
             
-            print(f"\n📊 FERTILITY ANALYSIS ({norm_method})")
+            print(f"\n📊 FERTILITY ANALYSIS ({measurement_method})")
             print("-" * 40)
             
             for tok_name in self.tokenizer_names:
@@ -483,7 +483,7 @@ class UnifiedTokenizerAnalyzer:
                     global_stats = fertility_data['per_tokenizer'][tok_name]['global']
                     mean_fertility = global_stats.get('mean', 0.0)
                     std_fertility = global_stats.get('std', 0.0)
-                    print(f"{tok_name:20}: {mean_fertility:.3f} ± {std_fertility:.3f} tokens/{norm_method[:-1]}")
+                    print(f"{tok_name:20}: {mean_fertility:.3f} ± {std_fertility:.3f} tokens/{measurement_method[:-1]}")
         
         # Print token length results
         if 'token_length' in results:
@@ -533,7 +533,7 @@ class UnifiedTokenizerAnalyzer:
             'languages': self.input_provider.get_languages(),
             'num_languages': len(self.input_provider.get_languages()),
             'vocab_sizes': {name: self.input_provider.get_vocab_size(name) for name in self.tokenizer_names},
-            'normalization_method': self.norm_config.method.value,
+            'measurement_method': self.measurement_config.method.value,
             'has_language_metadata': self.language_metadata is not None,
             'analysis_groups': list(self.language_metadata.analysis_groups.keys()) if self.language_metadata else [],
             'plot_save_dir': self.plot_save_dir
@@ -680,7 +680,8 @@ class UnifiedTokenizerAnalyzer:
         logger.info(f"Saving tokenized data to {save_path}")
         
         # Create directory if needed
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        if os.path.dirname(save_path):
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
         
         # Save tokenized data in pickle format
         with open(save_path, 'wb') as f:

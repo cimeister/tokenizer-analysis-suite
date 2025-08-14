@@ -10,7 +10,7 @@ import logging
 from .base import BaseMetrics, TokenizedDataProcessor
 from ..core.input_types import TokenizedData
 from ..core.input_providers import InputProvider
-from ..config import NormalizationConfig, TextNormalizer, DEFAULT_NORMALIZATION_CONFIG, LINES_CONFIG
+from ..config import TextMeasurementConfig, TextMeasurer, DEFAULT_LINE_MEASUREMENT_CONFIG
 from ..config.language_metadata import LanguageMetadata
 from ..constants import DEFAULT_RENYI_ALPHAS, SHANNON_ENTROPY_ALPHA
 
@@ -22,7 +22,7 @@ class InformationTheoreticMetrics(BaseMetrics):
     
     def __init__(self, input_provider: InputProvider,
                  renyi_alphas: Optional[List[float]] = None, 
-                 normalization_config: Optional[NormalizationConfig] = None,
+                 measurement_config: Optional[TextMeasurementConfig] = None,
                  language_metadata: Optional[LanguageMetadata] = None):
         """
         Initialize information-theoretic metrics.
@@ -30,13 +30,14 @@ class InformationTheoreticMetrics(BaseMetrics):
         Args:
             input_provider: InputProvider instance
             renyi_alphas: List of alpha values for Rényi entropy (default: [1.0, 2.0, 3.0])
-            normalization_config: Configuration for normalization method
+            measurement_config: Configuration for text measurement method
             language_metadata: Optional language metadata for grouping
         """
         super().__init__(input_provider)
         self.renyi_alphas = renyi_alphas or DEFAULT_RENYI_ALPHAS
-        self.norm_config = LINES_CONFIG#normalization_config or DEFAULT_NORMALIZATION_CONFIG
-        self.normalizer = TextNormalizer(self.norm_config)
+        # Default to lines for information-theoretic analysis (as was hardcoded before)
+        self.measurement_config = measurement_config or DEFAULT_LINE_MEASUREMENT_CONFIG
+        self.text_measurer = TextMeasurer(self.measurement_config)
         self.language_metadata = language_metadata
     
     def compute_renyi_entropy(self, token_counts: Counter, alpha: float) -> float:
@@ -185,7 +186,7 @@ class InformationTheoreticMetrics(BaseMetrics):
                 for data in lang_data:
                     if data.text and data.text.strip():  # Skip empty texts
                         # Use configurable normalization
-                        normalization_count = self.normalizer.get_normalization_count(data.text)
+                        normalization_count = self.text_measurer.get_unit_count(data.text)
                         if normalization_count > 0 and data.tokens:
                             ratio = normalization_count / len(data.tokens)
                             lang_ratios.append(ratio)
@@ -210,7 +211,7 @@ class InformationTheoreticMetrics(BaseMetrics):
         
         # Add metadata
         results['metadata'] = {
-            'normalization_method': self.norm_config.method.value
+            'normalization_method': self.measurement_config.method.value
         }
         
         # Compute pairwise comparisons

@@ -36,7 +36,7 @@ cd morphscore && pip install -e . && cd ..
 # Quick start with sample data
 python scripts/run_tokenizer_analysis.py --use-sample-data
 
-# Custom tokenizers and languages
+# Custom tokenizers and languages (see example configs below)
 python scripts/run_tokenizer_analysis.py \
     --tokenizer-config configs/tokenizer_config.json \
     --language-config configs/language_config.json \
@@ -131,6 +131,80 @@ results/
 }
 ```
 
+### Text Measurement Configuration
+
+The framework supports different text "length" measurements so that metrics can be normalized using different units:
+
+```bash
+# Use byte-level measurement (default)
+python scripts/run_tokenizer_analysis.py --use-sample-data \
+    --measurement-config configs/text_measurement_config_bytes.json
+
+# Use line-based measurement for parallel corpora
+python scripts/run_tokenizer_analysis.py --use-sample-data \
+    --measurement-config configs/text_measurement_config_lines.json
+
+# Use word-based measurement with HuggingFace whitespace tokenization
+python scripts/run_tokenizer_analysis.py --use-sample-data \
+    --measurement-config configs/text_measurement_config_words_hf.json
+```
+
+#### Available Measurement Methods
+
+**Byte Counting:**
+```json
+{
+  "method": "bytes",
+  "byte_counting_method": "utf8"
+}
+```
+- `"utf8"`: Standard UTF-8 encoding (default for compression)
+- `"hf_tokenizer"`: Uses HuggingFace tokenizer's pre-tokenizer for byte counting
+
+**Character Counting:**
+```json
+{
+  "method": "characters"
+}
+```
+- Counts Unicode characters (useful for non-Latin scripts)
+
+**Line Counting:**
+```json
+{
+  "method": "lines",
+  "line_counting_method": "python_split",
+  "include_empty_lines": false
+}
+```
+- `"python_split"`: Uses Python's `str.splitlines()` (default for Gini)
+- `"regex"`: Custom regex-based line splitting (requires `custom_regex`)
+- `include_empty_lines`: Whether to count empty lines
+
+**Word Counting:**
+```json
+{
+  "method": "words", (default for fertility)
+  "word_counting_method": "whitespace",
+  "include_empty_words": false
+}
+```
+- `"whitespace"`: Simple whitespace splitting
+- `"hf_whitespace"`: HuggingFace whitespace pre-tokenizer
+- `"regex"`: Custom regex-based word splitting (requires `custom_regex`)
+
+**Custom Regex:**
+```json
+{
+  "method": "words",
+  "word_counting_method": "regex", 
+  "custom_regex": "\\S+",
+  "include_empty_words": false
+}
+```
+- Allows custom regex patterns to override default counting methods
+- Works with both word and line counting methods
+
 ## Metrics
 
 ### Basic Tokenization Metrics
@@ -187,7 +261,7 @@ tokenizer_analysis/
 ├── config/                        # Configuration modules
 │   ├── __init__.py
 │   ├── language_metadata.py      # LanguageMetadata for grouping analysis
-│   └── normalization.py          # Normalization configuration
+│   └── text_measurement.py       # Text measurement configuration
 ├── core/                          # Core data structures and providers
 │   ├── input_providers.py        # InputProvider implementations
 │   ├── input_types.py            # TokenizedData and core types
