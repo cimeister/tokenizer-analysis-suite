@@ -107,6 +107,8 @@ results/
 ```
 
 ### Tokenizer Configuration
+
+By default, the library expects a huggingface-style tokenizer. The "path" should be to a file or directory that can be accepted by `Tokenizer.from_file` or `AutoTokenizer.from_pretrained`. You can implement custom logic to read in a new tokenizer in the `load_tokenizer_from_config` function in `tokenizer_analysis/utils/tokenizer_utils.py` (this will also require adding logic for encoding text to the `encode_text` function in the same file).
 ```json
 {
   "tokenizer1": {
@@ -217,6 +219,7 @@ python scripts/run_tokenizer_analysis.py --use-sample-data \
 - **Rényi Entropy**: Information content at different α values - generalizes Shannon entropy
 - **Vocabulary Utilization**: Fraction of vocabulary actually used - measures vocabulary efficiency
 - **Entropy Analysis**: Token frequency distributions and information content
+- **Average Token Rank**: Typical position of tokens in a tokenized text within the frequency-ordered vocabulary
 
 ### Morphological Metrics
 - **Boundary Precision/Recall**: How well tokens align with morpheme boundaries

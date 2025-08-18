@@ -1,3 +1,3 @@
 [submodule "morphscore"]
 	path = morphscore
-	url = https://github.com/catherinearnett/morphscore.git
+	url = https://github.com/cimeister/morphscore
