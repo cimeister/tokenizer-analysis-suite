@@ -3,9 +3,12 @@ Input data types and abstractions for tokenizer analysis.
 """
 
 from dataclasses import dataclass
-from typing import Dict, List, Any, Optional, Union, Protocol
+from typing import Dict, List, Any, Optional, Union, Protocol, TYPE_CHECKING
 from abc import ABC, abstractmethod
 import logging
+
+if TYPE_CHECKING:
+    from .tokenizer_wrapper import TokenizerWrapper
 
 logger = logging.getLogger(__name__)
 
@@ -101,12 +104,12 @@ class InputSpecification:
     """Specification for input data to the analysis pipeline."""
     
     # For raw tokenization mode
-    tokenizer: Optional[TokenizerProtocol] = None
+    tokenizer: Optional['TokenizerWrapper'] = None
     texts: Optional[Dict[str, Union[str, List[str]]]] = None  # language -> text or list of texts
     
     # For pre-tokenized mode
     tokenizer_name: Optional[str] = None
-    vocabulary: Optional[VocabularyProvider] = None  # Can be tokenizer or vocab dict
+    vocabulary: Optional[VocabularyProvider] = None  # Kept for backward compatibility, but tokenizer is preferred
     tokenized_data: Optional[List[TokenizedData]] = None
     
     # Common
@@ -119,17 +122,21 @@ class InputSpecification:
         
         # Validate mode consistency
         has_raw_inputs = self.tokenizer is not None and self.texts is not None
-        has_tokenized_inputs = (self.tokenizer_name is not None and 
-                               self.vocabulary is not None and 
+        has_tokenized_inputs = (self.tokenizer is not None and 
                                self.tokenized_data is not None)
         
-        if not has_raw_inputs and not has_tokenized_inputs:
+        # Support legacy mode with tokenizer_name + vocabulary
+        has_legacy_tokenized_inputs = (self.tokenizer_name is not None and 
+                                     self.vocabulary is not None and 
+                                     self.tokenized_data is not None)
+        
+        if not has_raw_inputs and not has_tokenized_inputs and not has_legacy_tokenized_inputs:
             raise ValueError(
                 "Must provide either (tokenizer + texts) for raw mode or "
-                "(tokenizer_name + vocabulary + tokenized_data) for pre-tokenized mode"
+                "(tokenizer + tokenized_data) for pre-tokenized mode"
             )
         
-        if has_raw_inputs and has_tokenized_inputs:
+        if has_raw_inputs and (has_tokenized_inputs or has_legacy_tokenized_inputs):
             raise ValueError(
                 "Cannot provide both raw and pre-tokenized inputs simultaneously. "
                 "Use separate InputSpecification objects."
@@ -143,22 +150,19 @@ class InputSpecification:
     @property
     def is_pretokenized_mode(self) -> bool:
         """Check if this is pre-tokenized mode."""
-        return (self.tokenizer_name is not None and 
+        return (self.tokenizer is not None and self.tokenized_data is not None) or \
+               (self.tokenizer_name is not None and 
                 self.vocabulary is not None and 
                 self.tokenized_data is not None)
     
     def get_tokenizer_name(self) -> str:
         """Get tokenizer name for both modes."""
         if self.is_raw_mode:
-            # Try to get name from tokenizer object
-            if hasattr(self.tokenizer, 'name'):
-                return self.tokenizer.name
-            elif hasattr(self.tokenizer, '__class__'):
-                return self.tokenizer.__class__.__name__
-            else:
-                return 'unknown_tokenizer'
+            return self.tokenizer.get_name() if hasattr(self.tokenizer, 'get_name') else getattr(self.tokenizer, 'name', 'unknown')
+        elif self.tokenizer is not None:
+            return self.tokenizer.get_name()
         else:
-            return self.tokenizer_name
+            return self.tokenizer_name or 'unknown'
     
     def get_languages(self) -> List[str]:
         """Get list of languages in this specification."""

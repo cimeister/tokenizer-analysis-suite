@@ -9,7 +9,7 @@ from pathlib import Path
 import logging
 
 from .input_types import (
-    TokenizedData, InputSpecification, TokenizerProtocol, VocabularyProvider
+    TokenizedData, InputSpecification, VocabularyProvider
 )
 from .input_providers import create_input_provider, InputProvider
 
@@ -175,7 +175,7 @@ class InputLoader:
             raise ValueError(f"Unsupported file format: {file_path.suffix}. Use .json or .pkl")
     
     @staticmethod
-    def load_vocabularies_from_config(vocab_config: Dict[str, str]) -> Dict[str, SimpleVocabulary]:
+    def load_vocabularies_from_config(vocab_config: Dict[str, str]):
         """
         Load vocabularies from text files specified in configuration.
         
@@ -183,8 +183,10 @@ class InputLoader:
             vocab_config: Dictionary mapping tokenizer names to vocabulary file paths
             
         Returns:
-            Dictionary mapping tokenizer names to SimpleVocabulary objects
+            Dictionary mapping tokenizer names to TokenizerWrapper objects
         """
+        from .tokenizer_wrapper import PreTokenizedDataTokenizer
+        
         vocabularies = {}
         for tok_name, vocab_file_path in vocab_config.items():
             vocab_path = Path(vocab_file_path)
@@ -196,7 +198,7 @@ class InputLoader:
                     
                     # Create vocab dict mapping tokens to indices
                     vocab_dict = {token: idx for idx, token in enumerate(vocab_tokens)}
-                    vocabularies[tok_name] = SimpleVocabulary(len(vocab_tokens), vocab_dict)
+                    vocabularies[tok_name] = PreTokenizedDataTokenizer(tok_name, len(vocab_tokens), vocab_dict)
                     logger.info(f"Loaded vocabulary for {tok_name} from {vocab_path} ({len(vocab_tokens)} tokens)")
                 except Exception as e:
                     logger.warning(f"Failed to load vocabulary for {tok_name} from {vocab_path}: {e}")
@@ -372,7 +374,7 @@ class InputValidator:
         return report
 
 
-def create_simple_specifications(tokenizer_text_pairs: Dict[str, Tuple[TokenizerProtocol, Dict[str, Union[str, List[str]]]]]) -> Dict[str, InputSpecification]:
+def create_simple_specifications(tokenizer_text_pairs: Dict[str, Tuple['TokenizerWrapper', Dict[str, Union[str, List[str]]]]]) -> Dict[str, InputSpecification]:
     """
     Helper function to create InputSpecifications from simple tokenizer+text pairs.
     

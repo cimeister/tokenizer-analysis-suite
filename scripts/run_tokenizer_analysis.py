@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from tokenizer_analysis import create_analyzer_from_raw_inputs, create_analyzer_from_tokenized_data
-from tokenizer_analysis.utils import setup_environment, load_tokenizer_from_config
+from tokenizer_analysis.utils import setup_environment
 from tokenizer_analysis.config.language_metadata import LanguageMetadata
 from tokenizer_analysis.loaders.multilingual_data import load_multilingual_data
 from tokenizer_analysis.core.input_utils import InputLoader
@@ -52,11 +52,11 @@ def create_sample_configs() -> Dict[str, Dict]:
     """Create sample tokenizer configurations for testing."""
     return {
         "bpe": {
-            "class": "standard",
+            "class": "huggingface",
             "path": "sample_tokenizers/bpe.json"
         },
         "unigramlm": {
-            "class": "standard",
+            "class": "huggingface",
             "path": "sample_tokenizers/unigramlm.json"
         }
     }
@@ -489,7 +489,6 @@ Examples:
         if args.morphscore or args.morphscore_config:
             if args.morphscore_config:
                 morphscore_config = load_config_from_file(args.morphscore_config)
-                morphscore_config['data_dir'] = args.morphscore_data_dir
             else:
                 morphscore_config = create_sample_morphscore_config(args.morphscore_data_dir)
     elif use_tokenized_data:
@@ -564,7 +563,6 @@ Examples:
         if args.morphscore or args.morphscore_config:
             if args.morphscore_config:
                 morphscore_config = load_config_from_file(args.morphscore_config)
-                morphscore_config['data_dir'] = args.morphscore_data_dir
             else:
                 morphscore_config = create_sample_morphscore_config(args.morphscore_data_dir)
     

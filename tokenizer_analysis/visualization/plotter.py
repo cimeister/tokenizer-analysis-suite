@@ -59,17 +59,14 @@ class TokenizerVisualizer:
             return
         
         try:
-            grouped_dir = f"{self.save_dir}/grouped_plots"
-            os.makedirs(grouped_dir, exist_ok=True)
-            
             logger.info("Generating grouped analysis plots")
-            generate_all_plots({}, grouped_dir, self.tokenizer_names,
+            generate_all_plots({}, self.save_dir, self.tokenizer_names,
                              grouped_results=grouped_results,
                              show_global_lines=self.show_global_lines,
-                             per_language_plots=self.per_language_plots,
-                             faceted_plots=self.faceted_plots)
+                             per_language_plots=False,  # Not applicable for grouped plots
+                             faceted_plots=False)       # Not applicable for grouped plots
             
-            logger.info(f"Grouped plots saved to {grouped_dir}")
+            logger.info(f"Grouped plots saved to {self.save_dir}/grouped_plots")
         except Exception as e:
             logger.error(f"Error generating grouped plots: {e}")
             raise

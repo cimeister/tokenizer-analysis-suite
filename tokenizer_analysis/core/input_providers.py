@@ -2,13 +2,15 @@
 Input provider implementations for raw and pre-tokenized data.
 """
 
-from typing import Dict, List, Any, Union, Optional
+from typing import Dict, List, Any, Union, Optional, TYPE_CHECKING
 import logging
 from .input_types import (
     InputProvider, TokenizedData, InputSpecification, 
-    TokenizerProtocol, VocabularyProvider
+    VocabularyProvider
 )
-from ..utils import encode_text
+
+if TYPE_CHECKING:
+    from .tokenizer_wrapper import TokenizerWrapper
 
 logger = logging.getLogger(__name__)
 
@@ -69,20 +71,8 @@ class RawTokenizationProvider(InputProvider):
                             logger.debug(f"Empty text for {language}, skipping")
                             continue
                         
-                        # Tokenize the text
-                        tokens_raw = encode_text(spec.tokenizer, text) #spec.tokenizer.encode(text)
-                        
-                        # Ensure tokens is a list of integers
-                        if hasattr(tokens_raw, 'ids'):
-                            # Handle tokenizers library Encoding object
-                            tokens = tokens_raw.ids
-                        elif isinstance(tokens_raw, dict) and "input_ids" in tokens_raw:
-                            tokens = tokens_raw["input_ids"]
-                        elif isinstance(tokens_raw, list):
-                            tokens = tokens_raw
-                        else:
-                            logger.error(f"Unexpected token format from tokenizer {tok_name}: {type(tokens_raw)} - {tokens_raw}")
-                            raise ValueError(f"Tokenizer {tok_name} returned unexpected format: {type(tokens_raw)}")
+                        # Tokenize the text using TokenizerWrapper interface
+                        tokens = spec.tokenizer.encode(text)
                         
                         # Validate tokens are integers
                         if not isinstance(tokens, list) or not all(isinstance(t, int) for t in tokens):
@@ -148,7 +138,7 @@ class RawTokenizationProvider(InputProvider):
                 all_languages.update(spec.texts.keys())
             return sorted(list(all_languages))
     
-    def get_tokenizer(self, tokenizer_name: str) -> TokenizerProtocol:
+    def get_tokenizer(self, tokenizer_name: str) -> 'TokenizerWrapper':
         """Get tokenizer object (useful for additional operations)."""
         if tokenizer_name not in self.specifications:
             raise ValueError(f"Unknown tokenizer: {tokenizer_name}")
@@ -212,7 +202,17 @@ class PreTokenizedProvider(InputProvider):
         """Get vocabulary size for a tokenizer."""
         if tokenizer_name not in self.specifications:
             raise ValueError(f"Unknown tokenizer: {tokenizer_name}")
-        return self.specifications[tokenizer_name].vocabulary.vocab_size
+        
+        spec = self.specifications[tokenizer_name]
+        
+        # Try tokenizer first (new way)
+        if spec.tokenizer is not None:
+            return spec.tokenizer.get_vocab_size()
+        # Fall back to vocabulary (legacy way)
+        elif spec.vocabulary is not None:
+            return spec.vocabulary.vocab_size
+        else:
+            raise ValueError(f"No vocabulary information available for tokenizer {tokenizer_name}")
     
     def get_languages(self, tokenizer_name: str = None) -> List[str]:
         """Get list of languages."""
@@ -231,7 +231,19 @@ class PreTokenizedProvider(InputProvider):
         """Get vocabulary provider (useful for additional operations)."""
         if tokenizer_name not in self.specifications:
             raise ValueError(f"Unknown tokenizer: {tokenizer_name}")
-        return self.specifications[tokenizer_name].vocabulary
+        spec = self.specifications[tokenizer_name]
+        # Return tokenizer if available (new way), otherwise vocabulary (legacy)
+        return spec.tokenizer if spec.tokenizer is not None else spec.vocabulary
+    
+    def get_tokenizer(self, tokenizer_name: str) -> 'TokenizerWrapper':
+        """Get tokenizer object (useful for additional operations)."""
+        if tokenizer_name not in self.specifications:
+            raise ValueError(f"Unknown tokenizer: {tokenizer_name}")
+        spec = self.specifications[tokenizer_name]
+        if spec.tokenizer is not None:
+            return spec.tokenizer
+        else:
+            raise ValueError(f"No tokenizer wrapper available for {tokenizer_name} (legacy mode)")
 
 
 class MixedInputProvider(InputProvider):

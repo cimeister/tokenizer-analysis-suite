@@ -18,179 +18,31 @@ from tokenizers.pre_tokenizers import Whitespace, ByteLevel, Sequence
 from tokenizers.processors import TemplateProcessing
 from transformers import AutoTokenizer
 
-_ORIGINAL_FUNCTIONS_AVAILABLE = False
-_original_encode_text = None
-_original_load_tokenizer_from_config = None
-# Try to import original functions using multiple strategies
-try:
-    from unimixlm.code.utils import encode_text_minimal as _original_encode_text
-    from unimixlm.code.utils import load_tokenizer_from_config as _original_load_tokenizer_from_config
-    _ORIGINAL_FUNCTIONS_AVAILABLE = True
-except ImportError:
-    logger.info("Unable to pull original encoding functions, will use new definitions")
-
-def _as_batch(txt):
-    """Return (list version, was_single_flag)."""
-    if isinstance(txt, (str, tuple)):
-        return [txt], True
-    if isinstance(txt, list):
-        return txt, False
-    raise TypeError(type(txt))
-
-
-def _apply_trunc_pad(
-    ids_batch, toks_batch, offs_batch,
-    *,
-    truncation: bool, max_length: Optional[int],
-    padding: Optional[str], pad_id: int, pad_tok: str,
-    return_attention_mask: bool,
-):
-    """Apply truncation and padding to token sequences."""
-    out_ids, out_toks, out_offs = [], [], []
-    masks = [] if return_attention_mask else None
-
-    for ids, toks, offs in zip(ids_batch, toks_batch,
-                               offs_batch or [None] * len(ids_batch)):
-        # Truncation
-        if truncation and max_length:
-            ids, toks = ids[:max_length], toks[:max_length]
-            if offs is not None:
-                offs = offs[:max_length]
-
-        # Padding
-        if padding == "max_length" and max_length:
-            pad_len = max_length - len(ids)
-            ids += [pad_id] * pad_len
-            toks += [pad_tok] * pad_len
-            if offs is not None:
-                offs += [(0, 0)] * pad_len
-        else:
-            pad_len = 0
-
-        # Attention mask
-        if masks is not None:
-            real_len = len(ids) - pad_len
-            masks.append([1] * real_len + [0] * pad_len)
-
-        out_ids.append(ids)
-        out_toks.append(toks)
-        if offs is not None:
-            out_offs.append(offs)
-
-    return (
-        out_ids,
-        out_toks,
-        masks,
-        out_offs if offs_batch is not None else None,
-    )
-
-
-def encode_text(
-    tokenizer: Any,
-    text: Union[str, List[str], Tuple[str, str], List[Tuple[str, str]]],
-    *,
-    add_special_tokens: bool = False,
-    padding: Optional[str] = None,
-    truncation: Union[bool, str] = False,
-    max_length: Optional[int] = None,
-    return_attention_mask: bool = False,
-    **kwargs
-) -> Dict[str, Any]:
+def load_tokenizer_from_config(config, name: str = "tokenizer"):
     """
-    Encode text using various tokenizer types.
+    Load tokenizer wrapper from configuration (here for backwards compatibility)
     
+    Args:
+        config: Configuration dictionary
+        name: Tokenizer name (for the wrapper)
+        
+    Returns:
+        TokenizerWrapper instance
+    """
+    from ..core.tokenizer_wrapper import create_tokenizer_wrapper
+    logger.warning("Deprecated function; Use `create_tokenizer_wrapper` in core.tokenizer_wrapper instead")
+    return create_tokenizer_wrapper(name, config)
+
+
+def _load_huggingface_tokenizer(config):
+    """
+    Internal function to load raw HuggingFace tokenizer from configuration.
+    
+    This function is used by the HuggingFaceTokenizer wrapper.
     Tries to use original implementation first, falls back to simplified version.
     """
-    if isinstance(tokenizer, AutoTokenizer):
-        return tokenizer(text, add_special_tokens=add_special_tokens)
-    elif isinstance(tokenizer, Tokenizer):
-        return tokenizer.encode(text, add_special_tokens=add_special_tokens)
-    if _ORIGINAL_FUNCTIONS_AVAILABLE:
-        try:
-            return _original_encode_text(
-                tokenizer, text,
-                add_special_tokens=add_special_tokens
-            )
-        except Exception as e:
-            logger.warning(f"Original encode_text failed ({e}), using fallback")
-    
-    # Fallback implementation
-    batch_txt, was_single = _as_batch(text)
-    
-    # Try to get pad token
-    if hasattr(tokenizer, "pad_token") and tokenizer.pad_token:
-        pad_token = tokenizer.pad_token
-    else:
-        pad_token = "<pad>"
-    
-    # Get pad_id
-    if hasattr(tokenizer, "get_vocab"):
-        vocab = tokenizer.get_vocab()
-        pad_id = vocab.get(pad_token, 0)
-    else:
-        pad_id = 0
-
-    # Use tokenizer's encode_batch if available
-    if hasattr(tokenizer, "encode_batch"):
-        encodings = tokenizer.encode_batch(batch_txt, add_special_tokens=add_special_tokens)
-        logger.debug("Using batch tokenization...")
-
-        ids_batch = [enc.ids for enc in encodings]
-        toks_batch = [enc.tokens for enc in encodings]
-        offsets_b = [enc.offsets for enc in encodings] if hasattr(encodings[0], 'offsets') else None
-
-        ids_batch, toks_batch, masks, offsets_b = _apply_trunc_pad(
-            ids_batch, toks_batch, offsets_b,
-            truncation=truncation, max_length=max_length,
-            padding=padding, pad_id=pad_id,
-            pad_tok=pad_token,
-            return_attention_mask=return_attention_mask,
-        )
-
-        result = {"input_ids": ids_batch, "tokens": toks_batch}
-        if masks is not None:
-            result["attention_mask"] = masks
-        if offsets_b is not None:
-            result["offset_mapping"] = offsets_b
-
-    else:
-        # Fallback to HuggingFace tokenizer
-        logger.debug("Using HuggingFace tokenization...")
-        hf_kwargs = dict(
-            add_special_tokens=add_special_tokens,
-            padding=padding,
-            truncation=truncation,
-            max_length=max_length,
-            return_attention_mask=return_attention_mask,
-        )
-        enc = tokenizer(batch_txt, **hf_kwargs)
-        result = enc.to_dict() if hasattr(enc, "to_dict") else dict(enc)
-        if "tokens" not in result and hasattr(tokenizer, "convert_ids_to_tokens"):
-            result["tokens"] = [tokenizer.convert_ids_to_tokens(ids) for ids in result["input_ids"]]
-
-    # Unwrap single example
-    if was_single:
-        for k, v in result.items():
-            if isinstance(v, list) and len(v) == 1:
-                result[k] = v[0]
-    
-    return result
-
-
-def load_tokenizer_from_config(config):
-    """
-    Load tokenizer from configuration.
-    
-    Tries to use original implementation first, falls back to simplified version.
-    """
-    if _ORIGINAL_FUNCTIONS_AVAILABLE:
-        try:
-            return _original_load_tokenizer_from_config(config)
-        except Exception as e:
-            logger.warning(f"Original load_tokenizer_from_config failed ({e}), using fallback")
-    
-    # Fallback implementation
-    tokenizer_class = config.get('class', 'standard')
+ 
+    tokenizer_class = config.get('class', 'huggingface')
     
     if tokenizer_class == "custom_bpe":
         # Custom BPE tokenizer loading

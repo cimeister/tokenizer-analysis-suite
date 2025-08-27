@@ -368,10 +368,13 @@ class MorphologicalMetrics(BaseMetrics):
         
         try:
             # Fallback 2: Direct vocabulary lookup with caching
+            vocab = None
             if hasattr(tokenizer, 'get_vocab'):
+                vocab = tokenizer.get_vocab()
+            
+            if vocab:
                 # Use cached vocabulary mapping if available
                 if tokenizer_id not in self._tokenizer_vocab_cache:
-                    vocab = tokenizer.get_vocab()
                     self._tokenizer_vocab_cache[tokenizer_id] = {v: k for k, v in vocab.items()}
                 
                 id_to_token = self._tokenizer_vocab_cache[tokenizer_id]

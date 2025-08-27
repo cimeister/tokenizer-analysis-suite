@@ -6,7 +6,7 @@ from typing import Dict, List, Any, Optional, Union, Tuple
 import logging
 from dataclasses import dataclass
 
-from .input_types import TokenizedData, InputSpecification, TokenizerProtocol, VocabularyProvider
+from .input_types import TokenizedData, InputSpecification, VocabularyProvider
 from .input_providers import InputProvider
 
 logger = logging.getLogger(__name__)

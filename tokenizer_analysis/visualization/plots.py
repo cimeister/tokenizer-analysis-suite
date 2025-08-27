@@ -7,6 +7,9 @@ import seaborn as sns
 import numpy as np
 import os
 from typing import Dict, List, Any, Optional
+import logging 
+logger = logging.getLogger(__name__)
+
 
 # Configure matplotlib to use Times font family
 plt.rcParams['font.family'] = ['serif']
@@ -349,6 +352,11 @@ def plot_grouped_analysis(grouped_results: Dict[str, Dict[str, Any]], save_dir: 
     
     tokenizer_names = sorted(list(tokenizer_names))
     
+    # Check if we have tokenizers to plot
+    if not tokenizer_names:
+        logger.warning(f"No tokenizers found for metric {metric_name} in group type {group_type}")
+        return
+    
     # Plot data
     x_pos = np.arange(len(groups))
     width = 0.8 / len(tokenizer_names)
@@ -419,8 +427,13 @@ def generate_all_plots(results: Dict[str, Any], save_dir: str, tokenizer_names: 
         os.makedirs(grouped_dir, exist_ok=True)
         
         for group_type, group_data in grouped_results.items():
+            if not group_data:  # Skip empty group data
+                continue
             for metric in ['fertility', 'vocabulary_utilization', 'compression_ratio', 'morphscore']:
-                plot_grouped_analysis(grouped_results, grouped_dir, metric, group_type)
+                try:
+                    plot_grouped_analysis(grouped_results, grouped_dir, metric, group_type)
+                except Exception as e:
+                    logger.warning(f"Failed to plot {metric} for group type {group_type}: {e}")
 
 
 def _generate_per_language_plots(results: Dict[str, Any], save_dir: str, 

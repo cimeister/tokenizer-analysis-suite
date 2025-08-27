@@ -9,7 +9,6 @@ import logging
 from .base import BaseMetrics
 from ..core.input_types import TokenizedData
 from ..core.input_providers import InputProvider, RawTokenizationProvider
-#TODO: move this mapping
 from ..loaders.constants import ISO639_1_to_FLORES
 
 logger = logging.getLogger(__name__)
@@ -115,11 +114,21 @@ class MorphScoreMetrics(BaseMetrics):
         for tok_name in self.tokenizer_names:
             logger.info(f"Evaluating MorphScore for tokenizer: {tok_name}")
             try:
-                # Get tokenizer object
-                tokenizer = self.input_provider.get_tokenizer(tok_name)
+                # Get tokenizer wrapper
+                tokenizer_wrapper = self.input_provider.get_tokenizer(tok_name)
                 
-                # Evaluate with MorphScore
-                morph_results = morph_score.eval(tokenizer)
+                # Get underlying tokenizer for MorphScore (requires raw tokenizer)
+                underlying_tokenizer = tokenizer_wrapper.get_underlying_tokenizer()
+                if underlying_tokenizer is None:
+                    logger.warning(f"MorphScore not available for {tok_name}: no underlying tokenizer available")
+                    tokenizer_results = {
+                        'error': 'No underlying tokenizer available for MorphScore evaluation'
+                    }
+                    results['per_tokenizer'][tok_name] = tokenizer_results
+                    continue
+                
+                # Evaluate with MorphScore using the raw tokenizer
+                morph_results = morph_score.eval(underlying_tokenizer)
                 
                 # Process results
                 tokenizer_results = {

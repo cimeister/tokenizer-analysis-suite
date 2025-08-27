@@ -7,9 +7,10 @@ import os
 from typing import Dict, List, Any, Optional, Tuple, Union
 import numpy as np
 
-from .core.input_types import TokenizedData, InputSpecification, TokenizerProtocol
+from .core.input_types import TokenizedData, InputSpecification
 from .core.input_providers import InputProvider, create_input_provider
 from .core.input_utils import create_simple_specifications, InputValidator
+from .core.tokenizer_wrapper import create_tokenizer_wrapper
 from .metrics.base import BaseMetrics
 from .metrics.basic import BasicTokenizationMetrics
 from .metrics.information_theoretic import InformationTheoreticMetrics
@@ -110,11 +111,7 @@ class UnifiedTokenizerAnalyzer:
             try:
                 self.morphscore_metrics = MorphScoreMetrics(
                     input_provider, 
-                    data_dir=morphscore_config.get('data_dir', 'morphscore_data'),
-                    language_subset=morphscore_config.get('language_subset'),
-                    by_split=morphscore_config.get('by_split', False),
-                    freq_scale=morphscore_config.get('freq_scale', True),
-                    exclude_single_tok=morphscore_config.get('exclude_single_tok', False)
+                    **morphscore_config
                 )
             except (ImportError, ValueError) as e:
                 logger.warning(f"MorphScore metrics disabled: {e}")
@@ -751,9 +748,7 @@ def create_analyzer_from_raw_inputs(tokenizer_configs: Dict[str, Dict],
         
     Returns:
         UnifiedTokenizerAnalyzer instance
-    """
-    from .utils import load_tokenizer_from_config
-    
+    """    
     # Extract plot filtering from tokenizer configs
     plot_tokenizers = None
     actual_tokenizer_configs = {}
@@ -768,7 +763,7 @@ def create_analyzer_from_raw_inputs(tokenizer_configs: Dict[str, Dict],
     tokenizers = {}
     for name, config in actual_tokenizer_configs.items():
         logger.info(f"Loading tokenizer: {name}")
-        tokenizers[name] = load_tokenizer_from_config(config)
+        tokenizers[name] = create_tokenizer_wrapper(name, config)
     
     # Validate plot_tokenizers if provided
     if plot_tokenizers:
@@ -793,38 +788,39 @@ def create_analyzer_from_raw_inputs(tokenizer_configs: Dict[str, Dict],
 
 
 def create_analyzer_from_tokenized_data(tokenized_data: Dict[str, List[TokenizedData]],
-                                       vocabularies: Dict[str, Union[int, TokenizerProtocol]],
+                                       vocabularies: Dict[str, Union[int, 'TokenizerWrapper']],
                                        **kwargs) -> UnifiedTokenizerAnalyzer:
     """
     Create analyzer from pre-tokenized data.
     
     Args:
         tokenized_data: Dict mapping tokenizer names to TokenizedData lists
-        vocabularies: Dict mapping tokenizer names to vocab sizes or tokenizer objects
+        vocabularies: Dict mapping tokenizer names to vocab sizes or TokenizerWrapper objects
         **kwargs: Additional arguments for UnifiedTokenizerAnalyzer
         
     Returns:
         UnifiedTokenizerAnalyzer instance
     """
-    from .core.input_utils import SimpleVocabulary
+    from .core.tokenizer_wrapper import PreTokenizedDataTokenizer, TokenizerWrapper
     
     specifications = {}
     for tok_name, data_list in tokenized_data.items():
-        # Create vocabulary provider
+        # Create tokenizer wrapper
         if tok_name in vocabularies:
             vocab = vocabularies[tok_name]
             if isinstance(vocab, int):
-                vocab = SimpleVocabulary(vocab)
-            elif not hasattr(vocab, 'vocab_size'):
-                raise ValueError(f"Invalid vocabulary for {tok_name}: must be int or have vocab_size property")
+                tokenizer = PreTokenizedDataTokenizer(tok_name, vocab)
+            elif isinstance(vocab, TokenizerWrapper):
+                tokenizer = vocab
+            else:
+                raise ValueError(f"Invalid vocabulary for {tok_name}: must be int or TokenizerWrapper")
         else:
-            # Estimate vocab size from data
+            # Estimate vocab size and create tokenizer
             max_token_id = max(max(data.tokens) for data in data_list if data.tokens)
-            vocab = SimpleVocabulary(max_token_id + 1)
+            tokenizer = PreTokenizedDataTokenizer(tok_name, max_token_id + 1)
         
         spec = InputSpecification(
-            tokenizer_name=tok_name,
-            vocabulary=vocab,
+            tokenizer=tokenizer,
             tokenized_data=data_list
         )
         specifications[tok_name] = spec
