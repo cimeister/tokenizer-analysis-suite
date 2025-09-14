@@ -725,6 +725,8 @@ def _plot_per_language_gini_coefficient(results: Dict[str, Any], save_dir: str,
 def _plot_faceted_metric(results: Dict[str, Any], save_dir: str,
                         tokenizer_names: List[str], metric_name: str, show_global_lines: bool):
     """Generate faceted plot for a specific metric."""
+    from .visualization_config import PlotConfig
+    
     if metric_name not in results:
         return
         
@@ -740,11 +742,10 @@ def _plot_faceted_metric(results: Dict[str, Any], save_dir: str,
     else:
         axes = axes.flatten()
     
-    # Get title using centralized function
-    title = get_plot_title('faceted', metric_name)
-    fig.suptitle(title, fontsize=16)
-    
     metric_data = results[metric_name]['per_tokenizer']
+    
+    # Use a single consistent color for all bars
+    single_color = get_colors(1)[0]
     
     for i, tok_name in enumerate(tokenizer_names):
         ax = axes[i]
@@ -770,24 +771,26 @@ def _plot_faceted_metric(results: Dict[str, Any], save_dir: str,
                     values.append(0)
             
             if values:
-                colors = get_colors(len(languages))
-                bars = ax.bar(range(len(languages)), values, color=colors, alpha=0.8)
+                # Use single consistent color for all bars
+                bars = ax.bar(range(len(languages)), values, color=single_color, alpha=0.8)
                 if show_global_lines:
                     global_mean = np.mean(values)
                     ax.axhline(y=global_mean, color='red', linestyle='--', alpha=0.7)
                 ax.set_xticks(range(len(languages)))
-                ax.set_xticklabels([format_language_labels(lang) for lang in languages], rotation=45)
+                # Use smaller font size for faceted plots
+                ax.set_xticklabels([format_language_labels(lang) for lang in languages], 
+                                  rotation=45, fontsize=PlotConfig.FACETED_XTICK_SIZE)
         
         ax.set_title(tok_name)
-        # Only add ylabel to leftmost plots
-        if i % cols == 0:
-            metadata = results[metric_name].get('metadata', {})
-            ylabel = get_ylabel(metric_name, metadata)
-            ax.set_ylabel(ylabel)
     
     # Hide unused subplots
     for i in range(n_tokenizers, len(axes)):
         axes[i].set_visible(False)
+    
+    # Add single y-axis label using supylabel instead of individual labels
+    metadata = results[metric_name].get('metadata', {})
+    ylabel = get_ylabel(metric_name, metadata)
+    fig.supylabel(ylabel, x=0.02)
     
     plt.tight_layout()
     save_plot(fig, os.path.join(save_dir, f'{metric_name}_faceted.svg'))

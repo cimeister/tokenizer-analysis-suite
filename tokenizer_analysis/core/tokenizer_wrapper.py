@@ -231,6 +231,57 @@ class UniMixLMTokenizer(TokenizerWrapper):
         tokenizer = unimix_load_tokenizer_from_config(unimixlm_config)
         return cls(name, tokenizer, config)
 
+class CustomBPETokenizer(TokenizerWrapper):
+    """Wrapper for HuggingFace tokenizers."""
+    
+    def __init__(self, name: str, tokenizer, config: Dict[str, Any]):
+        """
+        Initialize HuggingFace tokenizer wrapper.
+        
+        Args:
+            name: Tokenizer name
+            tokenizer: HuggingFace tokenizer instance
+            config: Original configuration dict
+        """
+        self._name = name
+        self._tokenizer = tokenizer
+        self._config = config
+    
+    def get_name(self) -> str:
+        return self._name
+    
+    def get_vocab_size(self) -> int:
+        return len(self._tokenizer.get_vocab())
+    
+    def get_vocab(self) -> Dict[str, int]:
+        return self._tokenizer.get_vocab()
+    
+    def can_encode(self) -> bool:
+        return True
+    
+    def encode(self, text: str) -> List[int]:
+        return self._tokenizer.encode(text).ids
+    
+    def can_pretokenize(self) -> bool:
+        return hasattr(self._tokenizer, 'pre_tokenizer') and self._tokenizer.pre_tokenizer is not None
+    
+    def pretokenize(self, text: str) -> List[str]:
+        if not self.can_pretokenize():
+            raise NotImplementedError(f"Tokenizer {self._name} does not support pretokenization")
+        return [token for token, _ in self._tokenizer.pre_tokenizer.pre_tokenize_str(text)]
+    
+    def get_underlying_tokenizer(self):
+        """Return the underlying HuggingFace tokenizer object."""
+        return self._tokenizer
+    
+    @classmethod
+    def from_config(cls, name: str, config: Dict[str, Any]) -> 'CustomBPETokenizer':
+        """Create HuggingFace tokenizer wrapper from config."""
+        # Import here to avoid circular import
+        from ..utils.tokenizer_utils import _load_custom_bpe_from_directory
+        tokenizer = _load_custom_bpe_from_directory(config)
+        return cls(name, tokenizer, config)
+
 class PreTokenizedDataTokenizer(TokenizerWrapper):
     """Tokenizer wrapper for pre-tokenized data scenarios."""
     
@@ -285,7 +336,8 @@ _TOKENIZER_REGISTRY: Dict[str, type] = {
     'transformers': HuggingFaceTokenizer,
     'standard': HuggingFaceTokenizer,  # Legacy alias
     'pretokenized': PreTokenizedDataTokenizer,
-    'unimixlm': UniMixLMTokenizer
+    'unimixlm': UniMixLMTokenizer,
+    'custom_bpe': CustomBPETokenizer
 }
 
 

@@ -1,4 +1,5 @@
 {
   "method": "bytes",
-  "byte_counting_method": "hf_tokenizer"
+  "byte_counting": "hf_bytelevel",
+  "include_empty_splits": false
 }

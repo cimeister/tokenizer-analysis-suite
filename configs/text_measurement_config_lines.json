@@ -1,5 +1,5 @@
 {
   "method": "lines",
-  "line_counting_method": "python_split",
-  "include_empty_lines": false
+  "line_counting": "single",
+  "include_empty_splits": false
 }
