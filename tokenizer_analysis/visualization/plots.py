@@ -60,10 +60,11 @@ def get_metric_display_name(metric_key: str) -> str:
     """Get display name for a metric."""
     metric_names = {
         'fertility': 'Fertility',
-        'compression_ratio': 'Compression Rate', 
+        'compression_ratio': 'Compression Rate',
         'vocabulary_utilization': 'Vocabulary Utilization',
         'tokenizer_fairness_gini': 'Gini Coefficient',
-        'morphscore': 'MorphScore'
+        'morphscore': 'MorphScore',
+        'unk_percentage': 'UNK Percentage'
     }
     return metric_names.get(metric_key, metric_key.replace('_', ' ').title())
 
@@ -80,7 +81,8 @@ def get_ylabel(metric_key: str, metadata: Optional[Dict] = None) -> str:
         'vocabulary_utilization': 'Vocabulary Utilization (%)',
         'tokenizer_fairness_gini': 'Gini Coefficient',
         'morphscore_recall': 'MorphScore Recall',
-        'morphscore_precision': 'MorphScore Precision'
+        'morphscore_precision': 'MorphScore Precision',
+        'unk_percentage': 'UNK Percentage (%)'
     }
     return labels.get(metric_key, metric_key.replace('_', ' ').title())
 
@@ -190,6 +192,58 @@ def plot_vocabulary_utilization(results: Dict[str, Any], save_path: str, tokeniz
         ax.set_title(title)
         plt.xticks(rotation=45)
         
+    save_plot(fig, save_path)
+
+
+def plot_unk_percentage(results: Dict[str, Any], save_path: str, tokenizer_names: List[str], show_global_lines: bool = True):
+    """Plot UNK percentage comparison."""
+    if 'unk_percentage' not in results:
+        return
+
+    fig, ax = plt.subplots()
+    unk_data = results['unk_percentage']['per_tokenizer']
+
+    values = []
+    labels = []
+
+    for tok_name in tokenizer_names:
+        if tok_name in unk_data and unk_data[tok_name]['global'].get('has_unk_token', False):
+            mean_val = unk_data[tok_name]['global']['mean']
+            std_val = unk_data[tok_name]['global']['std']
+            values.append((mean_val, std_val))
+            labels.append(tok_name)
+
+    if values:
+        means, stds = zip(*values)
+        colors = get_colors(len(values))
+        bars = ax.bar(labels, means, yerr=stds, capsize=5, color=colors, alpha=0.8)
+
+        # Add global reference line if requested
+        if show_global_lines:
+            global_mean = np.mean(means)
+            ax.axhline(y=global_mean, color='red', linestyle='--', alpha=0.7,
+                      label=f'Global Average: {global_mean:.2f}%')
+            ax.legend()
+
+        # Get labels using centralized functions
+        metadata = results['unk_percentage'].get('metadata', {})
+        ylabel = get_ylabel('unk_percentage', metadata)
+        title = get_plot_title('individual', 'unk_percentage')
+        ax.set_ylabel(ylabel)
+        ax.set_title(title)
+
+        # Set y-axis to show percentage range appropriately
+        max_val = max(means) + max(stds)
+        ax.set_ylim(0, max(max_val * 1.1, 1.0))  # At least 1% range
+
+        # Add percentage labels on bars
+        for bar, (mean_val, std_val) in zip(bars, values):
+            height = bar.get_height()
+            ax.text(bar.get_x() + bar.get_width()/2., height + std_val + max_val * 0.01,
+                   f'{mean_val:.1f}%', ha='center', va='bottom', fontsize=9)
+
+        plt.xticks(rotation=45)
+
     save_plot(fig, save_path)
 
 
@@ -402,6 +456,7 @@ def generate_all_plots(results: Dict[str, Any], save_dir: str, tokenizer_names: 
     # Basic metrics
     plot_fertility(results, os.path.join(save_dir, 'fertility_individual.svg'), tokenizer_names, show_global_lines)
     plot_vocabulary_utilization(results, os.path.join(save_dir, 'vocabulary_utilization_individual.svg'), tokenizer_names, show_global_lines)
+    plot_unk_percentage(results, os.path.join(save_dir, 'unk_percentage_individual.svg'), tokenizer_names, show_global_lines)
     
     # Information theory
     plot_compression_rate(results, os.path.join(save_dir, 'compression_rate_individual.svg'), tokenizer_names, show_global_lines)
@@ -429,7 +484,7 @@ def generate_all_plots(results: Dict[str, Any], save_dir: str, tokenizer_names: 
         for group_type, group_data in grouped_results.items():
             if not group_data:  # Skip empty group data
                 continue
-            for metric in ['fertility', 'vocabulary_utilization', 'compression_ratio', 'morphscore']:
+            for metric in ['fertility', 'vocabulary_utilization', 'compression_ratio', 'unk_percentage', 'morphscore']:
                 try:
                     plot_grouped_analysis(grouped_results, grouped_dir, metric, group_type)
                 except Exception as e:
@@ -451,6 +506,7 @@ def _generate_per_language_plots(results: Dict[str, Any], save_dir: str,
     _plot_per_language_compression_rate(results, per_lang_dir, tokenizer_names, show_global_lines)
     _plot_per_language_vocabulary_utilization(results, per_lang_dir, tokenizer_names, show_global_lines)
     _plot_per_language_gini_coefficient(results, per_lang_dir, tokenizer_names, show_global_lines)
+    _plot_per_language_unk_percentage(results, per_lang_dir, tokenizer_names, show_global_lines)
 
 
 def _generate_faceted_plots(results: Dict[str, Any], save_dir: str,
@@ -460,7 +516,7 @@ def _generate_faceted_plots(results: Dict[str, Any], save_dir: str,
     os.makedirs(facet_dir, exist_ok=True)
     
     # Generate faceted plots for key metrics
-    for metric_name in ['fertility', 'compression_ratio', 'vocabulary_utilization']:
+    for metric_name in ['fertility', 'compression_ratio', 'vocabulary_utilization', 'unk_percentage']:
         if metric_name in results:
             _plot_faceted_metric(results, facet_dir, tokenizer_names, metric_name, show_global_lines)
 
@@ -547,11 +603,12 @@ def _plot_per_language_combined_subplots(results: Dict[str, Any], save_dir: str,
         for j, tok_name in enumerate(tokenizer_names):
             values = [lang_data.get(lang, {}).get(tok_name, 0) for lang in languages]
             bars = ax.bar(x_pos + j * width, values, width, label=tok_name, color=colors[j], alpha=0.8)
-            
+
             # Add global reference line if requested
             if show_global_lines and values and any(v > 0 for v in values):
                 global_mean = np.mean([v for v in values if v > 0])
-                ax.axhline(y=global_mean, color='red', linestyle='--', alpha=0.3)
+                ax.axhline(y=global_mean, color=colors[j], linestyle='--', alpha=0.6,
+                          linewidth=1.5)
         
         title = get_plot_title('per_language', metric_key)
         ax.set_title(title)
@@ -589,14 +646,17 @@ def _plot_per_language_grouped_bars(lang_data: Dict[str, Dict[str, float]],
     x_pos = np.arange(len(languages))
     width = 0.8 / len(tokenizer_names)
     
+    colors = get_colors(len(tokenizer_names))
+
     for i, tok_name in enumerate(tokenizer_names):
         values = [lang_data[lang].get(tok_name, 0) for lang in languages]
-        bars = ax.bar(x_pos + i * width, values, width, label=tok_name)
-        
+        bars = ax.bar(x_pos + i * width, values, width, label=tok_name, color=colors[i], alpha=0.8)
+
         # Add global reference line if requested
         if show_global_lines and values:
             global_mean = np.mean(values)
-            ax.axhline(y=global_mean, color='red', linestyle='--', alpha=0.3)
+            ax.axhline(y=global_mean, color=colors[i], linestyle='--', alpha=0.6,
+                      linewidth=1.5)
     
     ax.set_xlabel('Language')
     ax.set_ylabel(ylabel)
@@ -718,6 +778,33 @@ def _plot_per_language_gini_coefficient(results: Dict[str, Any], save_dir: str,
         title = get_plot_title('per_language', 'tokenizer_fairness_gini')
         _plot_per_language_grouped_bars(
             lang_data, os.path.join(save_dir, 'tokenizer_fairness_gini_per_language.svg'),
+            tokenizer_names, title, ylabel, show_global_lines
+        )
+
+
+def _plot_per_language_unk_percentage(results: Dict[str, Any], save_dir: str,
+                                    tokenizer_names: List[str], show_global_lines: bool):
+    """Plot per-language UNK percentage comparison with grouped bars."""
+    if 'unk_percentage' not in results:
+        return
+
+    # Extract per-language data
+    lang_data = {}
+    for tok_name in tokenizer_names:
+        if tok_name in results['unk_percentage'].get('per_tokenizer', {}):
+            tok_data = results['unk_percentage']['per_tokenizer'][tok_name]
+            if 'per_language' in tok_data and tok_data['global'].get('has_unk_token', False):
+                for lang, lang_stats in tok_data['per_language'].items():
+                    if lang not in lang_data:
+                        lang_data[lang] = {}
+                    unk_value = lang_stats.get('mean', 0.0)
+                    lang_data[lang][tok_name] = unk_value
+
+    if lang_data:
+        ylabel = get_ylabel('unk_percentage')
+        title = get_plot_title('per_language', 'unk_percentage')
+        _plot_per_language_grouped_bars(
+            lang_data, os.path.join(save_dir, 'unk_percentage_per_language.svg'),
             tokenizer_names, title, ylabel, show_global_lines
         )
 
