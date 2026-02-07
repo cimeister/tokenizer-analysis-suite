@@ -444,6 +444,35 @@ Examples:
         help="JSON configuration file for custom LaTeX tables"
     )
     
+    # Markdown results table
+    parser.add_argument(
+        "--update-results-md",
+        nargs='?',
+        const='__default__',
+        default=None,
+        metavar='PATH',
+        help="Generate/update a cumulative Markdown results table. "
+             "Optionally provide a file path (default: <output-dir>/RESULTS.md)"
+    )
+    parser.add_argument(
+        "--push-results",
+        action="store_true",
+        help="Push RESULTS.md to a dedicated git branch on the remote. "
+             "Implies --update-results-md behaviour."
+    )
+    parser.add_argument(
+        "--results-branch",
+        type=str,
+        default="results",
+        help="Git branch name for --push-results (default: 'results')"
+    )
+    parser.add_argument(
+        "--results-remote",
+        type=str,
+        default="origin",
+        help="Git remote name for --push-results (default: 'origin')"
+    )
+
     # Plot generation options
     parser.add_argument(
         "--per-language-plots",
@@ -778,6 +807,31 @@ Examples:
         except Exception as e:
             logger.error(f"Error generating custom LaTeX tables: {e}")
     
+    # Generate / update Markdown results table if requested
+    # --push-results implies --update-results-md behaviour
+    do_update_md = args.update_results_md is not None or args.push_results
+    if do_update_md:
+        if args.update_results_md and args.update_results_md != '__default__':
+            md_path = args.update_results_md
+        else:
+            md_path = os.path.join(args.output_dir, "RESULTS.md")
+
+        logger.info(f"Updating Markdown results table at {md_path}")
+        try:
+            analyzer.generate_markdown_table(
+                results=results,
+                output_path=md_path,
+                update_existing=True,
+                push_to_branch=args.push_results,
+                remote=args.results_remote,
+                branch=args.results_branch,
+            )
+            print(f"Markdown results table: {md_path}")
+            if args.push_results:
+                print(f"Results pushed to {args.results_remote}/{args.results_branch}")
+        except Exception as e:
+            logger.error(f"Error generating Markdown results table: {e}")
+
     logger.info("Analysis complete!")
     print(f"\nResults saved to: {args.output_dir}")
     if not args.no_plots:
