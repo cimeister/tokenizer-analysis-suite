@@ -99,6 +99,37 @@ python scripts/run_tokenizer_analysis.py --use-sample-data --save-full-results
 python scripts/run_tokenizer_analysis.py --use-sample-data --no-plots
 ```
 
+### Markdown Results Table
+
+Generate a cumulative Markdown leaderboard that grows across successive runs. Each run merges new tokenizer rows into the existing table — previously evaluated tokenizers are preserved, and re-evaluated ones are updated in place.
+
+```bash
+# Generate / update a local RESULTS.md (default: <output-dir>/RESULTS.md)
+python scripts/run_tokenizer_analysis.py --use-sample-data --update-results-md
+
+# Custom path
+python scripts/run_tokenizer_analysis.py --use-sample-data --update-results-md my_results.md
+```
+
+#### Sharing results via a dedicated git branch
+
+`--push-results` automatically pushes RESULTS.md to a dedicated branch (default: `results`) on the remote so the team can view the latest leaderboard on GitHub without polluting `main`/`master` history. It uses git plumbing internally, so it never switches your branch or touches your working tree.
+
+```bash
+# Push results to origin/results branch (creates the branch if needed)
+python scripts/run_tokenizer_analysis.py --use-sample-data --push-results --no-plots
+
+# Custom remote and branch
+python scripts/run_tokenizer_analysis.py --use-sample-data \
+    --push-results --results-remote upstream --results-branch leaderboard
+
+# Verify
+git log origin/results --oneline
+git show origin/results:RESULTS.md
+```
+
+When multiple team members run `--push-results`, the remote file is fetched and merged first — rows added by others are preserved, and rows from the current run take priority for the same tokenizer name.
+
 ## Configuration Files
 
 The framework uses JSON configuration files to specify tokenizers, data files, and analysis settings. All configuration examples are provided below.
@@ -359,6 +390,7 @@ results/
 ├── latex_tables/                   # Academic publication tables
 │   ├── basic_metrics.tex
 │   └── comprehensive_analysis.tex
+├── RESULTS.md                     # Cumulative Markdown leaderboard (with --update-results-md or --push-results)
 ├── analysis_results.json   # Key metrics summary
 ├── analysis_results_full.json     # Detailed results (with --save-full-results)
 ├── tokenized_data.pkl       # Pre-tokenized data (with --save-tokenized-data)

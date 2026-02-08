@@ -8,6 +8,7 @@ RESULTS.md file so that a single table grows over successive runs.
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime
 from pathlib import Path
+import getpass
 import logging
 import os
 import subprocess
@@ -159,8 +160,11 @@ class MarkdownTableGenerator:
         """
         configs = self._resolve_metrics(metrics)
 
-        headers = ['Tokenizer'] + [c['title'] for c in configs]
+        headers = ['Tokenizer'] + [c['title'] for c in configs] + ['User', 'Date']
         separator = ['---'] * len(headers)
+
+        username = getpass.getuser()
+        date_str = datetime.now().strftime('%Y-%m-%d')
 
         rows: List[List[str]] = []
         for tok_name in self.tokenizer_names:
@@ -168,6 +172,7 @@ class MarkdownTableGenerator:
             for cfg in configs:
                 value = self._extract_metric_value(cfg, tok_name)
                 row.append(self._format_value(value, cfg['format']))
+            row += [username, date_str]
             rows.append(row)
 
         return self._render_markdown(headers, separator, rows)
@@ -254,16 +259,21 @@ class MarkdownTableGenerator:
 
         # ----- Determine final column list -----
         # "Tokenizer" is always first; then current metric titles; then any
-        # extra columns from the old file that we don't know about.
+        # extra columns from the old file that we don't know about;
+        # "User" and "Date" are always last.
+        meta_columns = {'User', 'Date'}
         extra_headers: List[str] = []
         if old_headers:
             for h in old_headers:
-                if h != 'Tokenizer' and h not in current_titles:
+                if h != 'Tokenizer' and h not in current_titles and h not in meta_columns:
                     extra_headers.append(h)
 
-        all_titles = current_titles + extra_headers
+        all_titles = current_titles + extra_headers + ['User', 'Date']
         headers = ['Tokenizer'] + all_titles
         separator = ['---'] * len(headers)
+
+        username = getpass.getuser()
+        date_str = datetime.now().strftime('%Y-%m-%d')
 
         # ----- Build rows dict (old preserved, current overwritten) -----
         merged: Dict[str, Dict[str, str]] = {}
@@ -281,6 +291,8 @@ class MarkdownTableGenerator:
                 merged[tok_name][cfg['title']] = self._format_value(
                     value, cfg['format']
                 )
+            merged[tok_name]['User'] = username
+            merged[tok_name]['Date'] = date_str
 
         # ----- Determine row ordering -----
         # Current-run tokenizers first (preserving order), then old-only ones.
