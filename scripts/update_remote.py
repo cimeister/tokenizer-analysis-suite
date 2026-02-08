@@ -77,7 +77,7 @@ def main():
     if success:
         print(f"Results pushed to {args.remote}/{args.branch}")
     else:
-        logger.error("Push failed. Check the logs above for details.")
+        logger.error("Push failed. Your local RESULTS.md is fine — try again later.")
         sys.exit(1)
 
 
