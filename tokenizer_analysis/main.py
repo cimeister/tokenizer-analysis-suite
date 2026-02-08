@@ -19,7 +19,7 @@ from .metrics.morphological import MorphologicalMetrics
 from .metrics.morphscore import MorphScoreMetrics
 from .visualization import TokenizerVisualizer
 from .visualization.latex_tables import LaTeXTableGenerator
-from .visualization.markdown_tables import MarkdownTableGenerator, push_results_to_branch
+from .visualization.markdown_tables import MarkdownTableGenerator
 from .config import TextMeasurementConfig, DEFAULT_TEXT_MEASUREMENT_CONFIG
 from .config.language_metadata import LanguageMetadata
 
@@ -676,9 +676,6 @@ class UnifiedTokenizerAnalyzer:
         output_path: str = None,
         update_existing: bool = True,
         metrics: Optional[List[str]] = None,
-        push_to_branch: bool = False,
-        remote: str = "origin",
-        branch: str = "results",
     ) -> str:
         """Generate or update a Markdown results table.
 
@@ -689,10 +686,6 @@ class UnifiedTokenizerAnalyzer:
             update_existing: If True and the file already exists, merge new
                 rows into the existing table (cumulative mode).
             metrics: Optional list of metric keys to include.
-            push_to_branch: If True, push the RESULTS.md to a dedicated
-                git branch after writing the local file.
-            remote: Git remote name (used when *push_to_branch* is True).
-            branch: Git branch name (used when *push_to_branch* is True).
 
         Returns:
             The rendered Markdown string.
@@ -703,7 +696,7 @@ class UnifiedTokenizerAnalyzer:
         md_generator = MarkdownTableGenerator(results, self.tokenizer_names)
 
         if update_existing:
-            md = md_generator.update_markdown_file(output_path, metrics=metrics)
+            return md_generator.update_markdown_file(output_path, metrics=metrics)
         else:
             md = md_generator.generate_markdown_table(metrics=metrics)
             path = os.path.join(output_path)
@@ -711,19 +704,7 @@ class UnifiedTokenizerAnalyzer:
             with open(path, "w", encoding="utf-8") as f:
                 f.write(md)
             logger.info(f"Markdown results table saved to {path}")
-
-        if push_to_branch:
-            success = push_results_to_branch(
-                filepath=output_path,
-                remote=remote,
-                branch=branch,
-            )
-            if success:
-                logger.info(f"Results pushed to {remote}/{branch}")
-            else:
-                logger.error(f"Failed to push results to {remote}/{branch}")
-
-        return md
+            return md
 
     def _save_tokenized_data(self, tokenized_data: Dict[str, List], save_path: str):
         """Save tokenized data in format compatible with InputLoader."""

@@ -113,22 +113,24 @@ python scripts/run_tokenizer_analysis.py --use-sample-data --update-results-md m
 
 #### Sharing results via a dedicated git branch
 
-`--push-results` automatically pushes RESULTS.md to a dedicated branch (default: `results`) on the remote so the team can view the latest leaderboard on GitHub without polluting `main`/`master` history. It uses git plumbing internally, so it never switches your branch or touches your working tree.
+Use `scripts/update_remote.py` to push a local RESULTS.md to a dedicated branch (default: `results`) on the remote. The team can view the latest leaderboard on GitHub without polluting `main`/`master` history. It uses git plumbing internally, so it never switches your branch or touches your working tree.
 
 ```bash
-# Push results to origin/results branch (creates the branch if needed)
-python scripts/run_tokenizer_analysis.py --use-sample-data --push-results --no-plots
+# Step 1: Run analysis and generate local RESULTS.md
+python scripts/run_tokenizer_analysis.py --use-sample-data --update-results-md --no-plots
 
-# Custom remote and branch
-python scripts/run_tokenizer_analysis.py --use-sample-data \
-    --push-results --results-remote upstream --results-branch leaderboard
+# Step 2: Push to origin/results branch (creates the branch if needed)
+python scripts/update_remote.py
+
+# Custom file, remote, and branch
+python scripts/update_remote.py --results-file my_results.md --remote upstream --branch leaderboard
 
 # Verify
 git log origin/results --oneline
 git show origin/results:RESULTS.md
 ```
 
-When multiple team members run `--push-results`, the remote file is fetched and merged first — rows added by others are preserved, and rows from the current run take priority for the same tokenizer name.
+Each row is keyed by `tokenizer_name (username)`, so different users' results for the same tokenizer coexist. When multiple team members push, the remote file is fetched and merged first — rows added by others are preserved, and rows from the current run take priority for the same user + tokenizer combination.
 
 ## Configuration Files
 
