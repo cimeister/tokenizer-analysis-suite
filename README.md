@@ -104,17 +104,17 @@ python scripts/run_tokenizer_analysis.py --use-sample-data --no-plots
 Generate a cumulative Markdown leaderboard that grows across successive runs. Each run merges new tokenizer rows into the existing table — previously evaluated tokenizers are preserved, and re-evaluated ones are updated in place.
 
 ```bash
-# Generate / update a local RESULTS.md (default: <output-dir>/RESULTS.md)
+# Generate / update a local RESULTS.md (prompts for dataset name)
 python scripts/run_tokenizer_analysis.py --use-sample-data --update-results-md
 
-# With a dataset label
+# Specify dataset name directly (no prompt)
 python scripts/run_tokenizer_analysis.py --use-sample-data --update-results-md --dataset flores
 
-# Custom path
+# Custom output path
 python scripts/run_tokenizer_analysis.py --use-sample-data --update-results-md my_results.md
 ```
 
-Each row is keyed by `tokenizer_name (user, dataset)` — so different users or different datasets produce separate rows, while re-running the same combination updates in place.
+Each row is keyed by `tokenizer_name (user, dataset)` — so different users or different datasets produce separate rows, while re-running the same combination updates in place. If `--dataset` is not provided, you will be prompted to enter a dataset name (press Enter to use `"default"`).
 
 #### Sharing results via a dedicated git branch
 
