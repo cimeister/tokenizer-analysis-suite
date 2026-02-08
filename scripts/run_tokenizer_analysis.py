@@ -457,9 +457,9 @@ Examples:
     parser.add_argument(
         "--dataset",
         type=str,
-        default="default",
-        help="Dataset label for the RESULTS.md composite key and Dataset column "
-             "(default: 'default')"
+        default=None,
+        help="Dataset label for the RESULTS.md composite key and Dataset column. "
+             "If not provided, you will be prompted when using --update-results-md."
     )
     # Plot generation options
     parser.add_argument(
@@ -802,13 +802,20 @@ Examples:
         else:
             md_path = args.update_results_md
 
+        # Prompt for dataset name if not provided via --dataset
+        dataset = args.dataset
+        if dataset is None:
+            dataset = input("Enter dataset name (or press Enter for 'default'): ").strip()
+            if not dataset:
+                dataset = "default"
+
         logger.info(f"Updating Markdown results table at {md_path}")
         try:
             analyzer.generate_markdown_table(
                 results=results,
                 output_path=md_path,
                 update_existing=True,
-                dataset=args.dataset,
+                dataset=dataset,
             )
             print(f"Markdown results table: {md_path}")
         except Exception as e:
