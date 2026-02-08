@@ -168,7 +168,7 @@ class MarkdownTableGenerator:
 
         rows: List[List[str]] = []
         for tok_name in self.tokenizer_names:
-            row = [tok_name]
+            row = [f'{tok_name} ({username})']
             for cfg in configs:
                 value = self._extract_metric_value(cfg, tok_name)
                 row.append(self._format_value(value, cfg['format']))
@@ -276,27 +276,32 @@ class MarkdownTableGenerator:
         date_str = datetime.now().strftime('%Y-%m-%d')
 
         # ----- Build rows dict (old preserved, current overwritten) -----
+        # Row key is "tokenizer_name (user)" so different users' results
+        # for the same tokenizer coexist; same user re-running updates in place.
         merged: Dict[str, Dict[str, str]] = {}
 
-        # Start with old rows
+        # Start with old rows (keyed by Tokenizer column which already has composite key)
         for tok_name, row_map in old_rows.items():
             merged[tok_name] = dict(row_map)
 
-        # Overwrite / add current-run rows
+        # Overwrite / add current-run rows using composite key
         for tok_name in self.tokenizer_names:
-            if tok_name not in merged:
-                merged[tok_name] = {'Tokenizer': tok_name}
+            composite_key = f'{tok_name} ({username})'
+            if composite_key not in merged:
+                merged[composite_key] = {'Tokenizer': composite_key}
             for cfg in configs:
                 value = self._extract_metric_value(cfg, tok_name)
-                merged[tok_name][cfg['title']] = self._format_value(
+                merged[composite_key][cfg['title']] = self._format_value(
                     value, cfg['format']
                 )
-            merged[tok_name]['User'] = username
-            merged[tok_name]['Date'] = date_str
+            merged[composite_key]['User'] = username
+            merged[composite_key]['Date'] = date_str
 
         # ----- Determine row ordering -----
         # Current-run tokenizers first (preserving order), then old-only ones.
-        ordered_names: List[str] = list(self.tokenizer_names)
+        ordered_names: List[str] = [
+            f'{n} ({username})' for n in self.tokenizer_names
+        ]
         for name in merged:
             if name not in ordered_names:
                 ordered_names.append(name)
