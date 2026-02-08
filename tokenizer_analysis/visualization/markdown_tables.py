@@ -364,14 +364,13 @@ def _run_git(
 ) -> subprocess.CompletedProcess:
     """Run a git command and return the CompletedProcess."""
     cmd = ['git'] + list(args)
-    return subprocess.run(
-        cmd,
-        check=check,
-        capture_output=capture,
-        text=True,
-        stdin=subprocess.PIPE if stdin is not None else None,
-        input=stdin,
-    )
+    kwargs: Dict[str, Any] = {'check': check, 'text': True}
+    if capture:
+        kwargs['stdout'] = subprocess.PIPE
+        kwargs['stderr'] = subprocess.PIPE
+    if stdin is not None:
+        kwargs['input'] = stdin
+    return subprocess.run(cmd, **kwargs)
 
 
 def push_results_to_branch(
