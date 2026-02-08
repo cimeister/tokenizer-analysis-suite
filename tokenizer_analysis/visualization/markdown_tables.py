@@ -399,6 +399,7 @@ def push_results_to_branch(
     remote: str = "origin",
     branch: str = "results",
     commit_message: str = None,
+    skip_merge: bool = False,
 ) -> bool:
     """Commit *filepath* as ``RESULTS.md`` on *branch* and push, without
     touching the working tree or the current branch.
@@ -423,6 +424,9 @@ def push_results_to_branch(
         Target branch name on the remote (default ``"results"``).
     commit_message : str | None
         Custom commit message.  ``None`` generates a timestamped default.
+    skip_merge : bool
+        If True, push the local file as-is without merging remote rows.
+        Used by ``--remove-my-results`` to avoid re-adding removed rows.
 
     Returns
     -------
@@ -447,70 +451,72 @@ def push_results_to_branch(
         )
 
         if show_result.returncode == 0 and show_result.stdout.strip():
-            # Remote file exists — write it to a temp file so we can parse it
-            remote_content = show_result.stdout
+            # Remote file exists
+            if not skip_merge:
+                # Merge remote rows into local file
+                remote_content = show_result.stdout
 
-            with tempfile.NamedTemporaryFile(
-                mode='w', suffix='.md', delete=False
-            ) as tmp:
-                tmp.write(remote_content)
-                tmp_path = tmp.name
+                with tempfile.NamedTemporaryFile(
+                    mode='w', suffix='.md', delete=False
+                ) as tmp:
+                    tmp.write(remote_content)
+                    tmp_path = tmp.name
 
-            try:
-                remote_headers, remote_rows = (
-                    MarkdownTableGenerator.parse_existing_markdown(tmp_path)
-                )
-            finally:
-                os.unlink(tmp_path)
+                try:
+                    remote_headers, remote_rows = (
+                        MarkdownTableGenerator.parse_existing_markdown(tmp_path)
+                    )
+                finally:
+                    os.unlink(tmp_path)
 
-            # If the remote has rows that the local file doesn't, merge them
-            if remote_rows:
-                local_headers, local_rows = (
-                    MarkdownTableGenerator.parse_existing_markdown(filepath)
-                )
+                # If the remote has rows that the local file doesn't, merge them
+                if remote_rows:
+                    local_headers, local_rows = (
+                        MarkdownTableGenerator.parse_existing_markdown(filepath)
+                    )
 
-                merged = False
-                for tok_name, row_map in remote_rows.items():
-                    if tok_name not in local_rows:
-                        local_rows[tok_name] = row_map
-                        merged = True
+                    merged = False
+                    for tok_name, row_map in remote_rows.items():
+                        if tok_name not in local_rows:
+                            local_rows[tok_name] = row_map
+                            merged = True
 
-                if merged:
-                    # Rewrite local file with merged data
-                    # Determine column order: local headers first, then extra remote-only
-                    all_headers = list(local_headers) if local_headers else []
-                    for h in remote_headers:
-                        if h not in all_headers:
-                            all_headers.append(h)
+                    if merged:
+                        # Rewrite local file with merged data
+                        # Determine column order: local headers first, then extra remote-only
+                        all_headers = list(local_headers) if local_headers else []
+                        for h in remote_headers:
+                            if h not in all_headers:
+                                all_headers.append(h)
 
-                    data_headers = [h for h in all_headers if h != 'Tokenizer']
-                    headers = ['Tokenizer'] + data_headers
-                    separator = ['---'] * len(headers)
+                        data_headers = [h for h in all_headers if h != 'Tokenizer']
+                        headers = ['Tokenizer'] + data_headers
+                        separator = ['---'] * len(headers)
 
-                    # Row order: local first, then remote-only
-                    ordered_names = [
-                        n for n in local_rows if n in local_rows
-                    ]
-                    for n in remote_rows:
-                        if n not in ordered_names:
-                            ordered_names.append(n)
-
-                    rows = []
-                    all_rows = {**remote_rows, **local_rows}  # local overwrites remote
-                    for tok_name in ordered_names:
-                        row_map = all_rows.get(tok_name, {})
-                        row = [tok_name] + [
-                            row_map.get(h, '---') for h in data_headers
+                        # Row order: local first, then remote-only
+                        ordered_names = [
+                            n for n in local_rows if n in local_rows
                         ]
-                        rows.append(row)
+                        for n in remote_rows:
+                            if n not in ordered_names:
+                                ordered_names.append(n)
 
-                    md = MarkdownTableGenerator._render_markdown(
-                        headers, separator, rows
-                    )
-                    Path(filepath).write_text(md, encoding='utf-8')
-                    logger.info(
-                        "Merged remote rows into local RESULTS.md before pushing"
-                    )
+                        rows = []
+                        all_rows = {**remote_rows, **local_rows}  # local overwrites remote
+                        for tok_name in ordered_names:
+                            row_map = all_rows.get(tok_name, {})
+                            row = [tok_name] + [
+                                row_map.get(h, '---') for h in data_headers
+                            ]
+                            rows.append(row)
+
+                        md = MarkdownTableGenerator._render_markdown(
+                            headers, separator, rows
+                        )
+                        Path(filepath).write_text(md, encoding='utf-8')
+                        logger.info(
+                            "Merged remote rows into local RESULTS.md before pushing"
+                        )
 
             # Get parent commit SHA for the branch
             rev_result = _run_git(

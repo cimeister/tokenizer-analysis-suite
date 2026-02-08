@@ -130,12 +130,22 @@ python scripts/update_remote.py
 # Custom file, remote, and branch
 python scripts/update_remote.py --results-file my_results.md --remote upstream --branch leaderboard
 
+# Validate local RESULTS.md format without pushing
+python scripts/update_remote.py --validate-local-results
+
+# Remove all your rows from the remote RESULTS.md
+python scripts/update_remote.py --remove-my-results
+
 # Verify
 git log origin/results --oneline
 git show origin/results:RESULTS.md
 ```
 
 When multiple team members push, the remote file is fetched and merged first — rows added by others are preserved, and rows from the current run take priority for the same user + tokenizer + dataset combination.
+
+The `--validate-local-results` flag checks that the local file has the required columns (`Tokenizer`, `Dataset`, `User`, `Date`), well-formed composite keys, and consistent column counts. Validation runs automatically before every push.
+
+The `--remove-my-results` flag removes all rows belonging to your username from the remote RESULTS.md — useful for cleaning up after test runs or re-submitting results from scratch.
 
 ## Configuration Files
 
