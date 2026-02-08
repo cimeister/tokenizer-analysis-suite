@@ -149,7 +149,9 @@ class MarkdownTableGenerator:
     # ------------------------------------------------------------------
 
     def generate_markdown_table(
-        self, metrics: Optional[List[str]] = None
+        self,
+        metrics: Optional[List[str]] = None,
+        dataset: str = "default",
     ) -> str:
         """Return a full Markdown document with one row per tokenizer.
 
@@ -157,10 +159,12 @@ class MarkdownTableGenerator:
         ----------
         metrics : list[str], optional
             Metric keys to include.  ``None`` means *all* configured metrics.
+        dataset : str
+            Dataset label for the composite key and Dataset column.
         """
         configs = self._resolve_metrics(metrics)
 
-        headers = ['Tokenizer'] + [c['title'] for c in configs] + ['User', 'Date']
+        headers = ['Tokenizer'] + [c['title'] for c in configs] + ['Dataset', 'User', 'Date']
         separator = ['---'] * len(headers)
 
         username = getpass.getuser()
@@ -168,11 +172,11 @@ class MarkdownTableGenerator:
 
         rows: List[List[str]] = []
         for tok_name in self.tokenizer_names:
-            row = [f'{tok_name} ({username})']
+            row = [f'{tok_name} ({username}, {dataset})']
             for cfg in configs:
                 value = self._extract_metric_value(cfg, tok_name)
                 row.append(self._format_value(value, cfg['format']))
-            row += [username, date_str]
+            row += [dataset, username, date_str]
             rows.append(row)
 
         return self._render_markdown(headers, separator, rows)
@@ -240,6 +244,7 @@ class MarkdownTableGenerator:
         self,
         filepath: str,
         metrics: Optional[List[str]] = None,
+        dataset: str = "default",
     ) -> str:
         """Merge current results into an existing RESULTS.md (or create it).
 
@@ -249,6 +254,15 @@ class MarkdownTableGenerator:
         * Column order follows the current metric config; extra columns from
           the old file that aren't in the current config are appended at the
           end.
+
+        Parameters
+        ----------
+        filepath : str
+            Path to the Markdown file.
+        metrics : list[str], optional
+            Metric keys to include.
+        dataset : str
+            Dataset label for the composite key and Dataset column.
 
         Returns the rendered Markdown string.
         """
@@ -260,15 +274,15 @@ class MarkdownTableGenerator:
         # ----- Determine final column list -----
         # "Tokenizer" is always first; then current metric titles; then any
         # extra columns from the old file that we don't know about;
-        # "User" and "Date" are always last.
-        meta_columns = {'User', 'Date'}
+        # "Dataset", "User" and "Date" are always last.
+        meta_columns = {'Dataset', 'User', 'Date'}
         extra_headers: List[str] = []
         if old_headers:
             for h in old_headers:
                 if h != 'Tokenizer' and h not in current_titles and h not in meta_columns:
                     extra_headers.append(h)
 
-        all_titles = current_titles + extra_headers + ['User', 'Date']
+        all_titles = current_titles + extra_headers + ['Dataset', 'User', 'Date']
         headers = ['Tokenizer'] + all_titles
         separator = ['---'] * len(headers)
 
@@ -276,8 +290,9 @@ class MarkdownTableGenerator:
         date_str = datetime.now().strftime('%Y-%m-%d')
 
         # ----- Build rows dict (old preserved, current overwritten) -----
-        # Row key is "tokenizer_name (user)" so different users' results
-        # for the same tokenizer coexist; same user re-running updates in place.
+        # Row key is "tokenizer_name (user, dataset)" so different users'
+        # or different datasets' results coexist; same user + dataset
+        # re-running updates in place.
         merged: Dict[str, Dict[str, str]] = {}
 
         # Start with old rows (keyed by Tokenizer column which already has composite key)
@@ -286,7 +301,7 @@ class MarkdownTableGenerator:
 
         # Overwrite / add current-run rows using composite key
         for tok_name in self.tokenizer_names:
-            composite_key = f'{tok_name} ({username})'
+            composite_key = f'{tok_name} ({username}, {dataset})'
             if composite_key not in merged:
                 merged[composite_key] = {'Tokenizer': composite_key}
             for cfg in configs:
@@ -294,13 +309,14 @@ class MarkdownTableGenerator:
                 merged[composite_key][cfg['title']] = self._format_value(
                     value, cfg['format']
                 )
+            merged[composite_key]['Dataset'] = dataset
             merged[composite_key]['User'] = username
             merged[composite_key]['Date'] = date_str
 
         # ----- Determine row ordering -----
         # Current-run tokenizers first (preserving order), then old-only ones.
         ordered_names: List[str] = [
-            f'{n} ({username})' for n in self.tokenizer_names
+            f'{n} ({username}, {dataset})' for n in self.tokenizer_names
         ]
         for name in merged:
             if name not in ordered_names:

@@ -676,6 +676,7 @@ class UnifiedTokenizerAnalyzer:
         output_path: str = None,
         update_existing: bool = True,
         metrics: Optional[List[str]] = None,
+        dataset: str = "default",
     ) -> str:
         """Generate or update a Markdown results table.
 
@@ -686,6 +687,7 @@ class UnifiedTokenizerAnalyzer:
             update_existing: If True and the file already exists, merge new
                 rows into the existing table (cumulative mode).
             metrics: Optional list of metric keys to include.
+            dataset: Dataset label for the composite key and Dataset column.
 
         Returns:
             The rendered Markdown string.
@@ -696,9 +698,13 @@ class UnifiedTokenizerAnalyzer:
         md_generator = MarkdownTableGenerator(results, self.tokenizer_names)
 
         if update_existing:
-            return md_generator.update_markdown_file(output_path, metrics=metrics)
+            return md_generator.update_markdown_file(
+                output_path, metrics=metrics, dataset=dataset
+            )
         else:
-            md = md_generator.generate_markdown_table(metrics=metrics)
+            md = md_generator.generate_markdown_table(
+                metrics=metrics, dataset=dataset
+            )
             path = os.path.join(output_path)
             os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
             with open(path, "w", encoding="utf-8") as f:

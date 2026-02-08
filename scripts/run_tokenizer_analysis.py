@@ -454,6 +454,13 @@ Examples:
         help="Generate/update a cumulative Markdown results table. "
              "Optionally provide a file path (default: <output-dir>/RESULTS.md)"
     )
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default="default",
+        help="Dataset label for the RESULTS.md composite key and Dataset column "
+             "(default: 'default')"
+    )
     # Plot generation options
     parser.add_argument(
         "--per-language-plots",
@@ -801,6 +808,7 @@ Examples:
                 results=results,
                 output_path=md_path,
                 update_existing=True,
+                dataset=args.dataset,
             )
             print(f"Markdown results table: {md_path}")
         except Exception as e:

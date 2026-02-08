@@ -107,9 +107,14 @@ Generate a cumulative Markdown leaderboard that grows across successive runs. Ea
 # Generate / update a local RESULTS.md (default: <output-dir>/RESULTS.md)
 python scripts/run_tokenizer_analysis.py --use-sample-data --update-results-md
 
+# With a dataset label
+python scripts/run_tokenizer_analysis.py --use-sample-data --update-results-md --dataset flores
+
 # Custom path
 python scripts/run_tokenizer_analysis.py --use-sample-data --update-results-md my_results.md
 ```
+
+Each row is keyed by `tokenizer_name (user, dataset)` — so different users or different datasets produce separate rows, while re-running the same combination updates in place.
 
 #### Sharing results via a dedicated git branch
 
@@ -117,10 +122,16 @@ Use `scripts/update_remote.py` to push a local RESULTS.md to a dedicated branch 
 
 ```bash
 # Step 1: Run analysis and generate local RESULTS.md
-python scripts/run_tokenizer_analysis.py --use-sample-data --update-results-md --no-plots
+python scripts/run_tokenizer_analysis.py --use-sample-data --update-results-md --dataset flores --no-plots
 
-# Step 2: Push to origin/results branch (creates the branch if needed)
+# Step 2: Push to origin/results (prompts for dataset name)
 python scripts/update_remote.py
+
+# Skip prompt — use "default" as dataset name
+python scripts/update_remote.py --default-dataset
+
+# Specify dataset name directly
+python scripts/update_remote.py --dataset flores
 
 # Custom file, remote, and branch
 python scripts/update_remote.py --results-file my_results.md --remote upstream --branch leaderboard
@@ -130,7 +141,7 @@ git log origin/results --oneline
 git show origin/results:RESULTS.md
 ```
 
-Each row is keyed by `tokenizer_name (username)`, so different users' results for the same tokenizer coexist. When multiple team members push, the remote file is fetched and merged first — rows added by others are preserved, and rows from the current run take priority for the same user + tokenizer combination.
+When multiple team members push, the remote file is fetched and merged first — rows added by others are preserved, and rows from the current run take priority for the same user + tokenizer + dataset combination.
 
 ## Configuration Files
 
@@ -392,7 +403,7 @@ results/
 ├── latex_tables/                   # Academic publication tables
 │   ├── basic_metrics.tex
 │   └── comprehensive_analysis.tex
-├── RESULTS.md                     # Cumulative Markdown leaderboard (with --update-results-md or --push-results)
+├── RESULTS.md                     # Cumulative Markdown leaderboard (with --update-results-md)
 ├── analysis_results.json   # Key metrics summary
 ├── analysis_results_full.json     # Detailed results (with --save-full-results)
 ├── tokenized_data.pkl       # Pre-tokenized data (with --save-tokenized-data)
@@ -760,7 +771,12 @@ tokenizer_analysis/
     ├── plots.py                  # Core plotting functions
     ├── data_extraction.py        # Data extraction for plotting
     ├── latex_tables.py           # LaTeX table generation
+    ├── markdown_tables.py        # Markdown table generation and git push
     └── visualization_config.py   # Visualization configuration
+
+scripts/
+├── run_tokenizer_analysis.py     # Main CLI for analysis
+└── update_remote.py              # Push RESULTS.md to a remote git branch
 ```
 ## Contributing
 
