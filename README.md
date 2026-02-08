@@ -124,14 +124,8 @@ Use `scripts/update_remote.py` to push a local RESULTS.md to a dedicated branch 
 # Step 1: Run analysis and generate local RESULTS.md
 python scripts/run_tokenizer_analysis.py --use-sample-data --update-results-md --dataset flores --no-plots
 
-# Step 2: Push to origin/results (prompts for dataset name)
+# Step 2: Push to origin/results branch (creates the branch if needed)
 python scripts/update_remote.py
-
-# Skip prompt — use "default" as dataset name
-python scripts/update_remote.py --default-dataset
-
-# Specify dataset name directly
-python scripts/update_remote.py --dataset flores
 
 # Custom file, remote, and branch
 python scripts/update_remote.py --results-file my_results.md --remote upstream --branch leaderboard
