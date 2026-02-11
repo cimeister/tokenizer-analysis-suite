@@ -1,16 +1,6 @@
-# TokEval
+# SwissAI TokEval
+This is the library used by the Apertus tokenization team for intrinsic evaluation during tokenizer development
 
-A framework for evaluating tokenizers across languages with comprehensive metrics and multilingual fairness analysis.
-
-## Features
-
-- **Multi-tokenizer comparison**: Compare any number of tokenizers simultaneously
-- **Comprehensive metrics**: Basic tokenization, information-theoretic, morphological, and fairness metrics
-- **Multilingual fairness**: Gini coefficient analysis for cross-language compression equity
-- **MorphScore integration**: Carefully crafted morphological analysis ([Arnett et. al. 2025](https://arxiv.org/abs/2507.06378))
-- **Flexible data inputs**: Raw texts, pre-tokenized data, JSON, and parquet files
-- **Academic outputs**: LaTeX table generation and publication-ready plots
-- **Performance optimized**: Efficient analysis with pre-tokenized data caching
 
 ## Quick Start
 
@@ -18,7 +8,7 @@ Get up and running in 30 seconds:
 
 ```bash
 # Clone and install
-git clone https://github.com/cimeister/tokenizer-analysis-suite.git
+git clone https://github.com/swiss-ai/tokenizer-analysis-suite.git
 cd tokenizer-analysis-suite
 pip install -e .
 
@@ -30,6 +20,15 @@ open results/fertility.png  # Basic metric comparison chart
 ```
 
 This will analyze two sample tokenizers (BPE and Unigram) across 5 languages and generate comparison plots.
+
+## Adding Tokenizer Results 
+Please use the following measurement config and language config for adding results to the Gitub
+
+```bash
+# Generate / update a local RESULTS.md (prompts for dataset name)
+python scripts/run_tokenizer_analysis.py --tokenizer-config configs/baseline_tokenizers.json --language-config configs/baseline_tokenizers.json --measurement-config configs/text_measurement_config_lines.json --verbose --run-grouped-analysis  --per-language-plots --no-global-lines --update-results-md
+```
+where you specify the path to your tokenizer file in the json given to the --tokenizer-config argument (formatting described below) 
 
 ## Setup
 
