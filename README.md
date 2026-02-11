@@ -26,7 +26,11 @@ Please use the following measurement config and language config for adding resul
 
 ```bash
 # Generate / update a local RESULTS.md (prompts for dataset name)
-python scripts/run_tokenizer_analysis.py --tokenizer-config configs/baseline_tokenizers.json --language-config configs/baseline_tokenizers.json --measurement-config configs/text_measurement_config_lines.json --verbose --run-grouped-analysis  --per-language-plots --no-global-lines --update-results-md
+python scripts/run_tokenizer_analysis.py --tokenizer-config configs/baseline_tokenizers.json --language-config configs/core_lang_config.json --measurement-config configs/text_measurement_config_lines.json --verbose --run-grouped-analysis  --per-language-plots --no-global-lines --update-results-md --dataset flores_core
+
+# Push results to Github
+python scripts/update_remote.py
+
 ```
 where you specify the path to your tokenizer file in the json given to the --tokenizer-config argument (formatting described below) 
 
