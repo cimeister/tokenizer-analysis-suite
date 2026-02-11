@@ -1,0 +1,42 @@
+{
+    "Classical":{
+      "class": "custom_bpe",
+      "path": "PA_BPE_tokenizers/128k/unbalanced/30languages/30languages-vanilla-255744"
+    },
+    "Parity-aware":{
+      "class": "custom_bpe",
+      "path": "PA_BPE_tokenizers/128k/unbalanced/30languages/30languages-parity-255744"
+    },
+      "Parity-aware (hybrid)":{
+      "class": "custom_bpe",
+      "path": "PA_BPE_tokenizers/128k/unbalanced/30languages/30languages-parity-hybrid-63936-255744"
+    },
+    "Gemma 3 (262k)":{
+        "class": "hf",
+      "path": "google/gemma-3-1b-it"
+    },
+    "Qwen 3 (151k)":{
+        "class": "hf",
+      "path": "Qwen/Qwen3-8B"
+    },
+    "Mistral-Nemo":{
+        "class": "hf",
+      "path": "mistralai/Mistral-Nemo-Base-2407"
+    },
+    "DeepSeek R1":{
+        "class": "hf",
+      "path": "deepseek-ai/DeepSeek-R1"
+    },
+    "Kimi (160k)":{
+        "class": "hf",
+      "path": "moonshotai/Kimi-K2-Instruct-0905"
+    },
+    "GLM (151k)": {
+        "class": "hf",
+      "path": "THUDM/glm-4-9b-chat"
+    },
+    "GPT OSS (201k)": {
+        "class": "hf",
+      "path": "openai/gpt-oss-120b"
+    }
+}

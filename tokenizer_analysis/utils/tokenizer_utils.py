@@ -111,7 +111,7 @@ def _load_huggingface_tokenizer(config):
     # Strategy 2: Try loading as HuggingFace tokenizer (directory or model name)
     try:
         logger.info(f"Loading tokenizer from HuggingFace: {path}")
-        tokenizer = AutoTokenizer.from_pretrained(path)
+        tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
         return tokenizer
     except Exception as e:
         logger.warning(f"Failed to load HuggingFace tokenizer from {path}: {e}")

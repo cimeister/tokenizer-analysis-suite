@@ -1,0 +1,55 @@
+
+{
+  "languages": {
+    "eng_Latn": { "name": "English", "iso_code": "en", "data_path": "parallel/en.txt" },
+    "cmn_Hans": { "name": "Chinese (Simplified)", "iso_code": "zh", "data_path": "parallel/zh.txt" },
+    "spa_Latn": { "name": "Spanish", "iso_code": "es", "data_path": "parallel/es.txt" },
+    "arb_Arab": { "name": "Arabic", "iso_code": "ar", "data_path": "parallel/ar.txt" },
+    "rus_Cyrl": { "name": "Russian", "iso_code": "ru", "data_path": "parallel/ru.txt" },
+    "jpn_Jpan": { "name": "Japanese", "iso_code": "ja", "data_path": "parallel/ja.txt" },
+    "kor_Hang": { "name": "Korean", "iso_code": "ko", "data_path": "parallel/ko.txt" },
+    "deu_Latn": { "name": "German", "iso_code": "de", "data_path": "parallel/de.txt" },
+    "fra_Latn": { "name": "French", "iso_code": "fr", "data_path": "parallel/fr.txt" },
+    "por_Latn": { "name": "Portuguese", "iso_code": "pt", "data_path": "parallel/pt.txt" },
+    "hin_Deva": { "name": "Hindi", "iso_code": "hi", "data_path": "parallel/hi.txt" },
+    "tur_Latn": { "name": "Turkish", "iso_code": "tr", "data_path": "parallel/tr.txt" },
+    "ind_Latn": { "name": "Indonesian", "iso_code": "id", "data_path": "parallel/id.txt" }
+  },
+  "analysis_groups": {
+    "script_family": {
+      "Latin": ["eng_Latn", "spa_Latn", "deu_Latn", "fra_Latn", "por_Latn", "tur_Latn", "ind_Latn"],
+      "Arabic": ["arb_Arab"],
+      "Cyrillic": ["rus_Cyrl"],
+      "Han_Simplified": ["cmn_Hans"],
+      "Japanese": ["jpn_Jpan"],
+      "Korean": ["kor_Hang"],
+      "Devanagari": ["hin_Deva"]
+    },
+    "resource_level": {
+      "high": ["eng_Latn", "cmn_Hans", "spa_Latn", "deu_Latn", "fra_Latn", "por_Latn", "rus_Cyrl", "jpn_Jpan", "kor_Hang"],
+      "medium": ["arb_Arab", "hin_Deva", "tur_Latn", "ind_Latn"],
+      "low": []
+    },
+    "geographic_region": {
+      "Western_Europe": ["eng_Latn", "deu_Latn", "fra_Latn"],
+      "Southern_Europe": ["spa_Latn", "por_Latn"],
+      "Eastern_Europe": ["rus_Cyrl"],
+      "Middle_East": ["arb_Arab"],
+      "South_Asia": ["hin_Deva"],
+      "Southeast_Asia": ["ind_Latn"],
+      "East_Asia": ["cmn_Hans", "jpn_Jpan", "kor_Hang"],
+      "Central_Asia": ["tur_Latn"]
+    },
+    "language_family": {
+      "Indo_European": ["eng_Latn", "spa_Latn", "deu_Latn", "fra_Latn", "por_Latn", "rus_Cyrl", "hin_Deva"],
+      "Sino_Tibetan": ["cmn_Hans"],
+      "Japonic": ["jpn_Jpan"],
+      "Koreanic": ["kor_Hang"],
+      "Afro_Asiatic": ["arb_Arab"],
+      "Turkic": ["tur_Latn"],
+      "Austronesian": ["ind_Latn"]
+    }
+  }
+}
+
+

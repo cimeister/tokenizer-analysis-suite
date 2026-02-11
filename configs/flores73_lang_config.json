@@ -1,0 +1,177 @@
+{
+  "languages": {
+    "eng_Latn": { "name": "English", "iso_code": "en", "data_path": "parallel/en.txt" },
+    "deu_Latn": { "name": "German", "iso_code": "de", "data_path": "parallel/de.txt" },
+    "fra_Latn": { "name": "French", "iso_code": "fr", "data_path": "parallel/fr.txt" },
+    "spa_Latn": { "name": "Spanish", "iso_code": "es", "data_path": "parallel/es.txt" },
+    "rus_Cyrl": { "name": "Russian", "iso_code": "ru", "data_path": "parallel/ru.txt" },
+    "por_Latn": { "name": "Portuguese", "iso_code": "pt", "data_path": "parallel/pt.txt" },
+    "ita_Latn": { "name": "Italian", "iso_code": "it", "data_path": "parallel/it.txt" },
+    "pol_Latn": { "name": "Polish", "iso_code": "pl", "data_path": "parallel/pl.txt" },
+    "nld_Latn": { "name": "Dutch", "iso_code": "nl", "data_path": "parallel/nl.txt" },
+
+    "cmn_Hans": { "name": "Chinese (Hans/Hani)", "iso_code": "zh", "data_path": "parallel/zh.txt" },
+    "jpn_Jpan": { "name": "Japanese", "iso_code": "ja", "data_path": "parallel/ja.txt" },
+    "arb_Arab": { "name": "Arabic", "iso_code": "ar", "data_path": "parallel/ar.txt" },
+    "kor_Hang": { "name": "Korean", "iso_code": "ko", "data_path": "parallel/ko.txt" },
+
+    "ind_Latn": { "name": "Indonesian", "iso_code": "id", "data_path": "parallel/id.txt" },
+    "vie_Latn": { "name": "Vietnamese", "iso_code": "vi", "data_path": "parallel/vi.txt" },
+    "tur_Latn": { "name": "Turkish", "iso_code": "tr", "data_path": "parallel/tr.txt" },
+    "hin_Deva": { "name": "Hindi", "iso_code": "hi", "data_path": "parallel/hi.txt" },
+    "fas_Arab": { "name": "Persian", "iso_code": "fa", "data_path": "parallel/fa.txt" },
+    "swh_Latn": { "name": "Swahili", "iso_code": "sw", "data_path": "parallel/sw.txt" },
+    "ell_Grek": { "name": "Greek", "iso_code": "el", "data_path": "parallel/el.txt" },
+    "ben_Beng": { "name": "Bengali", "iso_code": "bn", "data_path": "parallel/bn.txt" },
+    "tha_Thai": { "name": "Thai", "iso_code": "th", "data_path": "parallel/th.txt" },
+    "heb_Hebr": { "name": "Hebrew", "iso_code": "he", "data_path": "parallel/he.txt" },
+
+    "yor_Latn": { "name": "Yoruba", "iso_code": "yo", "data_path": "parallel/yo.txt" },
+    "cym_Latn": { "name": "Welsh", "iso_code": "cy", "data_path": "parallel/cy.txt" },
+    "gle_Latn": { "name": "Irish", "iso_code": "ga", "data_path": "parallel/ga.txt" },
+    "kmr_Latn": { "name": "Kurdish (Kurmanji)", "iso_code": "ku", "data_path": "parallel/ku.txt" },
+    "plt_Latn": { "name": "Malagasy", "iso_code": "mg", "data_path": "parallel/mg.txt" },
+    "gug_Latn": { "name": "Guarani", "iso_code": "gn", "data_path": "parallel/gn.txt" },
+
+    "ukr_Cyrl": { "name": "Ukrainian", "iso_code": "uk", "data_path": "parallel/uk.txt" },
+    "ron_Latn": { "name": "Romanian", "iso_code": "ro", "data_path": "parallel/ro.txt" },
+    "ces_Latn": { "name": "Czech", "iso_code": "cs", "data_path": "parallel/cs.txt" },
+    "hun_Latn": { "name": "Hungarian", "iso_code": "hu", "data_path": "parallel/hu.txt" },
+    "swe_Latn": { "name": "Swedish", "iso_code": "sv", "data_path": "parallel/sv.txt" },
+    "fin_Latn": { "name": "Finnish", "iso_code": "fi", "data_path": "parallel/fi.txt" },
+    "dan_Latn": { "name": "Danish", "iso_code": "da", "data_path": "parallel/da.txt" },
+    "nob_Latn": { "name": "Norwegian", "iso_code": "no", "data_path": "parallel/no.txt" },
+    "bul_Cyrl": { "name": "Bulgarian", "iso_code": "bg", "data_path": "parallel/bg.txt" },
+    "hrv_Latn": { "name": "Croatian", "iso_code": "hr", "data_path": "parallel/hr.txt" },
+    "srp_Cyrl": { "name": "Serbian", "iso_code": "sr", "data_path": "parallel/sr.txt" },
+    "slk_Latn": { "name": "Slovak", "iso_code": "sk", "data_path": "parallel/sk.txt" },
+    "slv_Latn": { "name": "Slovenian", "iso_code": "sl", "data_path": "parallel/sl.txt" },
+    "lit_Latn": { "name": "Lithuanian", "iso_code": "lt", "data_path": "parallel/lt.txt" },
+    "lvs_Latn": { "name": "Latvian", "iso_code": "lv", "data_path": "parallel/lv.txt" },
+    "est_Latn": { "name": "Estonian", "iso_code": "et", "data_path": "parallel/et.txt" },
+
+    "urd_Arab": { "name": "Urdu", "iso_code": "ur", "data_path": "parallel/ur.txt" },
+    "zsm_Latn": { "name": "Malay", "iso_code": "ms", "data_path": "parallel/ms.txt" },
+    "fil_Latn": { "name": "Tagalog", "iso_code": "tl", "data_path": "parallel/tl.txt" },
+    "tam_Taml": { "name": "Tamil", "iso_code": "ta", "data_path": "parallel/ta.txt" },
+    "tel_Telu": { "name": "Telugu", "iso_code": "te", "data_path": "parallel/te.txt" },
+    "kan_Knda": { "name": "Kannada", "iso_code": "kn", "data_path": "parallel/kn.txt" },
+    "mal_Mlym": { "name": "Malayalam", "iso_code": "ml", "data_path": "parallel/ml.txt" },
+    "mar_Deva": { "name": "Marathi", "iso_code": "mr", "data_path": "parallel/mr.txt" },
+    "guj_Gujr": { "name": "Gujarati", "iso_code": "gu", "data_path": "parallel/gu.txt" },
+    "pan_Guru": { "name": "Punjabi", "iso_code": "pa", "data_path": "parallel/pa.txt" },
+
+    "hau_Latn": { "name": "Hausa", "iso_code": "ha", "data_path": "parallel/ha.txt" },
+    "som_Latn": { "name": "Somali", "iso_code": "so", "data_path": "parallel/so.txt" },
+    "zul_Latn": { "name": "Zulu", "iso_code": "zu", "data_path": "parallel/zu.txt" },
+    "ibo_Latn": { "name": "Igbo", "iso_code": "ig", "data_path": "parallel/ig.txt" },
+    "amh_Ethi": { "name": "Amharic", "iso_code": "am", "data_path": "parallel/am.txt" },
+
+    "hye_Armn": { "name": "Armenian", "iso_code": "hy", "data_path": "parallel/hy.txt" },
+    "kat_Geor": { "name": "Georgian", "iso_code": "ka", "data_path": "parallel/ka.txt" },
+
+    "mya_Mymr": { "name": "Burmese", "iso_code": "my", "data_path": "parallel/my.txt" },
+    "khm_Khmr": { "name": "Khmer", "iso_code": "km", "data_path": "parallel/km.txt" },
+    "npi_Deva": { "name": "Nepali", "iso_code": "ne", "data_path": "parallel/ne.txt" },
+    "sin_Sinh": { "name": "Sinhala", "iso_code": "si", "data_path": "parallel/si.txt" },
+
+    "als_Latn": { "name": "Albanian", "iso_code": "sq", "data_path": "parallel/sq.txt" },
+    "azj_Latn": { "name": "Azerbaijani", "iso_code": "az", "data_path": "parallel/az.txt" },
+    "kaz_Cyrl": { "name": "Kazakh", "iso_code": "kk", "data_path": "parallel/kk.txt" },
+    "uzn_Latn": { "name": "Uzbek", "iso_code": "uz", "data_path": "parallel/uz.txt" },
+
+    "afr_Latn": { "name": "Afrikaans", "iso_code": "af", "data_path": "parallel/af.txt" },
+    "khk_Cyrl": { "name": "Mongolian", "iso_code": "mn", "data_path": "parallel/mn.txt" },
+
+    "glg_Latn": { "name": "Galician", "iso_code": "gl", "data_path": "parallel/gl.txt" },
+    "eus_Latn": { "name": "Basque", "iso_code": "eu", "data_path": "parallel/eu.txt" },
+    "isl_Latn": { "name": "Icelandic", "iso_code": "is", "data_path": "parallel/is.txt" }
+  },
+"analysis_groups": {
+    "script_family": {
+      "Latin": [
+        "eng_Latn","deu_Latn","fra_Latn","spa_Latn","por_Latn","ita_Latn","pol_Latn","nld_Latn",
+        "ind_Latn","vie_Latn","tur_Latn","swh_Latn","yor_Latn","cym_Latn","gle_Latn","kmr_Latn",
+        "plt_Latn","gug_Latn","ron_Latn","ces_Latn","hun_Latn","swe_Latn","fin_Latn","dan_Latn",
+        "nob_Latn","hrv_Latn","slk_Latn","slv_Latn","lit_Latn","lvs_Latn","zsm_Latn","fil_Latn",
+        "hau_Latn","som_Latn","zul_Latn","ibo_Latn","als_Latn","azj_Latn","uzn_Latn","afr_Latn",
+        "glg_Latn","eus_Latn","isl_Latn"
+      ],
+      "Cyrillic": ["rus_Cyrl","ukr_Cyrl","bul_Cyrl","srp_Cyrl","kaz_Cyrl","khk_Cyrl"],
+      "Arabic": ["arb_Arab","fas_Arab","urd_Arab"],
+      "Han_Simplified": ["cmn_Hans"],
+      "Japanese": ["jpn_Jpan"],
+      "Korean": ["kor_Hang"],
+      "Greek": ["ell_Grek"],
+      "Hebrew": ["heb_Hebr"],
+      "Thai": ["tha_Thai"],
+      "Bengali": ["ben_Beng"],
+      "Devanagari": ["hin_Deva","mar_Deva","npi_Deva"],
+      "Gurmukhi": ["pan_Guru"],
+      "Gujarati": ["guj_Gujr"],
+      "Tamil": ["tam_Taml"],
+      "Telugu": ["tel_Telu"],
+      "Kannada": ["kan_Knda"],
+      "Malayalam": ["mal_Mlym"],
+      "Ethiopic": ["amh_Ethi"],
+      "Armenian": ["hye_Armn"],
+      "Georgian": ["kat_Geor"],
+      "Myanmar": ["mya_Mymr"],
+      "Khmer": ["khm_Khmr"],
+      "Sinhala": ["sin_Sinh"]
+    },
+
+    "resource_level": {
+      "high": ["eng_Latn","deu_Latn","fra_Latn","spa_Latn","rus_Cyrl","por_Latn","pol_Latn","cmn_Hans","jpn_Jpan","kor_Hang"],
+      "medium": ["ita_Latn","nld_Latn","arb_Arab","tur_Latn","ell_Grek","tha_Thai","heb_Hebr","ces_Latn","ukr_Cyrl","ron_Latn","swe_Latn","fin_Latn","dan_Latn","nob_Latn","hin_Deva","fas_Arab","ind_Latn","vie_Latn","als_Latn","azj_Latn"],
+      "low": [
+        "ben_Beng","swh_Latn","yor_Latn","cym_Latn","gle_Latn","kmr_Latn","plt_Latn","gug_Latn",
+        "hun_Latn","bul_Cyrl","hrv_Latn","srp_Cyrl","slk_Latn","slv_Latn","lit_Latn","lvs_Latn",
+        "est_Latn","urd_Arab","zsm_Latn","fil_Latn","tam_Taml","tel_Telu","kan_Knda","mal_Mlym",
+        "mar_Deva","guj_Gujr","pan_Guru","hau_Latn","som_Latn","zul_Latn","ibo_Latn","amh_Ethi",
+        "hye_Armn","kat_Geor","mya_Mymr","khm_Khmr","sin_Sinh","kaz_Cyrl","uzn_Latn","afr_Latn",
+        "khk_Cyrl","glg_Latn","eus_Latn","isl_Latn","npi_Deva"
+      ]
+    },
+
+    "geographic_region": {
+      "Western_Europe": ["eng_Latn","deu_Latn","fra_Latn","nld_Latn","gle_Latn","cym_Latn"],
+      "Southern_Europe": ["spa_Latn","por_Latn","ita_Latn","ell_Grek","glg_Latn","eus_Latn"],
+      "Northern_Europe": ["swe_Latn","fin_Latn","dan_Latn","nob_Latn","isl_Latn"],
+      "Eastern_Europe": ["rus_Cyrl","ukr_Cyrl","pol_Latn","ces_Latn","slk_Latn","slv_Latn","hrv_Latn","srp_Cyrl","bul_Cyrl","ron_Latn","lit_Latn","lvs_Latn","est_Latn","hun_Latn","als_Latn"],
+      "Middle_East": ["arb_Arab","fas_Arab","heb_Hebr","kmr_Latn"],
+      "South_Asia": ["hin_Deva","ben_Beng","urd_Arab","mar_Deva","guj_Gujr","pan_Guru","npi_Deva","tam_Taml","tel_Telu","kan_Knda","mal_Mlym","sin_Sinh"],
+      "Southeast_Asia": ["ind_Latn","vie_Latn","tha_Thai","mya_Mymr","khm_Khmr","fil_Latn","zsm_Latn"],
+      "East_Asia": ["cmn_Hans","jpn_Jpan","kor_Hang","khk_Cyrl"],
+      "Central_Asia": ["kaz_Cyrl","uzn_Latn","azj_Latn"],
+      "Sub_Saharan_Africa": ["swh_Latn","yor_Latn","hau_Latn","som_Latn","zul_Latn","ibo_Latn","amh_Ethi","afr_Latn"],
+      "Latin_America": ["gug_Latn","plt_Latn"]
+    },
+
+    "language_family": {
+      "Indo_European": [
+        "eng_Latn","deu_Latn","fra_Latn","spa_Latn","rus_Cyrl","por_Latn","ita_Latn","pol_Latn","nld_Latn",
+        "hin_Deva","fas_Arab","ell_Grek","cym_Latn","gle_Latn","kmr_Latn","ukr_Cyrl","ron_Latn","ces_Latn",
+        "swe_Latn","dan_Latn","nob_Latn","bul_Cyrl","hrv_Latn","srp_Cyrl","slk_Latn","slv_Latn","lit_Latn",
+        "lvs_Latn","urd_Arab","mar_Deva","guj_Gujr","pan_Guru","hye_Armn","npi_Deva","sin_Sinh","als_Latn",
+        "isl_Latn","afr_Latn","glg_Latn"
+      ],
+      "Sino_Tibetan": ["cmn_Hans","mya_Mymr"],
+      "Japonic": ["jpn_Jpan"],
+      "Koreanic": ["kor_Hang"],
+      "Afro_Asiatic": ["arb_Arab","heb_Hebr","hau_Latn","som_Latn","amh_Ethi"],
+      "Austronesian": ["ind_Latn","plt_Latn","zsm_Latn","fil_Latn"],
+      "Austroasiatic": ["vie_Latn","khm_Khmr"],
+      "Turkic": ["tur_Latn","azj_Latn","kaz_Cyrl","uzn_Latn"],
+      "Niger_Congo": ["swh_Latn","yor_Latn","zul_Latn","ibo_Latn"],
+      "Kra_Dai": ["tha_Thai"],
+      "Uralic": ["hun_Latn","fin_Latn","est_Latn"],
+      "Dravidian": ["tam_Taml","tel_Telu","kan_Knda","mal_Mlym"],
+      "Kartvelian": ["kat_Geor"],
+      "Tupian": ["gug_Latn"],
+      "Mongolic": ["khk_Cyrl"],
+      "Language_isolate": ["eus_Latn"]
+    }
+  }
+}
+
