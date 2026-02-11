@@ -69,6 +69,5 @@ Thumbs.db
 .cache/
 
 # Others
-parallel
 debug*
 old_*.py
