@@ -1,19 +1,18 @@
-
 {
   "languages": {
-    "eng_Latn": { "name": "English", "iso_code": "en", "data_path": "parallel/en.txt" },
-    "cmn_Hans": { "name": "Chinese (Simplified)", "iso_code": "zh", "data_path": "parallel/zh.txt" },
-    "spa_Latn": { "name": "Spanish", "iso_code": "es", "data_path": "parallel/es.txt" },
-    "arb_Arab": { "name": "Arabic", "iso_code": "ar", "data_path": "parallel/ar.txt" },
-    "rus_Cyrl": { "name": "Russian", "iso_code": "ru", "data_path": "parallel/ru.txt" },
-    "jpn_Jpan": { "name": "Japanese", "iso_code": "ja", "data_path": "parallel/ja.txt" },
-    "kor_Hang": { "name": "Korean", "iso_code": "ko", "data_path": "parallel/ko.txt" },
-    "deu_Latn": { "name": "German", "iso_code": "de", "data_path": "parallel/de.txt" },
-    "fra_Latn": { "name": "French", "iso_code": "fr", "data_path": "parallel/fr.txt" },
-    "por_Latn": { "name": "Portuguese", "iso_code": "pt", "data_path": "parallel/pt.txt" },
-    "hin_Deva": { "name": "Hindi", "iso_code": "hi", "data_path": "parallel/hi.txt" },
-    "tur_Latn": { "name": "Turkish", "iso_code": "tr", "data_path": "parallel/tr.txt" },
-    "ind_Latn": { "name": "Indonesian", "iso_code": "id", "data_path": "parallel/id.txt" }
+    "eng_Latn": { "name": "English", "iso_code": "en", "data_path": "parallel/eng_Latn.txt" },
+    "cmn_Hani": { "name": "Chinese (Simplified)", "iso_code": "zh", "data_path": "parallel/cmn_Hani.txt" },
+    "spa_Latn": { "name": "Spanish", "iso_code": "es", "data_path": "parallel/spa_Latn.txt" },
+    "arb_Arab": { "name": "Arabic", "iso_code": "ar", "data_path": "parallel/arb_Arab.txt" },
+    "rus_Cyrl": { "name": "Russian", "iso_code": "ru", "data_path": "parallel/rus_Cyrl.txt" },
+    "jpn_Jpan": { "name": "Japanese", "iso_code": "ja", "data_path": "parallel/jpn_Jpan.txt" },
+    "kor_Hang": { "name": "Korean", "iso_code": "ko", "data_path": "parallel/kor_Hang.txt" },
+    "deu_Latn": { "name": "German", "iso_code": "de", "data_path": "parallel/deu_Latn.txt" },
+    "fra_Latn": { "name": "French", "iso_code": "fr", "data_path": "parallel/fra_Latn.txt" },
+    "por_Latn": { "name": "Portuguese", "iso_code": "pt", "data_path": "parallel/por_Latn.txt" },
+    "hin_Deva": { "name": "Hindi", "iso_code": "hi", "data_path": "parallel/hin_Deva.txt" },
+    "tur_Latn": { "name": "Turkish", "iso_code": "tr", "data_path": "parallel/tur_Latn.txt" },
+    "ind_Latn": { "name": "Indonesian", "iso_code": "id", "data_path": "parallel/ind_Latn.txt" }
   },
   "analysis_groups": {
     "script_family": {
@@ -51,5 +50,3 @@
     }
   }
 }
-
-
