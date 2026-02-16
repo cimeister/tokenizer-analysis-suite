@@ -85,26 +85,26 @@
     },
     "resource_level": {
       "high_resource_fineweb2": [
-          "eng_Latn", "rus_Cyrl", "cmn_Hani", "deu_Latn", "jpn_Jpan", "spa_Latn", "fra_Latn", "ita_Latn", "por_Latn", "pol_Latn", "nld_Latn", "ind_Latn", "vie_Latn", "tur_Latn", "ara_Arab", "kor_Hang", "swe_Latn", "ces_Latn", "ron_Latn", "nob_Latn", "dan_Latn", "hun_Latn", "fin_Latn", "bul_Cyrl", "ukr_Cyrl", "heb_Hebr", "slk_Latn", "ell_Grek", "tha_Thai"
+          "eng_Latn", "rus_Cyrl", "cmn_Hani", "deu_Latn", "jpn_Jpan", "spa_Latn", "fra_Latn", "ita_Latn", "por_Latn", "pol_Latn", "nld_Latn", "ind_Latn", "vie_Latn", "tur_Latn", "arb_Arab", "kor_Hang", "swe_Latn", "ces_Latn", "ron_Latn", "nob_Latn", "dan_Latn", "hun_Latn", "fin_Latn", "bul_Cyrl", "ukr_Cyrl", "heb_Hebr", "slk_Latn", "ell_Grek", "tha_Thai"
       ],
       "medium_resource_fineweb2": [
-          "zsm_Latn", "slv_Latn", "lit_Latn", "hrv_Latn", "azj_Latn", "hin_Deva", "cat_Latn", "fas_Arab", "srp_Cyrl", "kaz_Cyrl", "ben_Beng", "ekk_Latn", "tam_Taml", "uzb_Latn", "lvs_Latn", "bel_Cyrl", "tel_Telu", "swh_Latn", "urd_Arab", "fil_Latn", "glg_Latn", "kat_Geor", "kan_Knda"
+          "zsm_Latn", "slv_Latn", "lit_Latn", "hrv_Latn", "azj_Latn", "hin_Deva", "cat_Latn", "fas_Arab", "srp_Cyrl", "kaz_Cyrl", "ben_Beng", "ekk_Latn", "tam_Taml", "uzn_Latn", "lvs_Latn", "bel_Cyrl", "tel_Telu", "swh_Latn", "urd_Arab", "fil_Latn", "glg_Latn", "kat_Geor", "kan_Knda"
       ],
       "low_resource_fineweb2": [
-          "bos_Latn", "mya_Mymr", "guj_Gujr", "mkd_Cyrl", "mal_Mlym", "mar_Deva", "npi_Deva", "sin_Sinh", "som_Latn", "tgk_Cyrl"
+          "bos_Latn", "mya_Mymr", "guj_Gujr", "mkd_Cyrl", "mal_Mlym", "mar_Deva", "npi_Deva", "sin_Sinh"
       ]
     },
     "geographic_region": {
-      "Western_Europe": ["eng_Latn", "deu_Latn", "fra_Latn", "nld_Latn", "gle_Latn", "ltz_Latn", "cym_Latn"],
-      "Southern_Europe": ["spa_Latn", "ita_Latn", "por_Latn", "ell_Grek", "cat_Latn", "mlt_Latn", "oci_Latn"],
-      "Northern_Europe": ["swe_Latn", "nob_Latn", "dan_Latn", "fin_Latn", "ekk_Latn", "lit_Latn", "lvs_Latn", "isl_Latn", "nno_Latn"],
+      "Western_Europe": ["eng_Latn", "deu_Latn", "fra_Latn", "nld_Latn", "glg_Latn"],
+      "Southern_Europe": ["spa_Latn", "ita_Latn", "por_Latn", "ell_Grek", "cat_Latn"],
+      "Northern_Europe": ["swe_Latn", "nob_Latn", "dan_Latn", "fin_Latn", "ekk_Latn", "lit_Latn", "lvs_Latn"],
       "Eastern_Europe": ["rus_Cyrl", "pol_Latn", "ukr_Cyrl", "ces_Latn", "hun_Latn", "ron_Latn", "bul_Cyrl", "slk_Latn", "bel_Cyrl", "slv_Latn", "hrv_Latn", "srp_Cyrl", "bos_Latn", "mkd_Cyrl"],
       "East_Asia": ["cmn_Hani", "jpn_Jpan", "kor_Hang"],
       "Southeast_Asia": ["ind_Latn", "vie_Latn", "tha_Thai", "zsm_Latn", "fil_Latn", "mya_Mymr"],
       "South_Asia": ["hin_Deva", "ben_Beng", "urd_Arab", "tam_Taml", "tel_Telu", "mar_Deva", "mal_Mlym", "kan_Knda", "guj_Gujr", "sin_Sinh", "npi_Deva"],
-      "Middle_East_North_Africa": ["ara_Arab", "tur_Latn", "fas_Arab", "heb_Hebr", "azj_Latn", "kat_Geor"],
-      "Central_Asia": ["kaz_Cyrl", "uzb_Latn"],
-      "Sub_Saharan_Africa": ["swh_Latn", "som_Latn"]
+      "Middle_East_North_Africa": ["arb_Arab", "tur_Latn", "fas_Arab", "heb_Hebr", "azj_Latn", "kat_Geor"],
+      "Central_Asia": ["kaz_Cyrl", "uzn_Latn"],
+      "Sub_Saharan_Africa": ["swh_Latn"]
     }
   }
 }

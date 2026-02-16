@@ -54,6 +54,7 @@
     "lit_Latn": { "name": "Lithuanian", "iso_code": "lt", "data_path": "parallel/lit_Latn.txt" },
     "luo_Latn": { "name": "Luo", "iso_code": "luo", "data_path": "parallel/luo_Latn.txt" },
     "ltz_Latn": { "name": "Luxembourgish", "iso_code": "lb", "data_path": "parallel/ltz_Latn.txt" },
+   "lvs_Latn": { "name": "Latvian", "iso_code": "lv", "data_path": "parallel/lvs_Latn.txt" },
     "mkd_Cyrl": { "name": "Macedonian", "iso_code": "mk", "data_path": "parallel/mkd_Cyrl.txt" },
     "zsm_Latn": { "name": "Malay", "iso_code": "ms", "data_path": "parallel/zsm_Latn.txt" },
     "mal_Mlym": { "name": "Malayalam", "iso_code": "ml", "data_path": "parallel/mal_Mlym.txt" },
@@ -116,7 +117,7 @@
           "eng_Latn", "rus_Cyrl", "cmn_Hani", "deu_Latn", "jpn_Jpan", "spa_Latn", "fra_Latn", "ita_Latn", "por_Latn", "pol_Latn", "nld_Latn", "ind_Latn", "vie_Latn", "tur_Latn", "ara_Arab", "kor_Hang", "swe_Latn", "ces_Latn", "ron_Latn", "nob_Latn", "dan_Latn", "hun_Latn", "fin_Latn", "bul_Cyrl", "ukr_Cyrl", "heb_Hebr", "slk_Latn", "ell_Grek", "tha_Thai"
       ],
       "medium_resource_fineweb2": [
-          "zsm_Latn", "slv_Latn", "lit_Latn", "hrv_Latn", "azj_Latn", "hin_Deva", "cat_Latn", "fas_Arab", "srp_Cyrl", "kaz_Cyrl", "ben_Beng", "ekk_Latn", "tam_Taml", "uzb_Latn", "lat_Latn", "lvs_Latn", "mon_Cyrl", "bel_Cyrl", "tel_Telu", "swh_Latn", "urd_Arab", "fil_Latn", "glg_Latn", "kat_Geor", "kan_Knda"
+          "zsm_Latn", "slv_Latn", "lit_Latn", "hrv_Latn", "azj_Latn", "hin_Deva", "cat_Latn", "fas_Arab", "srp_Cyrl", "kaz_Cyrl", "ben_Beng", "ekk_Latn", "tam_Taml", "uzb_Latn", "lvs_Latn", "mon_Cyrl", "bel_Cyrl", "tel_Telu", "swh_Latn", "urd_Arab", "fil_Latn", "glg_Latn", "kat_Geor", "kan_Knda"
       ],
       "low_resource_fineweb2": [
           "afr_Latn", "amh_Ethi", "hye_Armn", "asm_Beng", "ast_Latn", "bos_Latn", "mya_Mymr", "ceb_Latn", "zho_Hant", "ful_Latn", "lug_Latn", "guj_Gujr", "hau_Latn", "isl_Latn", "ibo_Latn", "gle_Latn", "jav_Latn", "khm_Khmr", "kir_Cyrl", "lao_Laoo", "lin_Latn", "luo_Latn", "ltz_Latn", "mkd_Cyrl", "mal_Mlym", "mlt_Latn", "mri_Latn", "mar_Deva", "npi_Deva", "nso_Latn", "nno_Latn", "nya_Latn", "oci_Latn", "ory_Orya", "orm_Latn", "pus_Arab", "pan_Guru", "sna_Latn", "snd_Arab", "sin_Sinh", "som_Latn", "tgk_Cyrl", "cym_Latn", "wol_Latn", "xho_Latn", "yor_Latn", "zul_Latn"
