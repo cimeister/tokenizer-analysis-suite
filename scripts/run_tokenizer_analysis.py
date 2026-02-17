@@ -72,27 +72,27 @@ def create_sample_language_metadata() -> str:
             "eng_Latn": {
                 "name": "English",
                 "iso_code": "en", 
-                "data_path": "parallel/en/eval.txt"
+                "data_path": "parallel/eng_Latn.txt"
             },
             "spa_Latn": {
                 "name": "Spanish",
                 "iso_code": "es",
-                "data_path": "parallel/es/eval.txt"
+                "data_path": "parallel/spa_Latn.txt"
             },
             "deu_Latn": {
                 "name": "German", 
                 "iso_code": "de",
-                "data_path": "parallel/de/eval.txt"
+                "data_path": "parallel/deu_Latn.txt"
             },
             "arb_Arab": {
                 "name": "Arabic",
                 "iso_code": "ar",
-                "data_path": "parallel/ar/eval.txt"
+                "data_path": "parallel/arb_Arab.txt"
             },
             "rus_Cyrl": {
                 "name": "Russian",
                 "iso_code": "ru",
-                "data_path": "parallel/ru/eval.txt"
+                "data_path": "parallel/rus_Cyrl.txt"
             }
         },
         "analysis_groups": {
