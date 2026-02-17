@@ -797,17 +797,27 @@ Examples:
     
     # Generate / update Markdown results table if requested
     if args.update_results_md is not None:
-        if args.update_results_md == '__default__':
-            md_path = os.path.join(args.output_dir, "RESULTS.md")
-        else:
-            md_path = args.update_results_md
-
         # Prompt for dataset name if not provided via --dataset
         dataset = args.dataset
         if dataset is None:
             dataset = input("Enter dataset name (or press Enter for 'default'): ").strip()
             if not dataset:
                 dataset = "default"
+
+        # Derive the normalization method from the measurement config
+        norm_method = None
+        if measurement_config is not None:
+            norm_method = measurement_config.method.value
+
+        # Determine output path: explicit path, or auto-generated from
+        # dataset + normalization method
+        if args.update_results_md != '__default__':
+            md_path = args.update_results_md
+        else:
+            from tokenizer_analysis.visualization.markdown_tables import results_filename
+            md_path = os.path.join(
+                args.output_dir, results_filename(dataset, norm_method)
+            )
 
         logger.info(f"Updating Markdown results table at {md_path}")
         try:
@@ -816,6 +826,7 @@ Examples:
                 output_path=md_path,
                 update_existing=True,
                 dataset=dataset,
+                normalization_method=norm_method,
             )
             print(f"Markdown results table: {md_path}")
         except Exception as e:

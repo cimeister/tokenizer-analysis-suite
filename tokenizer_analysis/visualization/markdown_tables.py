@@ -2,7 +2,10 @@
 Markdown table generation for tokenizer analysis results.
 
 Supports cumulative updates: new tokenizer rows are merged into an existing
-RESULTS.md file so that a single table grows over successive runs.
+results file so that a single table grows over successive runs.
+
+Each combination of dataset and normalization method produces a separate
+file, e.g. ``RESULTS_flores_bytes.md``.
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -15,6 +18,31 @@ import subprocess
 import tempfile
 
 logger = logging.getLogger(__name__)
+
+
+def results_filename(
+    dataset: str = "default",
+    normalization_method: Optional[str] = None,
+) -> str:
+    """Return the markdown filename for a dataset / normalization-method pair.
+
+    Examples
+    --------
+    >>> results_filename("flores", "bytes")
+    'RESULTS_flores_bytes.md'
+    >>> results_filename("flores")
+    'RESULTS_flores.md'
+    >>> results_filename()
+    'RESULTS.md'
+    """
+    if dataset == "default" and normalization_method is None:
+        return "RESULTS.md"
+    parts = ["RESULTS"]
+    if dataset and dataset != "default":
+        parts.append(dataset)
+    if normalization_method:
+        parts.append(normalization_method)
+    return "_".join(parts) + ".md"
 
 
 class MarkdownTableGenerator:
@@ -152,6 +180,7 @@ class MarkdownTableGenerator:
         self,
         metrics: Optional[List[str]] = None,
         dataset: str = "default",
+        normalization_method: Optional[str] = None,
     ) -> str:
         """Return a full Markdown document with one row per tokenizer.
 
@@ -161,6 +190,9 @@ class MarkdownTableGenerator:
             Metric keys to include.  ``None`` means *all* configured metrics.
         dataset : str
             Dataset label for the composite key and Dataset column.
+        normalization_method : str, optional
+            Normalization method label (e.g. ``"bytes"``) included in the
+            document title.
         """
         configs = self._resolve_metrics(metrics)
 
@@ -179,7 +211,8 @@ class MarkdownTableGenerator:
             row += [dataset, username, date_str]
             rows.append(row)
 
-        return self._render_markdown(headers, separator, rows)
+        title = self._build_title(dataset, normalization_method)
+        return self._render_markdown(headers, separator, rows, title=title)
 
     # ------------------------------------------------------------------
     # Parsing an existing RESULTS.md
@@ -245,8 +278,9 @@ class MarkdownTableGenerator:
         filepath: str,
         metrics: Optional[List[str]] = None,
         dataset: str = "default",
+        normalization_method: Optional[str] = None,
     ) -> str:
-        """Merge current results into an existing RESULTS.md (or create it).
+        """Merge current results into an existing results file (or create it).
 
         * Existing tokenizer rows not in the current run are preserved.
         * Existing tokenizer rows that *are* in the current run are updated.
@@ -263,6 +297,9 @@ class MarkdownTableGenerator:
             Metric keys to include.
         dataset : str
             Dataset label for the composite key and Dataset column.
+        normalization_method : str, optional
+            Normalization method label (e.g. ``"bytes"``) included in the
+            document title.
 
         Returns the rendered Markdown string.
         """
@@ -330,7 +367,8 @@ class MarkdownTableGenerator:
                 row.append(row_map.get(title, '---'))
             rows.append(row)
 
-        md = self._render_markdown(headers, separator, rows)
+        title = self._build_title(dataset, normalization_method)
+        md = self._render_markdown(headers, separator, rows, title=title)
 
         # Write the file
         path = Path(filepath)
@@ -358,15 +396,32 @@ class MarkdownTableGenerator:
         return resolved
 
     @staticmethod
+    def _build_title(
+        dataset: str = "default",
+        normalization_method: Optional[str] = None,
+    ) -> str:
+        """Build a descriptive document title from dataset / method."""
+        title = "Tokenizer Evaluation Results"
+        parts: List[str] = []
+        if dataset and dataset != "default":
+            parts.append(dataset)
+        if normalization_method:
+            parts.append(normalization_method)
+        if parts:
+            title += " — " + " / ".join(parts)
+        return title
+
+    @staticmethod
     def _render_markdown(
         headers: List[str],
         separator: List[str],
         rows: List[List[str]],
+        title: str = "Tokenizer Evaluation Results",
     ) -> str:
         """Render a complete Markdown document with header, timestamp, and table."""
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         lines = [
-            '# Tokenizer Evaluation Results',
+            f'# {title}',
             '',
             f'_Last updated: {timestamp}_',
             '',
@@ -400,24 +455,29 @@ def push_results_to_branch(
     branch: str = "results",
     commit_message: str = None,
     skip_merge: bool = False,
+    remote_filename: str = "RESULTS.md",
 ) -> bool:
-    """Commit *filepath* as ``RESULTS.md`` on *branch* and push, without
+    """Commit *filepath* as *remote_filename* on *branch* and push, without
     touching the working tree or the current branch.
 
     The function uses low-level git plumbing (``hash-object``, ``mktree``,
     ``commit-tree``, ``update-ref``) so it never checks out another branch
     and never modifies the index or working directory.
 
-    Before committing, the remote version of RESULTS.md (if any) is fetched
+    Before committing, the remote version of the file (if any) is fetched
     and merged with the local file via
     :meth:`MarkdownTableGenerator.update_markdown_file`-style parsing so
     that rows added by other team members are preserved.
 
+    Other files already on the branch are preserved in the tree so that
+    multiple result files (one per dataset / normalization method) can
+    coexist.
+
     Parameters
     ----------
     filepath : str
-        Path to the local RESULTS.md that was already written by the
-        current analysis run.
+        Path to the local results markdown file that was already written
+        by the current analysis run.
     remote : str
         Git remote name (default ``"origin"``).
     branch : str
@@ -427,6 +487,10 @@ def push_results_to_branch(
     skip_merge : bool
         If True, push the local file as-is without merging remote rows.
         Used by ``--remove-my-results`` to avoid re-adding removed rows.
+    remote_filename : str
+        Name of the file in the git tree on the results branch
+        (default ``"RESULTS.md"``).  Use :func:`results_filename` to
+        derive this from dataset / normalization method.
 
     Returns
     -------
@@ -435,7 +499,7 @@ def push_results_to_branch(
     """
     if commit_message is None:
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        commit_message = f"Update RESULTS.md ({timestamp})"
+        commit_message = f"Update {remote_filename} ({timestamp})"
 
     ref = f"refs/heads/{branch}"
     remote_ref = f"{remote}/{branch}"
@@ -444,10 +508,10 @@ def push_results_to_branch(
         # 1. Fetch the remote branch (ok to fail if it doesn't exist yet)
         _run_git('fetch', remote, branch, check=False)
 
-        # 2. Try to read RESULTS.md from the remote branch
+        # 2. Try to read the target file from the remote branch
         parent_sha: Optional[str] = None
         show_result = _run_git(
-            'show', f'{remote_ref}:RESULTS.md', check=False
+            'show', f'{remote_ref}:{remote_filename}', check=False
         )
 
         if show_result.returncode == 0 and show_result.stdout.strip():
@@ -515,23 +579,40 @@ def push_results_to_branch(
                         )
                         Path(filepath).write_text(md, encoding='utf-8')
                         logger.info(
-                            "Merged remote rows into local RESULTS.md before pushing"
+                            f"Merged remote rows into local {remote_filename} before pushing"
                         )
 
-            # Get parent commit SHA for the branch
-            rev_result = _run_git(
-                'rev-parse', remote_ref, check=False
-            )
-            if rev_result.returncode == 0:
-                parent_sha = rev_result.stdout.strip()
+        # Get parent commit SHA for the branch (if it exists)
+        rev_result = _run_git(
+            'rev-parse', remote_ref, check=False
+        )
+        if rev_result.returncode == 0:
+            parent_sha = rev_result.stdout.strip()
 
         # 3. Create a blob from the (possibly merged) local file
         blob_result = _run_git('hash-object', '-w', filepath)
         blob_sha = blob_result.stdout.strip()
 
-        # 4. Build a tree containing only RESULTS.md
-        tree_entry = f"100644 blob {blob_sha}\tRESULTS.md"
-        tree_result = _run_git('mktree', stdin=tree_entry)
+        # 4. Build a tree that preserves existing files on the branch
+        #    and adds/replaces the target file.
+        tree_entries: List[str] = []
+
+        # Read existing tree entries from the parent commit (if any)
+        if parent_sha:
+            ls_result = _run_git(
+                'ls-tree', parent_sha, check=False
+            )
+            if ls_result.returncode == 0 and ls_result.stdout.strip():
+                for line in ls_result.stdout.strip().splitlines():
+                    # Each line: "<mode> <type> <sha>\t<name>"
+                    entry_name = line.split('\t', 1)[1]
+                    if entry_name != remote_filename:
+                        tree_entries.append(line)
+
+        # Add/replace our file
+        tree_entries.append(f"100644 blob {blob_sha}\t{remote_filename}")
+        tree_input = '\n'.join(tree_entries)
+        tree_result = _run_git('mktree', stdin=tree_input)
         tree_sha = tree_result.stdout.strip()
 
         # 5. Create a commit (with parent if branch already exists)
@@ -548,7 +629,7 @@ def push_results_to_branch(
         _run_git('push', remote, f'{branch}:{branch}')
 
         logger.info(
-            f"Pushed RESULTS.md to {remote}/{branch} (commit {commit_sha[:8]})"
+            f"Pushed {remote_filename} to {remote}/{branch} (commit {commit_sha[:8]})"
         )
         return True
 
