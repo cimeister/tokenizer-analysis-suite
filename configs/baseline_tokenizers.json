@@ -1,15 +1,15 @@
 {
     "Classical":{
       "class": "custom_bpe",
-      "path": "PA_BPE_tokenizers/128k/unbalanced/30languages/30languages-vanilla-255744"
+      "path": "tokenizers/PA_BPE_tokenizers/128k/unbalanced/30languages/30languages-vanilla-255744"
     },
     "Parity-aware":{
       "class": "custom_bpe",
-      "path": "PA_BPE_tokenizers/128k/unbalanced/30languages/30languages-parity-255744"
+      "path": "tokenizers/PA_BPE_tokenizers/128k/unbalanced/30languages/30languages-parity-255744"
     },
       "Parity-aware (hybrid)":{
       "class": "custom_bpe",
-      "path": "PA_BPE_tokenizers/128k/unbalanced/30languages/30languages-parity-hybrid-63936-255744"
+      "path": "tokenizers/PA_BPE_tokenizers/128k/unbalanced/30languages/30languages-parity-hybrid-63936-255744"
     },
     "Gemma 3 (262k)":{
         "class": "hf",

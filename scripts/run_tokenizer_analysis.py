@@ -54,11 +54,11 @@ def create_sample_configs() -> Dict[str, Dict]:
     return {
         "bpe": {
             "class": "huggingface",
-            "path": "sample_tokenizers/bpe.json"
+            "path": "tokenizers/bpe.json"
         },
         "unigramlm": {
             "class": "huggingface",
-            "path": "sample_tokenizers/unigramlm.json"
+            "path": "tokenizers/unigramlm.json"
         }
     }
 
