@@ -1070,24 +1070,24 @@ class TestGoodVsBadTokenizer:
         m, td = self._build("bad_cmp", self._BAD_COMPOUND_DATA)
         return m.compute(td)
 
-    # -- Digit Boundary Alignment --
+    # -- Three-Digit Boundary Alignment --
 
     def test_good_alignment_perfect_f1(self, good_results):
         """Good tokenizer: all 12 numbers get F1=1.0."""
-        summary = good_results["digit_boundary_alignment"]["summary"]["good_tok"]
+        summary = good_results["three_digit_boundary_alignment"]["summary"]["good_tok"]
         assert summary["avg_f1"] == pytest.approx(1.0)
 
     def test_bad_boundary_alignment_all_zero_f1(self, bad_boundary_results):
         """Bad-boundary tokenizer: all 6 multi-digit numbers get F1=0.0."""
-        summary = bad_boundary_results["digit_boundary_alignment"]["summary"]["bad_bnd"]
+        summary = bad_boundary_results["three_digit_boundary_alignment"]["summary"]["bad_bnd"]
         assert summary["avg_f1"] == pytest.approx(0.0)
 
     def test_bad_operator_does_not_affect_alignment(
         self, bad_isolation_results, bad_compound_results,
     ):
         """Merging/splitting operators must not change digit alignment scores."""
-        iso = bad_isolation_results["digit_boundary_alignment"]["summary"]["bad_iso"]
-        cmp = bad_compound_results["digit_boundary_alignment"]["summary"]["bad_cmp"]
+        iso = bad_isolation_results["three_digit_boundary_alignment"]["summary"]["bad_iso"]
+        cmp = bad_compound_results["three_digit_boundary_alignment"]["summary"]["bad_cmp"]
         assert iso["avg_f1"] == pytest.approx(1.0)
         assert cmp["avg_f1"] == pytest.approx(1.0)
 
@@ -1160,7 +1160,7 @@ class TestGoodVsBadTokenizer:
             (good_results, "good_tok"),
             (bad_boundary_results, "bad_bnd"),
         ]:
-            align_n = results["digit_boundary_alignment"]["summary"][tok]["numbers_analyzed"]
+            align_n = results["three_digit_boundary_alignment"]["summary"][tok]["numbers_analyzed"]
             mag_n = results["numeric_magnitude_consistency"]["summary"][tok]["numbers_analyzed"]
             assert align_n == mag_n
 
@@ -1171,7 +1171,7 @@ class TestGoodVsBadTokenizer:
         ]
         m, td = self._build("tenplus", data)
         results = m.compute(td)
-        by_dl = results["digit_boundary_alignment"][
+        by_dl = results["three_digit_boundary_alignment"][
             "per_tokenizer"]["tenplus"]["by_digit_length"]
         assert "10+" in by_dl
         assert by_dl["10+"]["en"]["mean_f1"] == pytest.approx(1.0)

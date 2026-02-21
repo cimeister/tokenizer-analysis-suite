@@ -10,7 +10,7 @@ respective tokens, the model can learn a consistent positional mapping.
 
 Four failure modes are measured here:
 
-1. **Digit Boundary Alignment Score** -- the tokenizer splits at the
+1. **Three-Digit Boundary Alignment Score** -- the tokenizer splits at the
    wrong positions inside a number.
 2. **Cross-Number Boundary Entropy** -- the tokenizer splits numbers of
    the same digit length at *different* positions depending on the
@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 class DigitBoundaryMetrics(BaseMetrics):
     """Digit boundary alignment and cross-number boundary entropy.
 
-    Worked examples -- Digit Boundary Alignment
+    Worked examples -- Three-Digit Boundary Alignment
     =============================================
 
     ``"1234567"`` (L=7) -- ideal boundaries: {1, 4}  (i.e. ``"1|234|567"``)
@@ -405,7 +405,7 @@ class DigitBoundaryMetrics(BaseMetrics):
         numeric magnitude consistency, and operator isolation rate.
 
         Returns a dict with four top-level keys:
-        ``digit_boundary_alignment``, ``cross_number_boundary_entropy``,
+        ``three_digit_boundary_alignment``, ``cross_number_boundary_entropy``,
         ``numeric_magnitude_consistency``, and ``operator_isolation_rate``.
         """
         if tokenized_data is None:
@@ -553,7 +553,7 @@ class DigitBoundaryMetrics(BaseMetrics):
         operator_results = self._build_operator_results(operator_acc)
 
         return {
-            "digit_boundary_alignment": alignment_results,
+            "three_digit_boundary_alignment": alignment_results,
             "cross_number_boundary_entropy": entropy_results,
             "numeric_magnitude_consistency": magnitude_results,
             "operator_isolation_rate": operator_results,
@@ -1030,10 +1030,10 @@ class DigitBoundaryMetrics(BaseMetrics):
     def print_results(self, results: Dict[str, Any]) -> None:
         """Print digit boundary alignment and cross-number entropy results."""
         # ---- Alignment ----
-        align = results.get("digit_boundary_alignment")
+        align = results.get("three_digit_boundary_alignment")
         if align:
             print("\n" + "=" * 60)
-            print("DIGIT BOUNDARY ALIGNMENT RESULTS")
+            print("THREE-DIGIT BOUNDARY ALIGNMENT RESULTS")
             print("=" * 60)
 
             if "summary" in align:

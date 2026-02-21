@@ -536,7 +536,7 @@ df.to_parquet('data.parquet')
 
 These metrics evaluate how well a tokenizer preserves the structural properties of mathematical expressions — digit boundaries, operator identity, and magnitude consistency. They are based on Singh & Strouse (2024, [arXiv:2402.14903](https://arxiv.org/abs/2402.14903)), which showed that right-to-left tokenization of numbers improved arithmetic accuracy by >22 percentage points.
 
-- **Digit Boundary Alignment (F1)**: Measures whether numbers are split at the ideal right-aligned 3-digit boundaries. Per-number precision/recall/F1 is computed against the ideal boundary set, then averaged.
+- **Three-Digit Boundary Alignment (F1)**: Measures whether numbers are split at the ideal right-aligned 3-digit boundaries. Per-number precision/recall/F1 is computed against the ideal boundary set, then averaged.
 - **Cross-Number Boundary Entropy**: Shannon entropy of boundary patterns within each digit-length bucket. Zero entropy means the tokenizer applies one deterministic scheme to all numbers of a given length.
 - **Numeric Magnitude Consistency**: Tracks how token fertility (tokens per digit) scales with digit length. Reports Spearman correlation, coefficient of variation, and linear-fit R² across digit-length buckets.
 - **Operator Isolation Rate**: Fraction of mathematical operators tokenized as standalone tokens. Separately reports compound preservation rate for multi-character operators (`<=`, `**`, `!=`, etc.).

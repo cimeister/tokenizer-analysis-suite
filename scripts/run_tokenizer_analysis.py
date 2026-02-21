@@ -203,7 +203,7 @@ def slim_results_for_json(results: Dict) -> Dict:
                 slimmed_metric['summary'] = metric_data['summary']
 
             # Keep digit boundary alignment, entropy, magnitude, and operator results (already compact)
-            if metric_name in ('digit_boundary_alignment', 'cross_number_boundary_entropy',
+            if metric_name in ('three_digit_boundary_alignment', 'cross_number_boundary_entropy',
                                'numeric_magnitude_consistency', 'operator_isolation_rate'):
                 if 'summary' in metric_data:
                     slimmed_metric['summary'] = metric_data['summary']

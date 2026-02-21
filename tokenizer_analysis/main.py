@@ -307,10 +307,10 @@ class UnifiedTokenizerAnalyzer:
                     group_result.update(morphscore_results)
 
                 # Digit boundary metrics - filter from base results if available
-                if base_results and 'digit_boundary_alignment' in base_results:
+                if base_results and 'three_digit_boundary_alignment' in base_results:
                     logger.info(f"Filtering digit boundary results for group {group_name} (avoiding recomputation)")
-                    group_result['digit_boundary_alignment'] = self._filter_digit_boundary_results(
-                        base_results['digit_boundary_alignment'], group_languages
+                    group_result['three_digit_boundary_alignment'] = self._filter_digit_boundary_results(
+                        base_results['three_digit_boundary_alignment'], group_languages
                     )
                     group_result['cross_number_boundary_entropy'] = self._filter_digit_boundary_results(
                         base_results['cross_number_boundary_entropy'], group_languages
