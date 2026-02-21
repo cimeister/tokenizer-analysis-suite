@@ -800,6 +800,7 @@ class UnifiedTokenizerAnalyzer:
         metrics: Optional[List[str]] = None,
         dataset: str = "default",
         normalization_method: Optional[str] = None,
+        sort_by: Optional[str] = None,
     ) -> str:
         """Generate or update a Markdown results table.
 
@@ -814,6 +815,7 @@ class UnifiedTokenizerAnalyzer:
             normalization_method: Normalization method label (e.g. ``"bytes"``).
                 When provided together with *dataset*, the default filename
                 becomes ``RESULTS_{dataset}_{method}.md``.
+            sort_by: Metric key to sort rows by (e.g. ``"fertility"``).
 
         Returns:
             The rendered Markdown string.
@@ -828,11 +830,13 @@ class UnifiedTokenizerAnalyzer:
             return md_generator.update_markdown_file(
                 output_path, metrics=metrics, dataset=dataset,
                 normalization_method=normalization_method,
+                sort_by=sort_by,
             )
         else:
             md = md_generator.generate_markdown_table(
                 metrics=metrics, dataset=dataset,
                 normalization_method=normalization_method,
+                sort_by=sort_by,
             )
             path = os.path.join(output_path)
             os.makedirs(os.path.dirname(path) or ".", exist_ok=True)

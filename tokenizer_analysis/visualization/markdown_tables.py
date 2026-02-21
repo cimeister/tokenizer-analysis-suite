@@ -14,10 +14,17 @@ from pathlib import Path
 import getpass
 import logging
 import os
+import re
 import subprocess
 import tempfile
 
 logger = logging.getLogger(__name__)
+
+# Regex to detect old-format composite keys: "name (user, dataset)"
+_COMPOSITE_KEY_RE = re.compile(r'^(.+?)\s*\(([^,]+),\s*([^)]+)\)$')
+
+# Regex to detect new-format display names: "name [Nk]"
+_DISPLAY_NAME_RE = re.compile(r'^(.+?)\s*\[\d+k\]$')
 
 
 def results_filename(
@@ -45,6 +52,25 @@ def results_filename(
     return "_".join(parts) + ".md"
 
 
+def _format_vocab_tier(vocab_size: int) -> str:
+    """Return a human-readable vocab-size tier label, e.g. ``'128k'``."""
+    return f"{round(vocab_size / 1000)}k"
+
+
+def _parse_float(s: str) -> Optional[float]:
+    """Try to parse a formatted cell value to float, stripping bold markers and commas."""
+    s = s.strip().replace('**', '').replace(',', '')
+    try:
+        return float(s)
+    except (ValueError, TypeError):
+        return None
+
+
+def _strip_arrow(header: str) -> str:
+    """Remove trailing directional arrow (`` ↓`` or `` ↑``) from a header."""
+    return re.sub(r'\s*[↓↑]$', '', header)
+
+
 class MarkdownTableGenerator:
     """Generate and cumulatively update Markdown tables from tokenizer analysis results."""
 
@@ -52,7 +78,9 @@ class MarkdownTableGenerator:
         self.results = results
         self.tokenizer_names = tokenizer_names
 
-        # Ordered list of metric configurations (determines column order)
+        # Ordered list of metric configurations (determines column order).
+        # ``lower_is_better``: True/False controls bolding direction;
+        # None means informational (no bolding).
         self.metric_configs: List[Dict[str, Any]] = [
             {
                 'key': 'vocab_size',
@@ -61,6 +89,7 @@ class MarkdownTableGenerator:
                 'value_key': 'global_vocab_size',
                 'stat_key': None,
                 'format': '{:,}',
+                'lower_is_better': None,
             },
             {
                 'key': 'fertility',
@@ -69,6 +98,7 @@ class MarkdownTableGenerator:
                 'value_key': 'global',
                 'stat_key': 'mean',
                 'format': '{:.3f}',
+                'lower_is_better': True,
             },
             {
                 'key': 'compression_rate',
@@ -77,6 +107,7 @@ class MarkdownTableGenerator:
                 'value_key': 'global',
                 'stat_key': 'mean',
                 'format': '{:.3f}',
+                'lower_is_better': False,
             },
             {
                 'key': 'vocabulary_utilization',
@@ -85,6 +116,7 @@ class MarkdownTableGenerator:
                 'value_key': 'global_utilization',
                 'stat_key': None,
                 'format': '{:.3f}',
+                'lower_is_better': False,
             },
             {
                 'key': 'type_token_ratio',
@@ -93,6 +125,7 @@ class MarkdownTableGenerator:
                 'value_key': 'global_ttr',
                 'stat_key': None,
                 'format': '{:.4f}',
+                'lower_is_better': False,
             },
             {
                 'key': 'renyi_1.0',
@@ -101,6 +134,7 @@ class MarkdownTableGenerator:
                 'value_key': 'renyi_1.0',
                 'stat_key': 'overall',
                 'format': '{:.2f}',
+                'lower_is_better': False,
             },
             {
                 'key': 'avg_token_rank',
@@ -109,6 +143,7 @@ class MarkdownTableGenerator:
                 'value_key': 'global_avg_token_rank',
                 'stat_key': None,
                 'format': '{:.1f}',
+                'lower_is_better': True,
             },
             {
                 'key': 'tokenizer_fairness_gini',
@@ -117,6 +152,34 @@ class MarkdownTableGenerator:
                 'value_key': 'gini_coefficient',
                 'stat_key': None,
                 'format': '{:.3f}',
+                'lower_is_better': True,
+            },
+            {
+                'key': 'morphscore_recall',
+                'title': 'MorphScore Recall',
+                'key_path': ['morphscore', 'per_tokenizer'],
+                'value_key': 'summary',
+                'stat_key': 'avg_morphscore_recall',
+                'format': '{:.3f}',
+                'lower_is_better': False,
+            },
+            {
+                'key': 'three_digit_boundary_f1',
+                'title': '3-Digit Align. F1',
+                'key_path': ['three_digit_boundary_alignment', 'summary'],
+                'value_key': 'avg_f1',
+                'stat_key': None,
+                'format': '{:.3f}',
+                'lower_is_better': False,
+            },
+            {
+                'key': 'operator_isolation',
+                'title': 'Op. Isolation',
+                'key_path': ['operator_isolation_rate', 'summary'],
+                'value_key': 'overall_isolation_rate',
+                'stat_key': None,
+                'format': '{:.3f}',
+                'lower_is_better': False,
             },
             {
                 'key': 'num_languages',
@@ -125,6 +188,7 @@ class MarkdownTableGenerator:
                 'value_key': 'num_languages',
                 'stat_key': None,
                 'format': '{:d}',
+                'lower_is_better': None,
             },
         ]
 
@@ -162,6 +226,21 @@ class MarkdownTableGenerator:
             )
             return None
 
+    def _extract_vocab_size(self, tokenizer_name: str) -> Optional[int]:
+        """Extract the vocab size for a tokenizer from the results."""
+        cfg = next(
+            (c for c in self.metric_configs if c['key'] == 'vocab_size'), None
+        )
+        if cfg is None:
+            return None
+        val = self._extract_metric_value(cfg, tokenizer_name)
+        if val is not None:
+            try:
+                return int(val)
+            except (ValueError, TypeError):
+                return None
+        return None
+
     @staticmethod
     def _format_value(value: Any, format_str: str) -> str:
         """Format *value* with *format_str*, or return ``'---'`` when None."""
@@ -173,6 +252,126 @@ class MarkdownTableGenerator:
             return str(value)
 
     # ------------------------------------------------------------------
+    # Best-value bolding helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _find_best_row(
+        rows: List[List[str]], col_index: int, lower_is_better: bool
+    ) -> Optional[int]:
+        """Return the row index with the best value in *col_index*, or None."""
+        best_idx: Optional[int] = None
+        best_val: Optional[float] = None
+        for i, row in enumerate(rows):
+            if col_index >= len(row):
+                continue
+            val = _parse_float(row[col_index])
+            if val is None:
+                continue
+            if best_val is None:
+                best_val = val
+                best_idx = i
+            elif lower_is_better and val < best_val:
+                best_val = val
+                best_idx = i
+            elif not lower_is_better and val > best_val:
+                best_val = val
+                best_idx = i
+        return best_idx
+
+    @staticmethod
+    def _apply_bolding_and_arrows(
+        headers: List[str],
+        rows: List[List[str]],
+        metric_configs: List[Dict[str, Any]],
+        active_titles: List[str],
+    ) -> None:
+        """Mutate *headers* and *rows* in-place to add bold markers and arrows.
+
+        *active_titles* lists the metric titles that are currently present as
+        columns (after any empty-column filtering).
+        """
+        # Build a title -> config lookup
+        title_to_cfg = {c['title']: c for c in metric_configs}
+
+        for col_idx, hdr in enumerate(headers):
+            clean_hdr = _strip_arrow(hdr)
+            cfg = title_to_cfg.get(clean_hdr)
+            if cfg is None or cfg.get('lower_is_better') is None:
+                continue
+            lower = cfg['lower_is_better']
+
+            # Add arrow to header
+            arrow = '↓' if lower else '↑'
+            headers[col_idx] = f"{clean_hdr} {arrow}"
+
+            # Find and bold the best value
+            best_idx = MarkdownTableGenerator._find_best_row(rows, col_idx, lower)
+            if best_idx is not None:
+                cell = rows[best_idx][col_idx]
+                if not cell.startswith('**'):
+                    rows[best_idx][col_idx] = f"**{cell}**"
+
+    # ------------------------------------------------------------------
+    # Sorting helper
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _sort_rows(
+        rows: List[List[str]],
+        col_index: int,
+        lower_is_better: bool,
+    ) -> List[List[str]]:
+        """Return *rows* sorted by the float value in *col_index*."""
+        def sort_key(row):
+            if col_index >= len(row):
+                return (1, 0.0)  # sort to bottom
+            val = _parse_float(row[col_index])
+            if val is None:
+                return (1, 0.0)
+            return (0, val if lower_is_better else -val)
+        return sorted(rows, key=sort_key)
+
+    # ------------------------------------------------------------------
+    # Empty-column filtering
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _filter_empty_columns(
+        headers: List[str],
+        rows: List[List[str]],
+        metric_titles: List[str],
+    ) -> Tuple[List[str], List[List[str]]]:
+        """Remove metric columns where every row has ``'---'``.
+
+        Only metric columns (those whose header is in *metric_titles*) are
+        candidates for removal.  Meta columns (Tokenizer, Dataset, User, Date)
+        are never removed.
+        """
+        # Find column indices that are entirely '---'
+        cols_to_drop: set = set()
+        for col_idx, hdr in enumerate(headers):
+            clean = _strip_arrow(hdr)
+            if clean not in metric_titles:
+                continue
+            all_empty = all(
+                (col_idx >= len(row) or row[col_idx].strip().replace('**', '') == '---')
+                for row in rows
+            )
+            if all_empty:
+                cols_to_drop.add(col_idx)
+
+        if not cols_to_drop:
+            return headers, rows
+
+        new_headers = [h for i, h in enumerate(headers) if i not in cols_to_drop]
+        new_rows = [
+            [cell for i, cell in enumerate(row) if i not in cols_to_drop]
+            for row in rows
+        ]
+        return new_headers, new_rows
+
+    # ------------------------------------------------------------------
     # Table generation
     # ------------------------------------------------------------------
 
@@ -181,6 +380,7 @@ class MarkdownTableGenerator:
         metrics: Optional[List[str]] = None,
         dataset: str = "default",
         normalization_method: Optional[str] = None,
+        sort_by: Optional[str] = None,
     ) -> str:
         """Return a full Markdown document with one row per tokenizer.
 
@@ -193,24 +393,55 @@ class MarkdownTableGenerator:
         normalization_method : str, optional
             Normalization method label (e.g. ``"bytes"``) included in the
             document title.
+        sort_by : str, optional
+            Metric key to sort rows by (e.g. ``"fertility"``).
         """
         configs = self._resolve_metrics(metrics)
+        metric_titles = [c['title'] for c in configs]
 
-        headers = ['Tokenizer'] + [c['title'] for c in configs] + ['Dataset', 'User', 'Date']
-        separator = ['---'] * len(headers)
+        headers = ['Tokenizer'] + metric_titles + ['Dataset', 'User', 'Date']
 
         username = getpass.getuser()
         date_str = datetime.now().strftime('%Y-%m-%d')
 
         rows: List[List[str]] = []
         for tok_name in self.tokenizer_names:
-            row = [f'{tok_name} ({username}, {dataset})']
+            # Build display name with vocab tier
+            vocab_size = self._extract_vocab_size(tok_name)
+            if vocab_size is not None:
+                display_name = f"{tok_name} [{_format_vocab_tier(vocab_size)}]"
+            else:
+                display_name = tok_name
+            row = [display_name]
             for cfg in configs:
                 value = self._extract_metric_value(cfg, tok_name)
                 row.append(self._format_value(value, cfg['format']))
             row += [dataset, username, date_str]
             rows.append(row)
 
+        # Filter empty metric columns
+        headers, rows = self._filter_empty_columns(headers, rows, metric_titles)
+
+        # Sort if requested
+        if sort_by:
+            sort_cfg = next(
+                (c for c in configs if c['key'] == sort_by), None
+            )
+            if sort_cfg and sort_cfg.get('lower_is_better') is not None:
+                col_idx = None
+                for i, h in enumerate(headers):
+                    if _strip_arrow(h) == sort_cfg['title']:
+                        col_idx = i
+                        break
+                if col_idx is not None:
+                    rows = self._sort_rows(
+                        rows, col_idx, sort_cfg['lower_is_better']
+                    )
+
+        # Apply bolding and arrows
+        self._apply_bolding_and_arrows(headers, rows, configs, metric_titles)
+
+        separator = ['---'] * len(headers)
         title = self._build_title(dataset, normalization_method)
         return self._render_markdown(headers, separator, rows, title=title)
 
@@ -224,7 +455,10 @@ class MarkdownTableGenerator:
     ) -> Tuple[List[str], Dict[str, Dict[str, str]]]:
         """Parse *filepath* and return ``(headers, rows_dict)``.
 
-        ``rows_dict`` maps ``tokenizer_name -> {column_title: cell_value}``.
+        ``rows_dict`` maps ``composite_key -> {column_title: cell_value}``.
+        The composite key is ``"name (user, dataset)"`` regardless of the
+        display format used in the Tokenizer column.
+
         Returns empty structures when the file doesn't exist or has no table.
         """
         path = Path(filepath)
@@ -245,9 +479,11 @@ class MarkdownTableGenerator:
         if header_idx is None:
             return [], {}
 
-        headers = [
+        raw_headers = [
             h.strip() for h in lines[header_idx].strip().strip('|').split('|')
         ]
+        # Strip arrow suffixes from headers for clean matching
+        headers = [_strip_arrow(h) for h in raw_headers]
 
         # Skip separator line
         data_start = header_idx + 2
@@ -260,12 +496,44 @@ class MarkdownTableGenerator:
             cells = [c.strip() for c in stripped.strip('|').split('|')]
             if not cells:
                 continue
-            tok_name = cells[0]
+            tok_cell = cells[0]
+
+            # Strip bold markers from all cell values
+            clean_cells = [c.replace('**', '') for c in cells]
+
+            # Determine composite key
+            m = _COMPOSITE_KEY_RE.match(tok_cell)
+            if m:
+                # Old format: "name (user, dataset)" — use as-is
+                composite_key = tok_cell.replace('**', '')
+            else:
+                # New format: "name [Nk]" — reconstruct composite key from
+                # User and Dataset columns
+                user_idx = None
+                dataset_idx = None
+                for j, hdr in enumerate(headers):
+                    if hdr == 'User':
+                        user_idx = j
+                    elif hdr == 'Dataset':
+                        dataset_idx = j
+
+                if user_idx is not None and dataset_idx is not None and \
+                   user_idx < len(clean_cells) and dataset_idx < len(clean_cells):
+                    user_val = clean_cells[user_idx]
+                    dataset_val = clean_cells[dataset_idx]
+                    # Strip [Nk] suffix to get the base name
+                    dm = _DISPLAY_NAME_RE.match(tok_cell.replace('**', ''))
+                    base_name = dm.group(1).strip() if dm else tok_cell.replace('**', '').strip()
+                    composite_key = f"{base_name} ({user_val}, {dataset_val})"
+                else:
+                    # Fallback: use the cell as-is
+                    composite_key = tok_cell.replace('**', '')
+
             row_map: Dict[str, str] = {}
             for j, hdr in enumerate(headers):
-                if j < len(cells):
-                    row_map[hdr] = cells[j]
-            rows_dict[tok_name] = row_map
+                if j < len(clean_cells):
+                    row_map[hdr] = clean_cells[j]
+            rows_dict[composite_key] = row_map
 
         return headers, rows_dict
 
@@ -279,6 +547,7 @@ class MarkdownTableGenerator:
         metrics: Optional[List[str]] = None,
         dataset: str = "default",
         normalization_method: Optional[str] = None,
+        sort_by: Optional[str] = None,
     ) -> str:
         """Merge current results into an existing results file (or create it).
 
@@ -300,6 +569,8 @@ class MarkdownTableGenerator:
         normalization_method : str, optional
             Normalization method label (e.g. ``"bytes"``) included in the
             document title.
+        sort_by : str, optional
+            Metric key to sort rows by (e.g. ``"fertility"``).
 
         Returns the rendered Markdown string.
         """
@@ -316,12 +587,12 @@ class MarkdownTableGenerator:
         extra_headers: List[str] = []
         if old_headers:
             for h in old_headers:
-                if h != 'Tokenizer' and h not in current_titles and h not in meta_columns:
-                    extra_headers.append(h)
+                clean = _strip_arrow(h)
+                if clean != 'Tokenizer' and clean not in current_titles and clean not in meta_columns:
+                    extra_headers.append(clean)
 
         all_titles = current_titles + extra_headers + ['Dataset', 'User', 'Date']
         headers = ['Tokenizer'] + all_titles
-        separator = ['---'] * len(headers)
 
         username = getpass.getuser()
         date_str = datetime.now().strftime('%Y-%m-%d')
@@ -332,15 +603,21 @@ class MarkdownTableGenerator:
         # re-running updates in place.
         merged: Dict[str, Dict[str, str]] = {}
 
-        # Start with old rows (keyed by Tokenizer column which already has composite key)
-        for tok_name, row_map in old_rows.items():
-            merged[tok_name] = dict(row_map)
+        # Start with old rows (keyed by composite key from parse)
+        for composite_key, row_map in old_rows.items():
+            merged[composite_key] = dict(row_map)
 
         # Overwrite / add current-run rows using composite key
         for tok_name in self.tokenizer_names:
             composite_key = f'{tok_name} ({username}, {dataset})'
+            vocab_size = self._extract_vocab_size(tok_name)
+            if vocab_size is not None:
+                display_name = f"{tok_name} [{_format_vocab_tier(vocab_size)}]"
+            else:
+                display_name = tok_name
             if composite_key not in merged:
-                merged[composite_key] = {'Tokenizer': composite_key}
+                merged[composite_key] = {}
+            merged[composite_key]['Tokenizer'] = display_name
             for cfg in configs:
                 value = self._extract_metric_value(cfg, tok_name)
                 merged[composite_key][cfg['title']] = self._format_value(
@@ -360,13 +637,40 @@ class MarkdownTableGenerator:
                 ordered_names.append(name)
 
         rows: List[List[str]] = []
-        for tok_name in ordered_names:
-            row_map = merged.get(tok_name, {})
-            row = [tok_name]
+        for composite_key in ordered_names:
+            row_map = merged.get(composite_key, {})
+            # Use the display name from the Tokenizer field if available,
+            # otherwise fall back to the composite key
+            display = row_map.get('Tokenizer', composite_key)
+            row = [display]
             for title in all_titles:
                 row.append(row_map.get(title, '---'))
             rows.append(row)
 
+        # Filter empty metric columns
+        metric_titles = current_titles + extra_headers
+        headers, rows = self._filter_empty_columns(headers, rows, metric_titles)
+
+        # Sort if requested
+        if sort_by:
+            sort_cfg = next(
+                (c for c in configs if c['key'] == sort_by), None
+            )
+            if sort_cfg and sort_cfg.get('lower_is_better') is not None:
+                col_idx = None
+                for i, h in enumerate(headers):
+                    if _strip_arrow(h) == sort_cfg['title']:
+                        col_idx = i
+                        break
+                if col_idx is not None:
+                    rows = self._sort_rows(
+                        rows, col_idx, sort_cfg['lower_is_better']
+                    )
+
+        # Apply bolding and arrows
+        self._apply_bolding_and_arrows(headers, rows, configs, metric_titles)
+
+        separator = ['---'] * len(headers)
         title = self._build_title(dataset, normalization_method)
         md = self._render_markdown(headers, separator, rows, title=title)
 

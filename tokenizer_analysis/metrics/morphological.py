@@ -36,6 +36,7 @@ class MorphologicalMetrics(BaseMetrics):
         # Performance optimization: Cache for tokenizer conversions
         self._tokenizer_vocab_cache = {}
         self._token_cleaning_cache = {}
+        self._warned_tokenizers: set = set()
         
         # Pre-compile regex patterns for faster token cleaning
         import re
@@ -393,7 +394,9 @@ class MorphologicalMetrics(BaseMetrics):
             logger.debug(f"Model id_to_token fallback failed: {e}")
         
         # Ultimate fallback: Create placeholder tokens
-        logger.warning(f"All token conversion methods failed for tokenizer {type(tokenizer)}. Using placeholder tokens.")
+        if tokenizer_id not in self._warned_tokenizers:
+            self._warned_tokenizers.add(tokenizer_id)
+            logger.warning(f"All token conversion methods failed for tokenizer {type(tokenizer)}. Using placeholder tokens.")
         return [f"<TOKEN_{token_id}>" for token_id in token_ids]
     
     def _align_words_to_tokens(self, text: str, tokens: List[str]) -> List[tuple]:

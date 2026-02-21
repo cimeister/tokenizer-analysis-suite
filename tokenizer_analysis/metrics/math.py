@@ -91,6 +91,7 @@ class DigitBoundaryMetrics(BaseMetrics):
     def __init__(self, input_provider: InputProvider):
         super().__init__(input_provider)
         self._tokenizer_vocab_cache: Dict[int, Dict[int, str]] = {}
+        self._warned_tokenizers: set = set()
 
     # ------------------------------------------------------------------
     # Token conversion helpers (mirrors MorphologicalMetrics pattern)
@@ -142,10 +143,12 @@ class DigitBoundaryMetrics(BaseMetrics):
         except Exception as e:
             logger.debug("Model id_to_token fallback failed: %s", e)
 
-        logger.warning(
-            "All token conversion methods failed for %s. Using placeholders.",
-            type(tokenizer),
-        )
+        if tokenizer_id not in self._warned_tokenizers:
+            self._warned_tokenizers.add(tokenizer_id)
+            logger.warning(
+                "All token conversion methods failed for %s. Using placeholders.",
+                type(tokenizer),
+            )
         return [f"<TOKEN_{tid}>" for tid in token_ids]
 
     # ------------------------------------------------------------------

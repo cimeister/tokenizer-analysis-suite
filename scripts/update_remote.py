@@ -16,7 +16,10 @@ Examples:
     python scripts/update_remote.py --results-file results/RESULTS_flores_bytes.md --validate-local-results
 
     # Remove your rows from a specific remote results file
-    python scripts/update_remote.py --remove-my-results --remote-filename RESULTS_flores_bytes.md
+    python scripts/update_remote.py --remove-my-results RESULTS_flores_bytes.md
+
+    # Remove your rows from all remote results files at once
+    python scripts/update_remote.py --remove-my-results --all
 
     # Custom remote and branch
     python scripts/update_remote.py --results-file results/RESULTS.md --remote upstream --branch leaderboard
@@ -30,6 +33,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import List, Optional
 
 from tokenizer_analysis.visualization.markdown_tables import (
     MarkdownTableGenerator,
@@ -46,6 +50,97 @@ logger = logging.getLogger(__name__)
 
 REQUIRED_COLUMNS = {'Tokenizer', 'Dataset', 'User', 'Date'}
 COMPOSITE_KEY_PATTERN = re.compile(r'^.+\s*\(.+,\s*.+\)$')
+
+
+def _list_remote_results_files(remote: str, branch: str) -> List[str]:
+    """Return a list of ``RESULTS*.md`` filenames on the remote branch."""
+    remote_ref = f"{remote}/{branch}"
+    _run_git('fetch', remote, branch, check=False)
+    ls_result = _run_git('ls-tree', '--name-only', remote_ref, check=False)
+    if ls_result.returncode != 0 or not ls_result.stdout.strip():
+        return []
+    return [
+        name.strip()
+        for name in ls_result.stdout.strip().splitlines()
+        if name.strip().startswith("RESULTS") and name.strip().endswith(".md")
+    ]
+
+
+def _resolve_remove_targets(
+    remove_arg: str,
+    *,
+    all_files: bool,
+    remote_filename_override: Optional[str],
+    results_file: Optional[str],
+    remote: str,
+    branch: str,
+) -> List[str]:
+    """Determine which remote file(s) to remove results from.
+
+    Parameters
+    ----------
+    remove_arg : str
+        The value passed to ``--remove-my-results``.  ``'__prompt__'`` when
+        the flag was used without a value.
+    all_files : bool
+        ``--all`` flag: remove from every ``RESULTS*.md`` on the branch.
+    remote_filename_override : str | None
+        Explicit ``--remote-filename`` value (legacy; takes precedence).
+    results_file : str | None
+        ``--results-file`` value used to derive a default filename.
+    remote, branch : str
+        Git remote and branch names.
+
+    Returns
+    -------
+    list[str]
+        One or more remote filenames to process.
+    """
+    # --remote-filename takes precedence (legacy path)
+    if remote_filename_override:
+        return [remote_filename_override]
+
+    # --all: every RESULTS file on the branch
+    if all_files:
+        files = _list_remote_results_files(remote, branch)
+        if not files:
+            logger.error(f"No RESULTS*.md files found on {remote}/{branch}.")
+        return files
+
+    # Explicit filename given as positional value of --remove-my-results
+    if remove_arg != '__prompt__':
+        return [remove_arg]
+
+    # No filename given — list available files and let the user choose
+    files = _list_remote_results_files(remote, branch)
+    if not files:
+        logger.error(f"No RESULTS*.md files found on {remote}/{branch}.")
+        return []
+
+    if len(files) == 1:
+        logger.info(f"Only one results file on branch: {files[0]}")
+        return files
+
+    print(f"\nResults files on {remote}/{branch}:")
+    for i, name in enumerate(files, 1):
+        print(f"  {i}) {name}")
+    print(f"  a) All of the above")
+
+    choice = input("\nWhich file to remove your results from? [1]: ").strip()
+    if not choice or choice == "1":
+        return [files[0]]
+    if choice.lower() == 'a':
+        return files
+    try:
+        idx = int(choice) - 1
+        if 0 <= idx < len(files):
+            return [files[idx]]
+    except ValueError:
+        # Maybe they typed the filename directly
+        if choice in files:
+            return [choice]
+    logger.error(f"Invalid selection: {choice}")
+    return []
 
 
 def _derive_remote_filename(filepath: str) -> str:
@@ -67,7 +162,9 @@ def validate_results_file(filepath: str) -> bool:
     - File exists and is non-empty
     - Contains a markdown table with header + separator + data rows
     - Required columns (Tokenizer, Dataset, User, Date) are present
-    - Every row uses the composite key format: ``tokenizer (user, dataset)``
+    - Every row has a valid composite key (reconstructed by
+      ``parse_existing_markdown`` from either old-format ``name (user, dataset)``
+      or new-format ``name [Nk]`` with User + Dataset columns)
     - Every row has the correct number of columns
 
     Returns True if valid, False otherwise (errors are logged).
@@ -95,12 +192,17 @@ def validate_results_file(filepath: str) -> bool:
     num_cols = len(headers)
     errors = []
     for tok_key, row_map in rows.items():
-        # Check composite key format
+        # parse_existing_markdown always reconstructs "name (user, dataset)"
+        # composite keys, so validate that format
         if not COMPOSITE_KEY_PATTERN.match(tok_key):
-            errors.append(
-                f"  Row '{tok_key}': Tokenizer key should be in format "
-                "'name (user, dataset)'"
-            )
+            # Check if User and Dataset columns are non-empty (new format)
+            user_val = row_map.get('User', '').strip()
+            dataset_val = row_map.get('Dataset', '').strip()
+            if not user_val or not dataset_val:
+                errors.append(
+                    f"  Row '{tok_key}': Could not determine composite key. "
+                    "Ensure User and Dataset columns are non-empty."
+                )
 
         # Check column count (row_map includes Tokenizer column)
         row_cols = len(row_map)
@@ -164,11 +266,14 @@ def remove_my_results(
         logger.info(f"Remote {remote_filename} has no rows.")
         return True
 
-    # Filter out current user's rows
-    user_pattern = re.compile(
-        r'\(' + re.escape(username) + r'(?:,\s*[^)]+)?\)$'
-    )
-    kept = {k: v for k, v in rows.items() if not user_pattern.search(k)}
+    # Filter out current user's rows by matching the User column value.
+    # This works for both old-format (composite key) and new-format
+    # (display name with [Nk]) since parse_existing_markdown preserves
+    # the User column in the row_map.
+    kept = {
+        k: v for k, v in rows.items()
+        if v.get('User', '').strip() != username
+    }
     removed = len(rows) - len(kept)
 
     if removed == 0:
@@ -255,8 +360,21 @@ def main():
     )
     parser.add_argument(
         "--remove-my-results",
+        nargs='?',
+        const='__prompt__',
+        default=None,
+        metavar='REMOTE_FILE',
+        help="Remove all your rows from a remote results file. "
+             "Provide the filename on the results branch "
+             "(e.g. RESULTS_flores_bytes.md). "
+             "If omitted, lists available files and prompts for selection. "
+             "Use --all to remove from every RESULTS file on the branch.",
+    )
+    parser.add_argument(
+        "--all",
         action="store_true",
-        help="Remove all your rows from the specified remote results file",
+        help="When combined with --remove-my-results, remove your rows "
+             "from every RESULTS*.md file on the results branch.",
     )
     parser.add_argument(
         "--remote-filename",
@@ -268,16 +386,31 @@ def main():
     args = parser.parse_args()
 
     # Remove mode — works directly on remote, no local file needed.
-    # Requires --remote-filename to know which file to clean.
-    if args.remove_my_results:
-        remote_fname = args.remote_filename or _derive_remote_filename(args.results_file or "RESULTS.md")
-        success = remove_my_results(
-            args.remote, args.branch, remote_filename=remote_fname
+    if args.remove_my_results is not None:
+        remote_fnames = _resolve_remove_targets(
+            args.remove_my_results,
+            all_files=args.all,
+            remote_filename_override=args.remote_filename,
+            results_file=args.results_file,
+            remote=args.remote,
+            branch=args.branch,
         )
-        if success:
-            print(f"Your results removed from {args.remote}/{args.branch}:{remote_fname}")
-        else:
-            logger.error("Failed to remove results. Try again later.")
+        if not remote_fnames:
+            logger.error("No results files to process.")
+            sys.exit(1)
+
+        any_failed = False
+        for remote_fname in remote_fnames:
+            success = remove_my_results(
+                args.remote, args.branch, remote_filename=remote_fname
+            )
+            if success:
+                print(f"Your results removed from {args.remote}/{args.branch}:{remote_fname}")
+            else:
+                logger.error(f"Failed to remove results from {remote_fname}.")
+                any_failed = True
+
+        if any_failed:
             sys.exit(1)
         return
 

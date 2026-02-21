@@ -486,6 +486,16 @@ Examples:
         action="store_true",
         help="Skip digit boundary alignment, cross-number boundary entropy, numeric magnitude consistency, and operator isolation analysis"
     )
+    parser.add_argument(
+        "--sort-results-by",
+        type=str,
+        default=None,
+        metavar="METRIC",
+        help="Sort the Markdown results table by this metric key "
+             "(e.g. fertility, gini, compression_rate). "
+             "Rows are sorted ascending for lower-is-better metrics, "
+             "descending otherwise."
+    )
 
     # Tokenized data saving options
     parser.add_argument(
@@ -843,6 +853,7 @@ Examples:
                 update_existing=True,
                 dataset=dataset,
                 normalization_method=norm_method,
+                sort_by=args.sort_results_by,
             )
             print(f"Markdown results table: {md_path}")
         except Exception as e:

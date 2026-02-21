@@ -108,6 +108,18 @@ class TokenizerWrapper(ABC):
         """
         return None
 
+    def convert_ids_to_tokens(self, token_ids: List[int]) -> List[str]:
+        """Convert token IDs to token strings.
+
+        Default implementation reverses :meth:`get_vocab`.  Subclasses should
+        override with a more efficient method when available.
+        """
+        vocab = self.get_vocab()
+        if vocab:
+            id_to_token = {v: k for k, v in vocab.items()}
+            return [id_to_token.get(tid, f"<UNK_{tid}>") for tid in token_ids]
+        return [f"<UNK_{tid}>" for tid in token_ids]
+
     def get_unk_token_id(self) -> Optional[int]:
         """
         Get the UNK token ID if available.
@@ -191,6 +203,10 @@ class HuggingFaceTokenizer(TokenizerWrapper):
     def get_underlying_tokenizer(self):
         """Return the underlying HuggingFace tokenizer object."""
         return self._tokenizer
+
+    def convert_ids_to_tokens(self, token_ids: List[int]) -> List[str]:
+        """Convert token IDs using the underlying HuggingFace tokenizer."""
+        return [self._tokenizer.id_to_token(tid) or f"<UNK_{tid}>" for tid in token_ids]
 
     def get_unk_token_id(self) -> Optional[int]:
         """Get the UNK token ID from HuggingFace tokenizer."""
@@ -323,7 +339,11 @@ class UniMixLMTokenizer(TokenizerWrapper):
     def get_underlying_tokenizer(self):
         """Return the underlying HuggingFace tokenizer object."""
         return self._tokenizer
-    
+
+    def convert_ids_to_tokens(self, token_ids: List[int]) -> List[str]:
+        """Convert token IDs using the underlying tokenizers library."""
+        return [self._tokenizer.id_to_token(tid) or f"<UNK_{tid}>" for tid in token_ids]
+
     @classmethod
     def from_config(cls, name: str, config: Dict[str, Any]) -> 'UniMixLMTokenizer':
         """Create tokenizer wrapper from config."""
@@ -422,6 +442,10 @@ class SentencePieceTokenizer(TokenizerWrapper):
     def get_underlying_tokenizer(self):
         """Return the underlying SentencePieceProcessor object."""
         return self._sp
+
+    def convert_ids_to_tokens(self, token_ids: List[int]) -> List[str]:
+        """Convert token IDs using SentencePiece id_to_piece."""
+        return [self._sp.id_to_piece(tid) for tid in token_ids]
 
     def get_unk_token_id(self) -> Optional[int]:
         """Get the UNK token ID from SentencePiece tokenizer."""
@@ -574,7 +598,11 @@ class CustomBPETokenizer(TokenizerWrapper):
     def get_underlying_tokenizer(self):
         """Return the underlying HuggingFace tokenizer object."""
         return self._tokenizer
-    
+
+    def convert_ids_to_tokens(self, token_ids: List[int]) -> List[str]:
+        """Convert token IDs using the underlying HuggingFace tokenizer."""
+        return [self._tokenizer.id_to_token(tid) or f"<UNK_{tid}>" for tid in token_ids]
+
     @classmethod
     def from_config(cls, name: str, config: Dict[str, Any]) -> 'CustomBPETokenizer':
         """Create HuggingFace tokenizer wrapper from config."""
