@@ -1,9 +1,18 @@
-# Tokenizer Evaluation Results — flores_core / lines
+# Tokenizer Evaluation Results
 
-_Last updated: 2026-02-17 17:58:08_
+_Last updated: 2026-02-21 14:47:02_
 
 | Tokenizer | Vocab Size | Fertility | Compression Rate | Vocab Util. | TTR | Shannon Entropy | Avg Token Rank | Gini | Languages | Dataset | User | Date |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Apertus_Coarse_Family (ayavuz, flores_core) | --- | 40.070 | 0.029 | 0.340 | 0.0858 | 12.49 | --- | 0.103 | 13 | flores_core | ayavuz | 2026-02-21 |
+| Apertus_Fine_Family (ayavuz, flores_core) | --- | 40.619 | 0.029 | 0.336 | 0.0837 | 12.43 | --- | 0.114 | 13 | flores_core | ayavuz | 2026-02-21 |
+| Apertus_Per_Lang (ayavuz, flores_core) | --- | 38.592 | 0.030 | 0.333 | 0.0872 | 12.62 | --- | 0.083 | 13 | flores_core | ayavuz | 2026-02-21 |
+| BPE_Coarse_Family (ayavuz, flores_core) | --- | 42.935 | 0.027 | 0.245 | 0.0577 | 12.46 | --- | 0.083 | 13 | flores_core | ayavuz | 2026-02-21 |
+| BPE_Fine_Family (ayavuz, flores_core) | --- | 44.451 | 0.026 | 0.237 | 0.0539 | 12.32 | --- | 0.082 | 13 | flores_core | ayavuz | 2026-02-21 |
+| BPE_Per_Lang (ayavuz, flores_core) | --- | 42.585 | 0.027 | 0.228 | 0.0541 | 12.43 | --- | 0.082 | 13 | flores_core | ayavuz | 2026-02-21 |
+| Unigram_Coarse_Family (ayavuz, flores_core) | --- | 47.868 | 0.024 | 0.254 | 0.0536 | 11.73 | --- | 0.066 | 13 | flores_core | ayavuz | 2026-02-21 |
+| Unigram_Fine_Family (ayavuz, flores_core) | --- | 47.843 | 0.024 | 0.247 | 0.0521 | 11.72 | --- | 0.065 | 13 | flores_core | ayavuz | 2026-02-21 |
+| Unigram_Per_Lang (ayavuz, flores_core) | --- | 47.415 | 0.024 | 0.233 | 0.0497 | 11.70 | --- | 0.061 | 13 | flores_core | ayavuz | 2026-02-21 |
 | Classical (meistecl, flores_core) | 128,004 | 36.127 | 0.031 | 0.369 | 0.1009 | 12.91 | 6524.2 | 0.049 | 13 | flores_core | meistecl | 2026-02-17 |
 | Parity-aware (meistecl, flores_core) | 128,004 | 38.139 | 0.029 | 0.322 | 0.0835 | 12.73 | 5367.5 | 0.012 | 13 | flores_core | meistecl | 2026-02-17 |
 | Parity-aware (hybrid) (meistecl, flores_core) | 128,004 | 37.385 | 0.030 | 0.330 | 0.0872 | 12.80 | 5693.5 | 0.028 | 13 | flores_core | meistecl | 2026-02-17 |
