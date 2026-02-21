@@ -8,8 +8,8 @@ Get up and running in 30 seconds:
 
 ```bash
 # Clone and install
-git clone https://github.com/swiss-ai/tokenizer-analysis-suite.git
-cd tokenizer-analysis-suite
+git clone https://github.com/swiss-ai/tokenizer-intrinsic-evals.git
+cd tokenizer-intrinsic-evals
 pip install -e .
 
 # Run demo analysis with built-in sample data
@@ -532,6 +532,37 @@ df.to_parquet('data.parquet')
 - **Morpheme Preservation**: Whether morphemes remain intact after tokenization
 - **MorphScore V2**: Advanced morphological evaluation ([Arnett et. al. 2025](https://arxiv.org/abs/2507.06378))
 
+### Mathematical Content Metrics
+
+These metrics evaluate how well a tokenizer preserves the structural properties of mathematical expressions — digit boundaries, operator identity, and magnitude consistency. They are based on Singh & Strouse (2024, [arXiv:2402.14903](https://arxiv.org/abs/2402.14903)), which showed that right-to-left tokenization of numbers improved arithmetic accuracy by >22 percentage points.
+
+- **Digit Boundary Alignment (F1)**: Measures whether numbers are split at the ideal right-aligned 3-digit boundaries. Per-number precision/recall/F1 is computed against the ideal boundary set, then averaged.
+- **Cross-Number Boundary Entropy**: Shannon entropy of boundary patterns within each digit-length bucket. Zero entropy means the tokenizer applies one deterministic scheme to all numbers of a given length.
+- **Numeric Magnitude Consistency**: Tracks how token fertility (tokens per digit) scales with digit length. Reports Spearman correlation, coefficient of variation, and linear-fit R² across digit-length buckets.
+- **Operator Isolation Rate**: Fraction of mathematical operators tokenized as standalone tokens. Separately reports compound preservation rate for multi-character operators (`<=`, `**`, `!=`, etc.).
+
+#### Desirable tokenizer behavior on mathematical content
+
+**Digit boundary alignment.** Numbers are split at right-aligned 3-digit boundaries, matching place-value structure (units, thousands, millions, ...). For example, `1234567` becomes `1|234|567`. Short numbers (≤3 digits) are kept as single tokens. This alignment means that across an arithmetic operation like `1234 + 5678 = 6912`, corresponding digit positions in operands and result occupy the same position within their respective tokens, giving the model a regular input-output mapping it can learn a consistent algorithm over.
+
+**Cross-number consistency.** All numbers of a given digit length are split with the same boundary pattern. A tokenizer that splits `1234` as `1|234` but `5678` as `56|78` forces the model to handle multiple surface representations of structurally identical inputs. Zero boundary entropy within each digit-length bucket indicates that the tokenizer applies a single deterministic scheme.
+
+**Smooth magnitude scaling.** The number of tokens per digit (fertility) changes predictably as numbers grow longer. Ideally, fertility is roughly constant across magnitudes (one token per 3-digit group), producing a linear relationship between digit length and token count. Discontinuities — such as all numbers up to 999 being single tokens but 1000 suddenly requiring three tokens — create representational cliffs where the model's learned heuristics may break down.
+
+**Operator isolation.** Mathematical operators (`+`, `-`, `*`, `=`, `<=`, etc.) are tokenized as standalone tokens, not merged with adjacent operands or whitespace. This preserves the compositional structure of expressions: the operator defines the computation, the operands define the inputs, and clean token boundaries keep these roles separable. Multi-character operators (`**`, `<=`, `!=`) are preserved as single tokens rather than split into their component characters, maintaining their identity as atomic semantic units.
+
+#### Undesirable tokenizer behavior on mathematical content
+
+**Inconsistent digit grouping.** Numbers of the same length are split at different positions depending on which specific digits appear, a consequence of BPE merge frequencies learned from natural language corpora where certain digit sequences (years, round numbers) are far more common than others. This produces high boundary entropy and means the model must learn separate tokenization-dependent strategies for different numbers of the same length.
+
+**Left-aligned or arbitrary splitting.** Digit boundaries that do not respect place-value structure — for example, `12|345|67` for a 7-digit number instead of `1|234|567` — misalign the positional semantics of digits across operands and results in arithmetic expressions. The model can no longer rely on token position as a proxy for digit significance.
+
+**Magnitude discontinuities.** Abrupt changes in tokenization behavior at magnitude boundaries, typically where the tokenizer's vocabulary of memorized number strings runs out. For instance, a tokenizer that encodes every number from 0 to 999 as a single token but fragments 1000 into `1|000` or `10|00` creates a qualitative shift in representation. The fertility-per-digit curve shows a step function rather than a smooth trend, and the model must learn different arithmetic strategies on either side of the discontinuity.
+
+**Needless splitting of short numbers.** Single- and two-digit numbers broken into individual digit tokens (e.g., `42` → `4|2`) when no structural benefit is gained. This inflates sequence length, wastes context window, and forces the model to reassemble trivially small quantities.
+
+**Operator merging.** Operators fused with adjacent operands (`3+` as one token) or whitespace (`Ġ+5` as one token) obscure the compositional structure of expressions. The model must learn to extract the operator from within a mixed token, adding an implicit parsing step. Splitting of compound operators (`<=` into `<` and `=`) is particularly harmful because it destroys the identity of a semantic primitive — the model sees two separate comparisons rather than one.
+
 ### Multilingual Fairness
 - **Tokenizer Gini Coefficient**: Measures equitable treatment across languages, defined as:  
 
@@ -760,6 +791,7 @@ tokenizer_analysis/
 │   ├── base.py                   # BaseMetrics with common utilities
 │   ├── basic.py                  # Basic tokenization metrics
 │   ├── information_theoretic.py  # Information-theoretic metrics
+│   ├── math.py                   # Mathematical content metrics (digit boundaries, operators)
 │   ├── morphological.py          # Morphological boundary alignment
 │   ├── morphscore.py             # MorphScore neural evaluation
 │   └── gini.py                   # Multilingual fairness metrics

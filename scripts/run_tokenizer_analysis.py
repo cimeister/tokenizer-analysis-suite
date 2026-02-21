@@ -201,6 +201,14 @@ def slim_results_for_json(results: Dict) -> Dict:
             # Keep summary stats for MorphScore analysis
             if metric_name == 'morphscore' and 'summary' in metric_data:
                 slimmed_metric['summary'] = metric_data['summary']
+
+            # Keep digit boundary alignment, entropy, magnitude, and operator results (already compact)
+            if metric_name in ('digit_boundary_alignment', 'cross_number_boundary_entropy',
+                               'numeric_magnitude_consistency', 'operator_isolation_rate'):
+                if 'summary' in metric_data:
+                    slimmed_metric['summary'] = metric_data['summary']
+                if 'per_tokenizer' in metric_data:
+                    slimmed_metric['per_tokenizer'] = metric_data['per_tokenizer']
             
             # Keep metadata for Gini metrics
             if metric_name in ['tokenizer_fairness_gini', 'lorenz_curve_data'] and 'metadata' in metric_data:
@@ -473,6 +481,12 @@ Examples:
         help="Generate additional faceted plots (one subplot per tokenizer with shared y-axis) for grouped analysis (--run-grouped-analysis) and per-language plots (--per-language-plots). Normal plots are still generated."
     )
     
+    parser.add_argument(
+        "--no-digit-boundary",
+        action="store_true",
+        help="Skip digit boundary alignment, cross-number boundary entropy, numeric magnitude consistency, and operator isolation analysis"
+    )
+
     # Tokenized data saving options
     parser.add_argument(
         "--save-tokenized-data",
@@ -662,6 +676,7 @@ Examples:
             save_plots=not args.no_plots,
             include_morphological=morphological_config is not None,
             include_morphscore=morphscore_config is not None,
+            include_digit_boundary=not args.no_digit_boundary,
             verbose=args.verbose,
             save_tokenized_data=args.save_tokenized_data,
             tokenized_data_path=args.tokenized_data_output_path
@@ -672,6 +687,7 @@ Examples:
             save_plots=not args.no_plots,
             include_morphological=morphological_config is not None,
             include_morphscore=morphscore_config is not None,
+            include_digit_boundary=not args.no_digit_boundary,
             verbose=args.verbose,
             save_tokenized_data=args.save_tokenized_data,
             tokenized_data_path=args.tokenized_data_output_path

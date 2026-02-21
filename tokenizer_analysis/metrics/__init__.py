@@ -7,10 +7,11 @@ including basic statistics, information-theoretic measures, and morphological an
 
 from .base import BaseMetrics
 from .basic import BasicTokenizationMetrics
-from .information_theoretic import InformationTheoreticMetrics  
+from .information_theoretic import InformationTheoreticMetrics
 from .morphological import MorphologicalMetrics
 from .gini import TokenizerGiniMetrics
 from .morphscore import MorphScoreMetrics
+from .math import DigitBoundaryMetrics
 
 __all__ = [
     "BaseMetrics",
@@ -18,5 +19,6 @@ __all__ = [
     "InformationTheoreticMetrics",
     "MorphologicalMetrics",
     "TokenizerGiniMetrics",
-    "MorphScoreMetrics"
+    "MorphScoreMetrics",
+    "DigitBoundaryMetrics",
 ]

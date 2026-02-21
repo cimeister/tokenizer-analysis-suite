@@ -17,6 +17,7 @@ from .metrics.information_theoretic import InformationTheoreticMetrics
 from .metrics.gini import TokenizerGiniMetrics
 from .metrics.morphological import MorphologicalMetrics
 from .metrics.morphscore import MorphScoreMetrics
+from .metrics.math import DigitBoundaryMetrics
 from .visualization import TokenizerVisualizer
 from .visualization.latex_tables import LaTeXTableGenerator
 from .visualization.markdown_tables import MarkdownTableGenerator, results_filename
@@ -118,6 +119,9 @@ class UnifiedTokenizerAnalyzer:
                 logger.warning(f"MorphScore metrics disabled: {e}")
                 self.morphscore_metrics = None
         
+        # Initialize digit boundary metrics (always available -- no external data)
+        self.digit_boundary_metrics = DigitBoundaryMetrics(input_provider)
+
         # Initialize visualizer
         self.visualizer = TokenizerVisualizer(self.plot_tokenizers, plot_save_dir, show_global_lines, per_language_plots, faceted_plots)
         
@@ -130,8 +134,9 @@ class UnifiedTokenizerAnalyzer:
     
     def run_analysis(self,
                     save_plots: bool = True,
-                    include_morphological: bool = True,  
+                    include_morphological: bool = True,
                     include_morphscore: bool = True,
+                    include_digit_boundary: bool = True,
                     verbose: bool = True,
                     save_tokenized_data: bool = False,
                     tokenized_data_path: str = None) -> Dict[str, Any]:
@@ -195,6 +200,15 @@ class UnifiedTokenizerAnalyzer:
             if verbose:
                 self.morphscore_metrics.print_results(morphscore_results)
         
+        # Run digit boundary metrics if requested
+        if include_digit_boundary:
+            logger.info("Computing digit boundary metrics...")
+            digit_boundary_results = self.digit_boundary_metrics.compute(tokenized_data)
+            results.update(digit_boundary_results)
+
+            if verbose:
+                self.digit_boundary_metrics.print_results(digit_boundary_results)
+
         # Save tokenized data if requested
         if save_tokenized_data:
             if not tokenized_data_path:
@@ -291,7 +305,31 @@ class UnifiedTokenizerAnalyzer:
                     logger.info(f"Computing MorphScore results for group {group_name}")
                     morphscore_results = self.morphscore_metrics.compute(filtered_data)
                     group_result.update(morphscore_results)
-                
+
+                # Digit boundary metrics - filter from base results if available
+                if base_results and 'digit_boundary_alignment' in base_results:
+                    logger.info(f"Filtering digit boundary results for group {group_name} (avoiding recomputation)")
+                    group_result['digit_boundary_alignment'] = self._filter_digit_boundary_results(
+                        base_results['digit_boundary_alignment'], group_languages
+                    )
+                    group_result['cross_number_boundary_entropy'] = self._filter_digit_boundary_results(
+                        base_results['cross_number_boundary_entropy'], group_languages
+                    )
+                    # Magnitude consistency uses the same structure as digit boundary
+                    if 'numeric_magnitude_consistency' in base_results:
+                        group_result['numeric_magnitude_consistency'] = self._filter_digit_boundary_results(
+                            base_results['numeric_magnitude_consistency'], group_languages
+                        )
+                    # Operator isolation has its own structure
+                    if 'operator_isolation_rate' in base_results:
+                        group_result['operator_isolation_rate'] = self._filter_operator_results(
+                            base_results['operator_isolation_rate'], group_languages
+                        )
+                else:
+                    logger.info(f"Computing digit boundary results for group {group_name}")
+                    db_results = self.digit_boundary_metrics.compute(filtered_data)
+                    group_result.update(db_results)
+
                 group_results[group_name] = group_result
             
             grouped_results[group_type] = group_results
@@ -354,6 +392,90 @@ class UnifiedTokenizerAnalyzer:
         
         return filtered_results
     
+    def _filter_digit_boundary_results(self, db_results: Dict[str, Any], target_languages: List[str]) -> Dict[str, Any]:
+        """Filter digit boundary alignment, entropy, or magnitude results to specified languages.
+
+        Unknown keys (e.g. ``scaling``) are passed through as-is so this
+        method works for magnitude results too.
+        """
+        filtered: Dict[str, Any] = {
+            "per_tokenizer": {},
+            "summary": {},
+        }
+
+        _LANG_DICT_KEYS = {"by_digit_length", "by_bucket", "overall"}
+
+        for tok_name, tok_data in db_results.get("per_tokenizer", {}).items():
+            ftok: Dict[str, Any] = {}
+
+            # Filter by_digit_length
+            if "by_digit_length" in tok_data:
+                fbd: Dict[str, Any] = {}
+                for dl_str, lang_dict in tok_data["by_digit_length"].items():
+                    flang = {l: d for l, d in lang_dict.items() if l in target_languages}
+                    if flang:
+                        fbd[dl_str] = flang
+                if fbd:
+                    ftok["by_digit_length"] = fbd
+
+            # Filter by_bucket
+            if "by_bucket" in tok_data:
+                fb: Dict[str, Any] = {}
+                for bucket, lang_dict in tok_data["by_bucket"].items():
+                    flang = {l: d for l, d in lang_dict.items() if l in target_languages}
+                    if flang:
+                        fb[bucket] = flang
+                ftok["by_bucket"] = fb if fb else {"short": {}, "long": {}}
+
+            # Filter overall
+            if "overall" in tok_data:
+                ftok["overall"] = {
+                    l: d for l, d in tok_data["overall"].items() if l in target_languages
+                }
+
+            # Pass through unknown keys (e.g. scaling) as-is
+            for key, value in tok_data.items():
+                if key not in _LANG_DICT_KEYS and key not in ftok:
+                    ftok[key] = value
+
+            if ftok:
+                filtered["per_tokenizer"][tok_name] = ftok
+
+        # Copy summary as-is (could be recomputed but matches morphological pattern)
+        if "summary" in db_results:
+            filtered["summary"] = db_results["summary"]
+
+        return filtered
+
+    def _filter_operator_results(self, op_results: Dict[str, Any], target_languages: List[str]) -> Dict[str, Any]:
+        """Filter operator isolation results to specified languages."""
+        filtered: Dict[str, Any] = {
+            "per_tokenizer": {},
+            "summary": {},
+        }
+
+        for tok_name, tok_data in op_results.get("per_tokenizer", {}).items():
+            ftok: Dict[str, Any] = {}
+
+            # by_category is language-independent — copy as-is
+            if "by_category" in tok_data:
+                ftok["by_category"] = tok_data["by_category"]
+
+            # Filter by_language
+            if "by_language" in tok_data:
+                fbl = {l: d for l, d in tok_data["by_language"].items() if l in target_languages}
+                if fbl:
+                    ftok["by_language"] = fbl
+
+            if ftok:
+                filtered["per_tokenizer"][tok_name] = ftok
+
+        # Copy summary as-is
+        if "summary" in op_results:
+            filtered["summary"] = op_results["summary"]
+
+        return filtered
+
     def _filter_morphscore_results(self, morphscore_results: Dict[str, Any], target_languages: List[str]) -> Dict[str, Any]:
         """Filter MorphScore results to include only specified languages and recompute summary statistics."""
         import numpy as np
