@@ -18,9 +18,14 @@ from .metrics.gini import TokenizerGiniMetrics
 from .metrics.morphological import MorphologicalMetrics
 from .metrics.morphscore import MorphScoreMetrics
 from .metrics.math import DigitBoundaryMetrics
+from .metrics.code_ast import ASTBoundaryMetrics
 from .visualization import TokenizerVisualizer
 from .visualization.latex_tables import LaTeXTableGenerator
-from .visualization.markdown_tables import MarkdownTableGenerator, results_filename
+from .visualization.markdown_tables import (
+    MarkdownTableGenerator,
+    generate_bar_plots_from_markdown,
+    results_filename,
+)
 from .config import TextMeasurementConfig, DEFAULT_TEXT_MEASUREMENT_CONFIG
 from .config.language_metadata import LanguageMetadata
 
@@ -35,7 +40,7 @@ class UnifiedTokenizerAnalyzer:
     TokenizedData format without any legacy compatibility.
     """
     
-    def __init__(self, 
+    def __init__(self,
                  input_provider: InputProvider,
                  measurement_config: Optional[TextMeasurementConfig] = None,
                  language_metadata: Optional[LanguageMetadata] = None,
@@ -45,7 +50,8 @@ class UnifiedTokenizerAnalyzer:
                  morphscore_config: Optional[Dict[str, Any]] = None,
                  plot_tokenizers: Optional[List[str]] = None,
                  per_language_plots: bool = False,
-                 faceted_plots: bool = False):
+                 faceted_plots: bool = False,
+                 code_ast_config: Optional[Dict[str, str]] = None):
         """
         Initialize unified analyzer.
         
@@ -117,10 +123,19 @@ class UnifiedTokenizerAnalyzer:
                 )
             except (ImportError, ValueError) as e:
                 logger.warning(f"MorphScore metrics disabled: {e}")
-                self.morphscore_metrics = None
-        
+
         # Initialize digit boundary metrics (always available -- no external data)
         self.digit_boundary_metrics = DigitBoundaryMetrics(input_provider)
+
+        # Initialize AST boundary metrics if config provided
+        self.ast_boundary_metrics = None
+        if code_ast_config is not None:
+            try:
+                self.ast_boundary_metrics = ASTBoundaryMetrics(
+                    input_provider, code_config=code_ast_config
+                )
+            except (ImportError, ValueError) as e:
+                logger.warning(f"AST boundary metrics disabled: {e}")
 
         # Initialize visualizer
         self.visualizer = TokenizerVisualizer(self.plot_tokenizers, plot_save_dir, show_global_lines, per_language_plots, faceted_plots)
@@ -137,6 +152,7 @@ class UnifiedTokenizerAnalyzer:
                     include_morphological: bool = True,
                     include_morphscore: bool = True,
                     include_digit_boundary: bool = True,
+                    include_code_ast: bool = True,
                     verbose: bool = True,
                     save_tokenized_data: bool = False,
                     tokenized_data_path: str = None) -> Dict[str, Any]:
@@ -208,6 +224,15 @@ class UnifiedTokenizerAnalyzer:
 
             if verbose:
                 self.digit_boundary_metrics.print_results(digit_boundary_results)
+
+        # Run AST boundary metrics if available
+        if self.ast_boundary_metrics and include_code_ast:
+            logger.info("Computing AST boundary alignment metrics...")
+            ast_results = self.ast_boundary_metrics.compute(tokenized_data)
+            results.update(ast_results)
+
+            if verbose:
+                self.ast_boundary_metrics.print_results(ast_results)
 
         # Save tokenized data if requested
         if save_tokenized_data:
@@ -843,6 +868,13 @@ class UnifiedTokenizerAnalyzer:
             with open(path, "w", encoding="utf-8") as f:
                 f.write(md)
             logger.info(f"Markdown results table saved to {path}")
+
+            # Generate bar plots
+            try:
+                generate_bar_plots_from_markdown(path)
+            except Exception as e:
+                logger.warning(f"Bar plot generation failed: {e}")
+
             return md
 
     def _save_tokenized_data(self, tokenized_data: Dict[str, List], save_path: str):

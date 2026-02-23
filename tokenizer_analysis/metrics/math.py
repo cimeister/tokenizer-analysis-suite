@@ -67,12 +67,6 @@ class DigitBoundaryMetrics(BaseMetrics):
     H = 1.0 bit, normalised = 1.0
     """
 
-    # Pre-compiled patterns (same set used by MorphologicalMetrics)
-    _SPACE_PREFIX = re.compile(r'^[Ġ▁ ]')
-    _CONTINUATION = re.compile(r'^##')
-    _END_WORD = re.compile(r'</w>$')
-    _CONTINUATION_END = re.compile(r'@@$')
-    _SPECIAL_TOKEN = re.compile(r'^(<\||\[).*(\|>|\])$')
     _DIGIT_SPAN = re.compile(r'\d+')
     _OPERATOR_SPAN = re.compile(r'(?:\*\*|<<|>>|<=|>=|==|!=|&&|\|\||[+\-*/=<>!&|^~%])')
 
@@ -87,122 +81,6 @@ class DigitBoundaryMetrics(BaseMetrics):
     for _cat, _ops in _OPERATOR_CATEGORIES.items():
         for _op in _ops:
             _OPERATOR_TO_CATEGORY[_op] = _cat
-
-    def __init__(self, input_provider: InputProvider):
-        super().__init__(input_provider)
-        self._tokenizer_vocab_cache: Dict[int, Dict[int, str]] = {}
-        self._warned_tokenizers: set = set()
-
-    # ------------------------------------------------------------------
-    # Token conversion helpers (mirrors MorphologicalMetrics pattern)
-    # ------------------------------------------------------------------
-
-    def _convert_ids_to_tokens(self, tokenizer: Any, token_ids: List[int]) -> List[str]:
-        """Convert token IDs to strings with multiple fallback strategies.
-
-        Uses the same four-level fallback as
-        ``MorphologicalMetrics._convert_ids_to_tokens``.
-        """
-        if not token_ids:
-            return []
-
-        tokenizer_id = id(tokenizer)
-
-        # Fast path: use cached vocab reverse-mapping if available
-        if tokenizer_id in self._tokenizer_vocab_cache:
-            id_to_token = self._tokenizer_vocab_cache[tokenizer_id]
-            return [id_to_token.get(tid, f"<UNK_{tid}>") for tid in token_ids]
-
-        try:
-            if hasattr(tokenizer, 'convert_ids_to_tokens'):
-                tokens = tokenizer.convert_ids_to_tokens(token_ids)
-                if tokens and all(isinstance(t, str) for t in tokens):
-                    return tokens
-        except Exception as e:
-            logger.debug("convert_ids_to_tokens failed: %s", e)
-
-        try:
-            vocab = None
-            if hasattr(tokenizer, 'get_vocab'):
-                vocab = tokenizer.get_vocab()
-            if vocab:
-                self._tokenizer_vocab_cache[tokenizer_id] = {
-                    v: (k.decode('utf-8') if isinstance(k, bytes) else str(k))
-                    for k, v in vocab.items()
-                }
-                id_to_token = self._tokenizer_vocab_cache[tokenizer_id]
-                return [id_to_token.get(tid, f"<UNK_{tid}>") for tid in token_ids]
-        except Exception as e:
-            logger.debug("Vocabulary lookup fallback failed: %s", e)
-
-        try:
-            if hasattr(tokenizer, 'model') and hasattr(tokenizer.model, 'id_to_token'):
-                tokens = [tokenizer.model.id_to_token(tid) for tid in token_ids]
-                if tokens and all(t is not None for t in tokens):
-                    return [t.decode('utf-8') if isinstance(t, bytes) else str(t) for t in tokens]
-        except Exception as e:
-            logger.debug("Model id_to_token fallback failed: %s", e)
-
-        if tokenizer_id not in self._warned_tokenizers:
-            self._warned_tokenizers.add(tokenizer_id)
-            logger.warning(
-                "All token conversion methods failed for %s. Using placeholders.",
-                type(tokenizer),
-            )
-        return [f"<TOKEN_{tid}>" for tid in token_ids]
-
-    # ------------------------------------------------------------------
-    # Token cleaning
-    # ------------------------------------------------------------------
-
-    def _clean_token(self, token: str) -> Optional[str]:
-        """Strip subword markers from *token*, returning ``None`` for special tokens.
-
-        >>> m = DigitBoundaryMetrics.__new__(DigitBoundaryMetrics)
-        >>> m._clean_token('Ġhello')
-        'hello'
-        >>> m._clean_token('##world')
-        'world'
-        >>> m._clean_token('<|endoftext|>') is None
-        True
-        """
-        if self._SPECIAL_TOKEN.match(token):
-            return None
-        if self._SPACE_PREFIX.match(token):
-            return token[1:]
-        if self._CONTINUATION.match(token):
-            return token[2:]
-        if self._END_WORD.search(token):
-            return token[:-4]
-        if self._CONTINUATION_END.search(token):
-            return token[:-2]
-        return token
-
-    # ------------------------------------------------------------------
-    # Character-to-token mapping
-    # ------------------------------------------------------------------
-
-    def _build_char_to_token_map(
-        self, token_strings: List[str]
-    ) -> Tuple[str, List[int]]:
-        """Build a mapping from character offset to token index.
-
-        Returns ``(reconstructed_text, char_to_token)`` where
-        ``char_to_token[i]`` is the token index that produced character *i*
-        in the reconstructed text.
-        """
-        reconstructed: List[str] = []
-        char_to_token: List[int] = []
-
-        for idx, raw_token in enumerate(token_strings):
-            cleaned = self._clean_token(raw_token)
-            if cleaned is None:
-                continue
-            for ch in cleaned:
-                reconstructed.append(ch)
-                char_to_token.append(idx)
-
-        return "".join(reconstructed), char_to_token
 
     # ------------------------------------------------------------------
     # Digit-span boundary extraction

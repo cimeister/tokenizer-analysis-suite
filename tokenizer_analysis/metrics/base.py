@@ -3,7 +3,8 @@ Base metrics class for unified TokenizedData interface - skeleton only.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
+import re
 import numpy as np
 import scipy
 from collections import defaultdict
@@ -22,18 +23,28 @@ logger = logging.getLogger(__name__)
 
 
 class BaseMetrics(ABC):
-    """Base class for tokenizer metrics using TokenizedData interface - skeleton only."""
-    
+    """Base class for tokenizer metrics using TokenizedData interface."""
+
+    # Pre-compiled regex patterns for subword marker handling.
+    # Shared by DigitBoundaryMetrics, ASTBoundaryMetrics, and MorphologicalMetrics.
+    _SPACE_PREFIX = re.compile(r'^[Ġ▁ ]')
+    _CONTINUATION = re.compile(r'^##')
+    _END_WORD = re.compile(r'</w>$')
+    _CONTINUATION_END = re.compile(r'@@$')
+    _SPECIAL_TOKEN = re.compile(r'^(<\||\[).*(\|>|\])$')
+
     def __init__(self, input_provider: InputProvider):
         """
         Initialize base metrics.
-        
+
         Args:
             input_provider: InputProvider instance providing tokenized data
         """
         self.input_provider = input_provider
         self.tokenizer_names = input_provider.get_tokenizer_names()
         self.language_metadata = None  # Can be set by subclasses
+        self._tokenizer_vocab_cache: Dict[int, Dict[int, str]] = {}
+        self._warned_tokenizers: set = set()
     
     def get_tokenized_data(self) -> Dict[str, List[TokenizedData]]:
         """Get tokenized data organized by tokenizer."""
@@ -46,7 +57,123 @@ class BaseMetrics(ABC):
     def get_languages(self, tokenizer_name: Optional[str] = None) -> List[str]:
         """Get available languages."""
         return self.input_provider.get_languages(tokenizer_name)
-    
+
+    # ------------------------------------------------------------------
+    # Shared token conversion / cleaning helpers
+    # ------------------------------------------------------------------
+
+    def _convert_ids_to_tokens(self, tokenizer: Any, token_ids: List[int]) -> List[str]:
+        """Convert token IDs to strings with multiple fallback strategies.
+
+        Fallback order:
+        1. ``tokenizer.convert_ids_to_tokens``
+        2. ``tokenizer.get_vocab`` → reverse mapping (cached)
+        3. ``tokenizer.model.id_to_token``
+        4. Placeholder strings ``<TOKEN_{id}>``
+        """
+        if not token_ids:
+            return []
+
+        tokenizer_id = id(tokenizer)
+
+        # Fast path: use cached vocab reverse-mapping if available
+        if tokenizer_id in self._tokenizer_vocab_cache:
+            id_to_token = self._tokenizer_vocab_cache[tokenizer_id]
+            return [id_to_token.get(tid, f"<UNK_{tid}>") for tid in token_ids]
+
+        try:
+            if hasattr(tokenizer, 'convert_ids_to_tokens'):
+                tokens = tokenizer.convert_ids_to_tokens(token_ids)
+                if tokens and all(isinstance(t, str) for t in tokens):
+                    return tokens
+        except Exception as e:
+            logger.debug("convert_ids_to_tokens failed: %s", e)
+
+        try:
+            vocab = None
+            if hasattr(tokenizer, 'get_vocab'):
+                vocab = tokenizer.get_vocab()
+            if vocab:
+                self._tokenizer_vocab_cache[tokenizer_id] = {
+                    v: (k.decode('utf-8') if isinstance(k, bytes) else str(k))
+                    for k, v in vocab.items()
+                }
+                id_to_token = self._tokenizer_vocab_cache[tokenizer_id]
+                return [id_to_token.get(tid, f"<UNK_{tid}>") for tid in token_ids]
+        except Exception as e:
+            logger.debug("Vocabulary lookup fallback failed: %s", e)
+
+        try:
+            if hasattr(tokenizer, 'model') and hasattr(tokenizer.model, 'id_to_token'):
+                tokens = [tokenizer.model.id_to_token(tid) for tid in token_ids]
+                if tokens and all(t is not None for t in tokens):
+                    return [t.decode('utf-8') if isinstance(t, bytes) else str(t) for t in tokens]
+        except Exception as e:
+            logger.debug("Model id_to_token fallback failed: %s", e)
+
+        if tokenizer_id not in self._warned_tokenizers:
+            self._warned_tokenizers.add(tokenizer_id)
+            logger.warning(
+                "All token conversion methods failed for %s. Using placeholders.",
+                type(tokenizer),
+            )
+        return [f"<TOKEN_{tid}>" for tid in token_ids]
+
+    def _process_token(self, raw_token: str, preserve_space: bool = False) -> Optional[str]:
+        """Shared token processing: strip subword markers, returning ``None`` for special tokens.
+
+        Args:
+            raw_token: Raw token string from the tokenizer vocabulary.
+            preserve_space: If ``False`` (default), space-prefix markers (Ġ, ▁,
+                leading space) are stripped entirely — the ``_clean_token`` path.
+                If ``True``, space-prefix markers are replaced with a literal
+                space — the ``_decode_raw_token`` path used for
+                whitespace-preserving alignment.
+        """
+        if self._SPECIAL_TOKEN.match(raw_token):
+            return None
+        if self._SPACE_PREFIX.match(raw_token):
+            if preserve_space:
+                return " " + raw_token[1:]
+            return raw_token[1:]
+        if self._CONTINUATION.match(raw_token):
+            return raw_token[2:]
+        if self._END_WORD.search(raw_token):
+            return raw_token[:-4]
+        if self._CONTINUATION_END.search(raw_token):
+            return raw_token[:-2]
+        return raw_token
+
+    def _clean_token(self, token: str) -> Optional[str]:
+        """Strip subword markers from *token*, returning ``None`` for special tokens."""
+        return self._process_token(token, preserve_space=False)
+
+    def _build_char_to_token_map(
+        self, token_strings: List[str]
+    ) -> Tuple[str, List[int]]:
+        """Build a mapping from character offset to token index.
+
+        Returns ``(reconstructed_text, char_to_token)`` where
+        ``char_to_token[i]`` is the token index that produced character *i*
+        in the reconstructed text.
+        """
+        reconstructed: List[str] = []
+        char_to_token: List[int] = []
+
+        for idx, raw_token in enumerate(token_strings):
+            cleaned = self._clean_token(raw_token)
+            if cleaned is None:
+                continue
+            for ch in cleaned:
+                reconstructed.append(ch)
+                char_to_token.append(idx)
+
+        return "".join(reconstructed), char_to_token
+
+    # ------------------------------------------------------------------
+    # Statistics helpers
+    # ------------------------------------------------------------------
+
     @staticmethod
     def compute_basic_stats(values: List[float]) -> Dict[str, float]:
         """Compute basic statistics for a list of values."""

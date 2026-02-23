@@ -74,14 +74,12 @@ def _strip_arrow(header: str) -> str:
 class MarkdownTableGenerator:
     """Generate and cumulatively update Markdown tables from tokenizer analysis results."""
 
-    def __init__(self, results: Dict[str, Any], tokenizer_names: List[str]):
-        self.results = results
-        self.tokenizer_names = tokenizer_names
-
-        # Ordered list of metric configurations (determines column order).
-        # ``lower_is_better``: True/False controls bolding direction;
-        # None means informational (no bolding).
-        self.metric_configs: List[Dict[str, Any]] = [
+    # Ordered list of metric configurations (determines column order).
+    # ``lower_is_better``: True/False controls bolding direction;
+    # None means informational (no bolding).
+    # Defined at class level so standalone functions (e.g. push_results_to_branch)
+    # can access them without a live instance.
+    DEFAULT_METRIC_CONFIGS: List[Dict[str, Any]] = [
             {
                 'key': 'vocab_size',
                 'title': 'Vocab Size',
@@ -116,24 +114,6 @@ class MarkdownTableGenerator:
                 'value_key': 'global_utilization',
                 'stat_key': None,
                 'format': '{:.3f}',
-                'lower_is_better': False,
-            },
-            {
-                'key': 'type_token_ratio',
-                'title': 'TTR',
-                'key_path': ['type_token_ratio', 'per_tokenizer'],
-                'value_key': 'global_ttr',
-                'stat_key': None,
-                'format': '{:.4f}',
-                'lower_is_better': False,
-            },
-            {
-                'key': 'renyi_1.0',
-                'title': 'Shannon Entropy',
-                'key_path': ['renyi_efficiency', 'per_tokenizer'],
-                'value_key': 'renyi_1.0',
-                'stat_key': 'overall',
-                'format': '{:.2f}',
                 'lower_is_better': False,
             },
             {
@@ -182,6 +162,33 @@ class MarkdownTableGenerator:
                 'lower_is_better': False,
             },
             {
+                'key': 'ast_full_alignment',
+                'title': 'AST Align.',
+                'key_path': ['ast_boundary_alignment', 'summary'],
+                'value_key': 'avg_full_alignment_rate',
+                'stat_key': None,
+                'format': '{:.3f}',
+                'lower_is_better': False,
+            },
+            {
+                'key': 'ident_fragmentation',
+                'title': 'Ident. Frag.',
+                'key_path': ['identifier_fragmentation', 'summary'],
+                'value_key': 'fragmentation_rate',
+                'stat_key': None,
+                'format': '{:.3f}',
+                'lower_is_better': True,
+            },
+            {
+                'key': 'indent_consistency',
+                'title': 'Indent Cons.',
+                'key_path': ['indentation_consistency', 'summary'],
+                'value_key': 'avg_weighted_consistency',
+                'stat_key': None,
+                'format': '{:.3f}',
+                'lower_is_better': False,
+            },
+            {
                 'key': 'num_languages',
                 'title': 'Languages',
                 'key_path': ['tokenizer_fairness_gini', 'per_tokenizer'],
@@ -191,6 +198,11 @@ class MarkdownTableGenerator:
                 'lower_is_better': None,
             },
         ]
+
+    def __init__(self, results: Dict[str, Any], tokenizer_names: List[str]):
+        self.results = results
+        self.tokenizer_names = tokenizer_names
+        self.metric_configs = list(self.DEFAULT_METRIC_CONFIGS)
 
     # ------------------------------------------------------------------
     # Value extraction / formatting
@@ -680,6 +692,12 @@ class MarkdownTableGenerator:
         path.write_text(md, encoding='utf-8')
         logger.info(f"Markdown results table saved to {filepath}")
 
+        # Generate bar plots
+        try:
+            generate_bar_plots_from_markdown(filepath)
+        except Exception as e:
+            logger.warning(f"Bar plot generation failed: {e}")
+
         return md
 
     # ------------------------------------------------------------------
@@ -739,6 +757,129 @@ class MarkdownTableGenerator:
         return '\n'.join(lines)
 
 
+def _plots_dir_for_results_file(md_filepath: str) -> str:
+    """Return the plot directory path for a given results markdown file.
+
+    ``RESULTS_flores_core_lines.md`` → ``…/flores_core_lines/``
+    ``RESULTS.md`` → ``…/default/``
+    """
+    parent = str(Path(md_filepath).parent)
+    stem = Path(md_filepath).stem  # e.g. "RESULTS_flores_core_lines"
+    if stem == "RESULTS":
+        folder_name = "default"
+    else:
+        folder_name = stem.replace("RESULTS_", "", 1)
+    return os.path.join(parent, folder_name)
+
+
+def _truncate_name(name: str, max_len: int = 30) -> str:
+    """Truncate a tokenizer display name for plot labels."""
+    if len(name) <= max_len:
+        return name
+    return name[: max_len - 1] + "\u2026"
+
+
+def generate_bar_plots_from_markdown(md_filepath: str) -> Optional[str]:
+    """Parse a ``RESULTS*.md`` file and generate one horizontal bar plot per metric column.
+
+    Returns the plot directory path, or ``None`` when no plots could be created.
+    """
+    import matplotlib
+    matplotlib.use('Agg')
+
+    headers, rows_dict = MarkdownTableGenerator.parse_existing_markdown(md_filepath)
+    if not headers or not rows_dict:
+        return None
+
+    plot_dir = _plots_dir_for_results_file(md_filepath)
+    os.makedirs(plot_dir, exist_ok=True)
+
+    # Build config lookup for lower_is_better info
+    title_to_cfg = {c['title']: c for c in MarkdownTableGenerator.DEFAULT_METRIC_CONFIGS}
+
+    # Columns to skip (non-metric or informational)
+    skip = {'Tokenizer', 'Dataset', 'User', 'Date'}
+
+    # Collect tokenizer names and display names
+    tok_names = list(rows_dict.keys())
+    display_names = []
+    for name in tok_names:
+        row = rows_dict[name]
+        display = row.get('Tokenizer', name)
+        display_names.append(_truncate_name(display))
+
+    for hdr in headers:
+        clean_hdr = _strip_arrow(hdr)
+        if clean_hdr in skip:
+            continue
+        cfg = title_to_cfg.get(clean_hdr)
+        # Skip informational columns (lower_is_better is None)
+        if cfg and cfg.get('lower_is_better') is None:
+            continue
+
+        # Extract values
+        values = []
+        labels = []
+        for name, display in zip(tok_names, display_names):
+            raw = rows_dict[name].get(clean_hdr, '---')
+            val = _parse_float(raw)
+            if val is not None:
+                values.append(val)
+                labels.append(display)
+
+        if not values:
+            continue
+
+        _make_bar_plot(labels, values, clean_hdr, cfg, plot_dir)
+
+    return plot_dir
+
+
+def _make_bar_plot(
+    labels: List[str],
+    values: List[float],
+    title: str,
+    cfg: Optional[Dict[str, Any]],
+    plot_dir: str,
+) -> None:
+    """Create and save a single horizontal bar plot."""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    from tokenizer_analysis.visualization.plots import get_colors, setup_plot_style
+
+    setup_plot_style()
+
+    n = len(values)
+    colors = list(get_colors(n))
+
+    # Highlight best value
+    lower = cfg['lower_is_better'] if cfg else None
+    if lower is not None:
+        best_idx = values.index(min(values) if lower else max(values))
+        colors[best_idx] = '#009988'  # Teal highlight for best
+
+    fig, ax = plt.subplots(figsize=(10, max(3, 0.5 * n + 1)))
+    y_pos = range(n)
+    ax.barh(y_pos, values, color=colors)
+    ax.set_yticks(list(y_pos))
+    ax.set_yticklabels(labels, fontsize=10)
+
+    arrow = ''
+    if lower is True:
+        arrow = ' \u2193'
+    elif lower is False:
+        arrow = ' \u2191'
+    ax.set_title(f'{title}{arrow}', fontsize=14)
+    ax.invert_yaxis()  # Top-to-bottom matches table order
+
+    plt.tight_layout()
+    slug = title.lower().replace(' ', '_').replace('.', '').replace('-', '_')
+    path = os.path.join(plot_dir, f'{slug}.png')
+    fig.savefig(path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+
+
 def _run_git(
     *args: str, check: bool = True, capture: bool = True, stdin: str = None
 ) -> subprocess.CompletedProcess:
@@ -760,6 +901,7 @@ def push_results_to_branch(
     commit_message: str = None,
     skip_merge: bool = False,
     remote_filename: str = "RESULTS.md",
+    plot_dir: Optional[str] = None,
 ) -> bool:
     """Commit *filepath* as *remote_filename* on *branch* and push, without
     touching the working tree or the current branch.
@@ -795,6 +937,10 @@ def push_results_to_branch(
         Name of the file in the git tree on the results branch
         (default ``"RESULTS.md"``).  Use :func:`results_filename` to
         derive this from dataset / normalization method.
+    plot_dir : str | None
+        Optional path to a local directory of bar-plot PNGs to push
+        alongside the markdown file.  The directory is stored as a
+        subtree entry in the git tree on the results branch.
 
     Returns
     -------
@@ -878,6 +1024,16 @@ def push_results_to_branch(
                             ]
                             rows.append(row)
 
+                        # Re-apply arrows and bolding so the merged
+                        # file is consistent with normal generation.
+                        MarkdownTableGenerator._apply_bolding_and_arrows(
+                            headers,
+                            rows,
+                            MarkdownTableGenerator.DEFAULT_METRIC_CONFIGS,
+                            data_headers,
+                        )
+                        separator = ['---'] * len(headers)
+
                         md = MarkdownTableGenerator._render_markdown(
                             headers, separator, rows
                         )
@@ -915,6 +1071,28 @@ def push_results_to_branch(
 
         # Add/replace our file
         tree_entries.append(f"100644 blob {blob_sha}\t{remote_filename}")
+
+        # Add plot directory as a subtree (if provided)
+        if plot_dir and os.path.isdir(plot_dir):
+            plot_dirname = Path(plot_dir).name
+            # Remove any existing entry for this directory
+            tree_entries = [
+                e for e in tree_entries
+                if e.split('\t', 1)[1] != plot_dirname
+            ]
+            # Build subtree for plot files
+            plot_tree_entries: List[str] = []
+            for png_file in sorted(Path(plot_dir).glob('*.png')):
+                pblob = _run_git('hash-object', '-w', str(png_file))
+                plot_tree_entries.append(
+                    f"100644 blob {pblob.stdout.strip()}\t{png_file.name}"
+                )
+            if plot_tree_entries:
+                subtree = _run_git('mktree', stdin='\n'.join(plot_tree_entries))
+                tree_entries.append(
+                    f"040000 tree {subtree.stdout.strip()}\t{plot_dirname}"
+                )
+
         tree_input = '\n'.join(tree_entries)
         tree_result = _run_git('mktree', stdin=tree_input)
         tree_sha = tree_result.stdout.strip()

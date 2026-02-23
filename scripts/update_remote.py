@@ -37,6 +37,7 @@ from typing import List, Optional
 
 from tokenizer_analysis.visualization.markdown_tables import (
     MarkdownTableGenerator,
+    _plots_dir_for_results_file,
     push_results_to_branch,
     results_filename,
     _run_git,
@@ -452,6 +453,11 @@ def main():
         logger.error("Fix the issues above before pushing.")
         sys.exit(1)
 
+    # Determine plot directory for bar plots (if it exists)
+    plot_dir = _plots_dir_for_results_file(results_file)
+    if not os.path.isdir(plot_dir):
+        plot_dir = None
+
     logger.info(f"Pushing {results_file} as {remote_fname} to {args.remote}/{args.branch}")
     success = push_results_to_branch(
         filepath=results_file,
@@ -459,6 +465,7 @@ def main():
         branch=args.branch,
         commit_message=args.commit_message,
         remote_filename=remote_fname,
+        plot_dir=plot_dir,
     )
 
     if success:

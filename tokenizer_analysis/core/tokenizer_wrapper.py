@@ -206,7 +206,14 @@ class HuggingFaceTokenizer(TokenizerWrapper):
 
     def convert_ids_to_tokens(self, token_ids: List[int]) -> List[str]:
         """Convert token IDs using the underlying HuggingFace tokenizer."""
-        return [self._tokenizer.id_to_token(tid) or f"<UNK_{tid}>" for tid in token_ids]
+        # tokenizers.Tokenizer uses id_to_token(); transformers.AutoTokenizer
+        # uses convert_ids_to_tokens().  Try both.
+        if hasattr(self._tokenizer, 'id_to_token'):
+            return [self._tokenizer.id_to_token(tid) or f"<UNK_{tid}>" for tid in token_ids]
+        if hasattr(self._tokenizer, 'convert_ids_to_tokens'):
+            tokens = self._tokenizer.convert_ids_to_tokens(token_ids)
+            return [t if isinstance(t, str) else f"<UNK_{tid}>" for t, tid in zip(tokens, token_ids)]
+        return super().convert_ids_to_tokens(token_ids)
 
     def get_unk_token_id(self) -> Optional[int]:
         """Get the UNK token ID from HuggingFace tokenizer."""

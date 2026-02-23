@@ -12,6 +12,7 @@ from .morphological import MorphologicalMetrics
 from .gini import TokenizerGiniMetrics
 from .morphscore import MorphScoreMetrics
 from .math import DigitBoundaryMetrics
+from .code_ast import ASTBoundaryMetrics
 
 __all__ = [
     "BaseMetrics",
@@ -21,4 +22,5 @@ __all__ = [
     "TokenizerGiniMetrics",
     "MorphScoreMetrics",
     "DigitBoundaryMetrics",
+    "ASTBoundaryMetrics",
 ]

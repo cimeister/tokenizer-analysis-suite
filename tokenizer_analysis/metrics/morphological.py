@@ -32,19 +32,8 @@ class MorphologicalMetrics(BaseMetrics):
         self.morphological_loader = MorphologicalDataLoader(morphological_config)
         if morphological_config:
             self.morphological_loader.load_all_datasets()
-        
-        # Performance optimization: Cache for tokenizer conversions
-        self._tokenizer_vocab_cache = {}
+
         self._token_cleaning_cache = {}
-        self._warned_tokenizers: set = set()
-        
-        # Pre-compile regex patterns for faster token cleaning
-        import re
-        self._space_prefix_pattern = re.compile(r'^[Ġ▁ ]')
-        self._continuation_pattern = re.compile(r'^##')
-        self._end_word_pattern = re.compile(r'</w>$')
-        self._continuation_end_pattern = re.compile(r'@@$')
-        self._special_token_pattern = re.compile(r'^(<\||\[).*(\|>|\])$')
     
     def compute_morphological_alignment(self, word: str, tokenizer_tokens: List[str], 
                                           language: str) -> Optional[Dict[str, Any]]:
@@ -68,30 +57,15 @@ class MorphologicalMetrics(BaseMetrics):
         if not morphemes:
             return None
     
-        # Clean tokenizer tokens (remove special markers if present) 
+        # Clean tokenizer tokens (remove special markers if present)
         clean_tokens = []
         for token in tokenizer_tokens:
-            # Use cached cleaning if available
             if token in self._token_cleaning_cache:
                 clean_token = self._token_cleaning_cache[token]
             else:
-                clean_token = token
-                
-                # Use pre-compiled patterns for faster matching
-                if self._space_prefix_pattern.match(token):
-                    clean_token = token[1:]
-                elif self._continuation_pattern.match(token):
-                    clean_token = token[2:]
-                elif self._end_word_pattern.search(token):
-                    clean_token = token[:-4]
-                elif self._continuation_end_pattern.search(token):
-                    clean_token = token[:-2]
-                elif self._special_token_pattern.match(token):
-                    clean_token = None  # Skip special tokens
-                
-                # Cache the result
+                clean_token = self._clean_token(token)
                 self._token_cleaning_cache[token] = clean_token
-    
+
             if clean_token:
                 clean_tokens.append(clean_token)
     
@@ -340,65 +314,6 @@ class MorphologicalMetrics(BaseMetrics):
         
         return proportional_boundaries
     
-    def _convert_ids_to_tokens(self, tokenizer: Any, token_ids: List[int]) -> List[str]:
-        """
-        Convert token IDs to token strings with multiple fallback strategies.
-        Optimized with caching for better performance.
-        
-        Args:
-            tokenizer: Tokenizer object
-            token_ids: List of token IDs
-            
-        Returns:
-            List of token strings
-        """
-        if not token_ids:
-            return []
-        
-        # Cache key for this tokenizer
-        tokenizer_id = id(tokenizer)
-        
-        try:
-            # Primary method: Use convert_ids_to_tokens if available
-            if hasattr(tokenizer, 'convert_ids_to_tokens'):
-                tokens = tokenizer.convert_ids_to_tokens(token_ids)
-                if tokens and all(isinstance(t, str) for t in tokens):
-                    return tokens
-        except Exception as e:
-            logger.debug(f"convert_ids_to_tokens failed: {e}")
-        
-        try:
-            # Fallback 2: Direct vocabulary lookup with caching
-            vocab = None
-            if hasattr(tokenizer, 'get_vocab'):
-                vocab = tokenizer.get_vocab()
-            
-            if vocab:
-                # Use cached vocabulary mapping if available
-                if tokenizer_id not in self._tokenizer_vocab_cache:
-                    self._tokenizer_vocab_cache[tokenizer_id] = {v: k for k, v in vocab.items()}
-                
-                id_to_token = self._tokenizer_vocab_cache[tokenizer_id]
-                tokens = [id_to_token.get(token_id, f"<UNK_{token_id}>") for token_id in token_ids]
-                return tokens
-        except Exception as e:
-            logger.debug(f"Vocabulary lookup fallback failed: {e}")
-        
-        try:
-            # Fallback 3: Use tokenizer.model if available (for HuggingFace tokenizers)
-            if hasattr(tokenizer, 'model') and hasattr(tokenizer.model, 'id_to_token'):
-                tokens = [tokenizer.model.id_to_token(token_id) for token_id in token_ids]
-                if tokens and all(t is not None for t in tokens):
-                    return tokens
-        except Exception as e:
-            logger.debug(f"Model id_to_token fallback failed: {e}")
-        
-        # Ultimate fallback: Create placeholder tokens
-        if tokenizer_id not in self._warned_tokenizers:
-            self._warned_tokenizers.add(tokenizer_id)
-            logger.warning(f"All token conversion methods failed for tokenizer {type(tokenizer)}. Using placeholder tokens.")
-        return [f"<TOKEN_{token_id}>" for token_id in token_ids]
-    
     def _align_words_to_tokens(self, text: str, tokens: List[str]) -> List[tuple]:
         """
         Aligns words in a text to their corresponding tokens using a more robust
@@ -479,252 +394,6 @@ class MorphologicalMetrics(BaseMetrics):
     
         return result
 
-    def _align_words_to_tokens_old(self, text: str, tokens: List[str]) -> List[tuple]:
-        """
-        Align words in text to their corresponding tokens.
-        
-        Assumes tokens don't cross word boundaries and uses heuristic matching.
-        
-        Args:
-            text: Original text
-            tokens: List of token strings
-            
-        Returns:
-            List of (word, corresponding_tokens) tuples
-        """
-        words = text.lower().split()
-        cleaned_words = [word.strip('.,!?;:"()[]{}') for word in words]
-        
-        alignments = []
-        token_idx = 0
-        
-        for word in cleaned_words:
-            if not word:
-                continue
-                
-            word_tokens = []
-            word_chars_consumed = 0
-            
-            # Try to match tokens to this word
-            while token_idx < len(tokens) and word_chars_consumed < len(word):
-                token = tokens[token_idx]
-                
-                # Clean the token
-                clean_token = token
-                if token.startswith('Ġ'):
-                    clean_token = token[1:]
-                elif token.startswith('▁'):
-                    clean_token = token[1:]
-                elif token.startswith('##'):
-                    clean_token = token[2:]
-                elif token.endswith('</w>'):
-                    clean_token = token[:-4]
-                
-                # Check if this token could belong to current word
-                remaining_word = word[word_chars_consumed:]
-                if (remaining_word.startswith(clean_token.lower()) or 
-                    clean_token.lower() in remaining_word or
-                    len(word_tokens) == 0):  # First token for word gets benefit of doubt
-                    
-                    word_tokens.append(token)
-                    word_chars_consumed += len(clean_token)
-                    token_idx += 1
-                    
-                    # If we've consumed the whole word, stop
-                    if word_chars_consumed >= len(word):
-                        break
-                else:
-                    # This token doesn't seem to belong to current word
-                    break
-            
-            # If we didn't get any tokens but have remaining tokens, 
-            # assign next token to this word (fallback)
-            if not word_tokens and token_idx < len(tokens):
-                word_tokens.append(tokens[token_idx])
-                token_idx += 1
-            
-            alignments.append((word, word_tokens))
-        
-        return alignments
-    
-
-
-    def test_morphological_alignment_logic(self):
-        """
-        Runs a suite of tests for the compute_morphological_alignment function
-        to check its behavior across different tokenization strategies and languages.
-        """
-        # 1. Define a mock loader to provide ground truth morphemes for tests
-        class MockMorphologicalDataLoader:
-            def __init__(self):
-                self.morphological_data = {
-                    'en': {'unhappily': ['un', 'happi', 'ly']},
-                    'de': {'donaudampfschifffahrt': ['donau', 'dampf', 'schiff', 'fahrt']},
-                    'tr': {'evlerindekilerden': ['ev', 'ler', 'in', 'de', 'ki', 'ler', 'den']}
-                }
-            def get_morphemes(self, word, language):
-                return self.morphological_data.get(language, {}).get(word.lower())
-    
-        # 2. Temporarily replace the real loader with the mock one
-        original_loader = self.morphological_loader
-        self.morphological_loader = MockMorphologicalDataLoader()
-    
-        test_cases = [
-            # --- English 'unhappily' ---
-            {'name': 'Perfect Match (BPE </w>)', 'lang': 'en', 'word': 'unhappily',
-             'tokens': ['un</w>', 'happi</w>', 'ly</w>'],
-             'expected': {'boundary_f1': 1.0, 'morpheme_preservation': 1.0}},
-            {'name': 'Perfect Match (BPE @@)', 'lang': 'en', 'word': 'unhappily',
-             'tokens': ['un@@', 'happi@@', 'ly'],
-             'expected': {'boundary_f1': 1.0, 'morpheme_preservation': 1.0}},
-            {'name': 'Over-segmentation (BERT)', 'lang': 'en', 'word': 'unhappily',
-             'tokens': ['un', '##ha', '##ppi', '##ly'],
-             'expected': {'boundary_f1': 0.80, 'morpheme_preservation': 0.67}},
-            {'name': 'Under-segmentation (SentencePiece)', 'lang': 'en', 'word': 'unhappily',
-             'tokens': ['Ġunhappily'],
-             'expected': {'boundary_f1': 0.0, 'morpheme_preservation': 0.0}},
-            {'name': 'Imperfect Match', 'lang': 'en', 'word': 'unhappily',
-             'tokens': ['Ġun', 'happ', 'ily'],
-             'expected': {'boundary_f1': 0.50, 'morpheme_preservation': 0.33}},
-            # --- German 'donaudampfschifffahrt' ---
-            {'name': 'German Compound (Perfect)', 'lang': 'de', 'word': 'Donaudampfschifffahrt',
-             'tokens': ['Ġdonau', 'dampf', 'schiff', 'fahrt'],
-             'expected': {'boundary_f1': 1.0, 'morpheme_preservation': 1.0}},
-            # --- Turkish 'evlerindekilerden' ---
-            {'name': 'Turkish Agglutinative (Over-segmented)', 'lang': 'tr', 'word': 'evlerindekilerden',
-             'tokens': ['evler', 'in', 'de', 'kil', 'erden'],
-             'expected': {'boundary_f1': 0.60, 'morpheme_preservation': 0.29}},
-        ]
-    
-        print("\n--- Running Tests for compute_morphological_alignment ---")
-        passed_count = 0
-        failed_count = 0
-    
-        for i, case in enumerate(test_cases):
-            print(f"\n[Test Case {i+1}: {case['name']}]")
-            try:
-                result = self.compute_morphological_alignment(case['word'], case['tokens'], case['lang'])
-                
-                f1_ok = abs(result['boundary_f1'] - case['expected']['boundary_f1']) < 0.01
-                preservation_ok = abs(result['morpheme_preservation'] - case['expected']['morpheme_preservation']) < 0.01
-    
-                if f1_ok and preservation_ok:
-                    print("  -> PASSED")
-                    passed_count += 1
-                else:
-                    print("  -> FAILED")
-                    if not f1_ok: print(f"    - F1 Fail: Expected ~{case['expected']['boundary_f1']:.2f}, Got {result['boundary_f1']:.2f}")
-                    if not preservation_ok: print(f"    - Preservation Fail: Expected ~{case['expected']['morpheme_preservation']:.2f}, Got {result['morpheme_preservation']:.2f}")
-                    failed_count += 1
-            except Exception as e:
-                import traceback
-                print(f"  -> ERROR: An exception occurred: {e}")
-                traceback.print_exc()
-                failed_count += 1
-    
-        # 3. Restore the original loader
-        self.morphological_loader = original_loader
-    
-        print("\n--- Test Summary ---")
-        print(f"Passed: {passed_count}")
-        print(f"Failed: {failed_count}")
-        print("--------------------")
-        return {'passed': passed_count, 'failed': failed_count}
-
-    def test_word_token_alignment_robustness(self):
-        """
-        Runs a suite of tests to assess the robustness of the _align_words_to_tokens function
-        across different languages, scripts, and tokenization patterns.
-        """
-        test_cases = [
-            # 1. English - Simple Case with punctuation
-            {
-                'lang': 'en', 'text': 'Hello world.',
-                'tokens': ['Hello', 'Ġworld', '.'],
-                'expected': [('hello', ['Hello']), ('world', ['Ġworld', '.'])]
-            },
-            # 2. English - Complex Punctuation & Contractions
-            {
-                'lang': 'en', 'text': "Well-being is... important, isn't it?",
-                'tokens': ['Well', '-', 'being', 'Ġis', '...', 'Ġimportant', ',', 'Ġisn', "'t", 'Ġit', '?'],
-                'expected': [
-                    ('well-being', ['Well', '-', 'being']),
-                    ('is', ['Ġis', '...']), # Note: '...' is not part of the word after cleaning
-                    ('important', ['Ġimportant', ',']),
-                    ("isn't", ['Ġisn', "'t"]),
-                    ('it', ['Ġit', '?'])
-                ]
-            },
-            # 3. German - Compound Words
-            {
-                'lang': 'de', 'text': 'Donaudampfschifffahrt',
-                'tokens': ['Donau', 'dampf', 'schiff', 'fahrt'],
-                'expected': [('donaudampfschifffahrt', ['Donau', 'dampf', 'schiff', 'fahrt'])]
-            },
-            # 4. Japanese - No Spaces (will be treated as one word by .split())
-            {
-                'lang': 'ja', 'text': '日本語を勉強しています',
-                'tokens': ['日本語', 'を', '勉強', 'して', 'います'],
-                'expected': [('日本語を勉強しています', ['日本語', 'を', '勉強', 'して', 'います'])]
-            },
-            # 5. Chinese - No Spaces (will be treated as one word by .split())
-            {
-                'lang': 'zh', 'text': '我爱北京天安门',
-                'tokens': ['我', '爱', '北京', '天安门'],
-                'expected': [('我爱北京天安门', ['我', '爱', '北京', '天安门'])]
-            },
-            # 6. Turkish - Agglutinative
-            {
-                'lang': 'tr', 'text': 'evlerindekilerden',
-                'tokens': ['ev', 'ler', 'in', 'de', 'ki', 'ler', 'den'],
-                'expected': [('evlerindekilerden', ['ev', 'ler', 'in', 'de', 'ki', 'ler', 'den'])]
-            },
-            # 7. Arabic - Right-to-left
-            {
-                'lang': 'ar', 'text': 'أنا أتحدث العربية',
-                'tokens': ['أنا', 'Ġأتحدث', 'Ġالعربية'],
-                'expected': [('أنا', ['أنا']), ('أتحدث', ['Ġأتحدث']), ('العربية', ['Ġالعربية'])]
-            },
-        ]
-    
-        print("--- Running Robustness Tests for _align_words_to_tokens ---")
-        passed_count = 0
-        failed_count = 0
-    
-        for i, case in enumerate(test_cases):
-            print(f"\n[Test Case {i+1}: {case['lang'].upper()}] - Text: '{case['text']}'")
-            try:
-                actual_alignment = self._align_words_to_tokens(case['text'], case['tokens'])
-                expected_alignment = case['expected']
-                
-                # Custom comparison to handle potential list vs tuple differences and length mismatches
-                is_match = len(actual_alignment) == len(expected_alignment)
-                if is_match:
-                    for actual, expected in zip(actual_alignment, expected_alignment):
-                        if actual[0] != expected[0] or actual[1] != expected[1]:
-                            is_match = False
-                            break
-                
-                if is_match:
-                    print("  -> PASSED")
-                    passed_count += 1
-                else:
-                    print("  -> FAILED")
-                    print(f"    - Expected: {expected_alignment}")
-                    print(f"    - Got:      {actual_alignment}")
-                    failed_count += 1
-            except Exception as e:
-                import traceback
-                print(f"  -> ERROR: An exception occurred: {e}")
-                traceback.print_exc()
-                failed_count += 1
-    
-        print("\n--- Test Summary ---")
-        print(f"Passed: {passed_count}")
-        print(f"Failed: {failed_count}")
-        print("--------------------")
-        return {'passed': passed_count, 'failed': failed_count}
-    
     def compute(self, tokenized_data: Optional[Dict[str, List[TokenizedData]]] = None) -> Dict[str, Any]:
         """Compute morphological alignment metrics."""
         if tokenized_data is None:

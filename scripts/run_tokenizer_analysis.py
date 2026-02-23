@@ -139,6 +139,15 @@ def create_sample_morphscore_config(data_dir: str = "morphscore_data") -> Dict[s
         "exclude_single_tok": False
     }
 
+def _resolve_code_ast_config(args) -> Optional[Dict]:
+    """Return the code-AST config dict from CLI args, or None if disabled."""
+    if args.code_ast_config:
+        return load_config_from_file(args.code_ast_config)
+    if not args.no_code_ast:
+        return {}  # Empty dict triggers synthetic sample generation
+    return None
+
+
 def slim_results_for_json(results: Dict) -> Dict:
     """Create a slimmed-down version of results for JSON export."""
     slimmed = {}
@@ -205,6 +214,13 @@ def slim_results_for_json(results: Dict) -> Dict:
             # Keep digit boundary alignment, entropy, magnitude, and operator results (already compact)
             if metric_name in ('three_digit_boundary_alignment', 'cross_number_boundary_entropy',
                                'numeric_magnitude_consistency', 'operator_isolation_rate'):
+                if 'summary' in metric_data:
+                    slimmed_metric['summary'] = metric_data['summary']
+                if 'per_tokenizer' in metric_data:
+                    slimmed_metric['per_tokenizer'] = metric_data['per_tokenizer']
+
+            # Keep AST boundary alignment results (already compact)
+            if metric_name == 'ast_boundary_alignment':
                 if 'summary' in metric_data:
                     slimmed_metric['summary'] = metric_data['summary']
                 if 'per_tokenizer' in metric_data:
@@ -487,6 +503,16 @@ Examples:
         help="Skip digit boundary alignment, cross-number boundary entropy, numeric magnitude consistency, and operator isolation analysis"
     )
     parser.add_argument(
+        "--code-ast-config",
+        type=str,
+        help="JSON file mapping programming languages to code file/directory paths for AST boundary analysis"
+    )
+    parser.add_argument(
+        "--no-code-ast",
+        action="store_true",
+        help="Skip AST boundary alignment analysis"
+    )
+    parser.add_argument(
         "--sort-results-by",
         type=str,
         default=None,
@@ -533,6 +559,8 @@ Examples:
                 morphscore_config = load_config_from_file(args.morphscore_config)
             else:
                 morphscore_config = create_sample_morphscore_config(args.morphscore_data_dir)
+
+        code_ast_config = _resolve_code_ast_config(args)
     elif use_tokenized_data:
         # Pre-tokenized data mode
         if not args.tokenized_data_file:
@@ -575,6 +603,11 @@ Examples:
         if args.morphscore or args.morphscore_config:
             logger.warning("MorphScore analysis not supported with pre-tokenized data. Requires raw tokenization.")
             morphscore_config = None
+
+        # AST boundary metrics not supported with pre-tokenized data (needs encode())
+        code_ast_config = None
+        if args.code_ast_config:
+            logger.warning("AST boundary analysis not supported with pre-tokenized data. Requires raw tokenization.")
     else:
         # Raw tokenizer mode
         if not args.tokenizer_config:
@@ -607,7 +640,9 @@ Examples:
                 morphscore_config = load_config_from_file(args.morphscore_config)
             else:
                 morphscore_config = create_sample_morphscore_config(args.morphscore_data_dir)
-    
+
+        code_ast_config = _resolve_code_ast_config(args)
+
     # Load language metadata
     logger.info("Loading language metadata...")
     language_metadata = LanguageMetadata(language_config_path)
@@ -625,6 +660,7 @@ Examples:
             plot_save_dir=args.output_dir,
             morphological_config=morphological_config,
             morphscore_config=morphscore_config,
+            code_ast_config=code_ast_config,
             show_global_lines=not args.no_global_lines,
             per_language_plots=args.per_language_plots,
             faceted_plots=args.faceted_plots
@@ -668,6 +704,7 @@ Examples:
             plot_save_dir=args.output_dir,
             morphological_config=morphological_config,
             morphscore_config=morphscore_config,
+            code_ast_config=code_ast_config,
             show_global_lines=not args.no_global_lines,
             per_language_plots=args.per_language_plots,
             faceted_plots=args.faceted_plots
@@ -687,6 +724,7 @@ Examples:
             include_morphological=morphological_config is not None,
             include_morphscore=morphscore_config is not None,
             include_digit_boundary=not args.no_digit_boundary,
+            include_code_ast=not args.no_code_ast,
             verbose=args.verbose,
             save_tokenized_data=args.save_tokenized_data,
             tokenized_data_path=args.tokenized_data_output_path
@@ -698,6 +736,7 @@ Examples:
             include_morphological=morphological_config is not None,
             include_morphscore=morphscore_config is not None,
             include_digit_boundary=not args.no_digit_boundary,
+            include_code_ast=not args.no_code_ast,
             verbose=args.verbose,
             save_tokenized_data=args.save_tokenized_data,
             tokenized_data_path=args.tokenized_data_output_path
