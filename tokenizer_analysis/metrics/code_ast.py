@@ -117,7 +117,7 @@ class ASTBoundaryMetrics(BaseMetrics):
         self,
         input_provider: InputProvider,
         code_config: Optional[Dict[str, str]] = None,
-        max_snippets_per_lang: int = 100,
+        max_snippets_per_lang: int = 500,
     ):
         super().__init__(input_provider)
 
@@ -556,6 +556,15 @@ class ASTBoundaryMetrics(BaseMetrics):
             lambda: defaultdict(lambda: defaultdict(list))
         )
 
+        # ----- Phase 1: encode all snippets with all tokenizers -----
+        # Encoding uses the tokenizer's C/Rust backend.  Separating it
+        # from tree-sitter parsing (Phase 2) avoids interleaving two
+        # native extensions whose heap usage can conflict on some
+        # platforms, causing hard-to-diagnose memory corruption.
+        #
+        # Structure: encoded[tok_name][code_lang] = [(snippet, token_ids, token_strings), ...]
+        encoded: Dict[str, Dict[str, List[Tuple]]] = defaultdict(lambda: defaultdict(list))
+
         for tok_name in self.tokenizer_names:
             tokenizer = self.input_provider.get_tokenizer(tok_name)
 
@@ -564,13 +573,26 @@ class ASTBoundaryMetrics(BaseMetrics):
                 continue
 
             for code_lang in self.code_loader.get_languages():
+                snippets = self.code_loader.get_code_snippets(code_lang)
+                for snippet in snippets:
+                    try:
+                        token_ids = tokenizer.encode(snippet)
+                    except Exception as e:
+                        logger.debug("Encoding failed for %s on %s snippet: %s", tok_name, code_lang, e)
+                        continue
+                    if not token_ids:
+                        continue
+                    token_strings = self._convert_ids_to_tokens(tokenizer, token_ids)
+                    encoded[tok_name][code_lang].append((snippet, token_ids, token_strings))
+
+        # ----- Phase 2: parse with tree-sitter and measure alignment -----
+        for tok_name in self.tokenizer_names:
+            for code_lang in self.code_loader.get_languages():
                 parser = self._get_parser(code_lang)
                 if parser is None:
                     continue
 
-                snippets = self.code_loader.get_code_snippets(code_lang)
-
-                for snippet in snippets[: self.max_snippets_per_lang]:
+                for snippet, token_ids, token_strings in encoded[tok_name].get(code_lang, []):
                     source_bytes = snippet.encode("utf-8")
                     tree = parser.parse(source_bytes)
 
@@ -578,17 +600,6 @@ class ASTBoundaryMetrics(BaseMetrics):
 
                     byte_to_char = self._byte_to_char_offsets(source_bytes)
 
-                    # Tokenize with the current tokenizer
-                    try:
-                        token_ids = tokenizer.encode(snippet)
-                    except Exception as e:
-                        logger.debug("Encoding failed for %s on %s snippet: %s", tok_name, code_lang, e)
-                        continue
-
-                    if not token_ids:
-                        continue
-
-                    token_strings = self._convert_ids_to_tokens(tokenizer, token_ids)
                     recon_text, char_to_token = self._build_char_to_token_map(token_strings)
 
                     if not char_to_token:
