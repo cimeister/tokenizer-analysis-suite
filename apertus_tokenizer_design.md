@@ -1,9 +1,5 @@
 # Pretokenization: design choices
 
-Summary: We're making decisions about pretokenization for Apertus. Pretokenization determines what can/cannot be a token; this can have a very big impact on the multilingual, math and code abilities of models (all of which we care about for Apertus!!). Below, I'll give a bit of background. Then I'll lay out the independent decision points, what the options are, and their trade-offs. 
-
-Assumption: Our (text) corpus consists mostly of multilingual text + code + math. Please flag this if I'm missing something...
-
 ## Background: what pretokenization is and why it matters 
 
 **Pretokenization** is a preprocessing step that happens *before* tokenizer training (and before text encoding at inference time). It splits raw text into coarse chunks called **pre-tokens** using a regex. Tokenization algorithms (including BPE) then operate independently within each pre-token, e.g., BPE merges can never cross pre-token boundaries. In short, this is the mechanism that controls what can become a token.
