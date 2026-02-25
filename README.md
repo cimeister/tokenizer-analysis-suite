@@ -275,9 +275,9 @@ results/
 
 ### Mathematical Content Metrics
 
-Evaluates tokenizer handling of mathematical expressions. Based on Singh & Strouse (2024, [arXiv:2402.14903](https://arxiv.org/abs/2402.14903)), who showed that right-to-left tokenization of numbers improved arithmetic accuracy by >22 percentage points. Disable with `--no-digit-boundary`.
+Evaluates tokenizer handling of mathematical expressions. Based on Singh & Strouse (2024, [arXiv:2402.14903](https://arxiv.org/abs/2402.14903)), who showed that right-to-left tokenization of numbers improved arithmetic accuracy by >22 percentage points. These metrics run on any text data containing numbers or operators. Disable with `--no-digit-boundary`.
 
-#### 1. Digit Boundary Alignment (F1)
+#### Three-Digit Place-Value Boundary Alignment (F1)
 
 Measures whether numbers are tokenized with right-aligned 3-digit groupings that match place-value structure (units, thousands, millions).
 
@@ -287,7 +287,7 @@ For each number, compares actual token boundaries against ideal boundaries at po
 
 **Why it matters:** Singh & Strouse (2024) showed that right-to-left digit grouping improves arithmetic accuracy by ensuring corresponding digit positions across operands occupy consistent token positions.
 
-#### 2. Cross-Number Boundary Entropy
+#### Cross-Number Boundary Pattern Entropy
 
 For numbers of the same digit length, measures Shannon entropy of the distribution of boundary patterns. Low entropy means the tokenizer uses a consistent splitting scheme; high entropy means chaotic splitting.
 
@@ -297,7 +297,7 @@ Entropy is computed on patterns pooled across languages, not averaged per-langua
 
 **Why it matters:** A tokenizer with moderate F1 but low entropy has a consistent-but-wrong scheme (potentially fixable by retraining). Moderate F1 with high entropy indicates a deeper structural problem.
 
-#### 3. Numeric Magnitude Consistency
+#### Numeric Magnitude Consistency
 
 Tracks fertility-per-digit (tokens per digit) across digit lengths. Reports Spearman correlation, coefficient of variation, and linear fit (slope, R-squared) between digit length and mean token count.
 
@@ -305,7 +305,7 @@ Tracks fertility-per-digit (tokens per digit) across digit lengths. Reports Spea
 
 **Why it matters:** Tokenizers trained on natural language often have dense vocabulary coverage for small numbers (0-999 as single tokens) but fragment larger numbers unpredictably, creating representational discontinuities.
 
-#### 4. Operator Isolation Rate
+#### Operator Isolation Rate
 
 Fraction of mathematical operators (`+`, `-`, `*`, `=`, `<=`, etc.) tokenized as standalone tokens rather than merged with adjacent content. Includes a compound preservation sub-metric measuring whether multi-character operators (`**`, `<=`, `!=`) are kept as single tokens vs. split.
 
@@ -317,7 +317,7 @@ Fraction of mathematical operators (`+`, `-`, `*`, `=`, `<=`, etc.) tokenized as
 
 Evaluates tokenizer handling of source code by parsing it with tree-sitter and measuring alignment between AST node boundaries and token boundaries. Requires `pip install tree-sitter-language-pack`. Supports 19 languages (Python, JavaScript, Java, C, C++, Go, Rust, TypeScript, PHP, Ruby, C#, Scala, Swift, Kotlin, Lua, R, Perl, Haskell, Bash). Configure with `--code-ast-config`; disable with `--no-code-ast`.
 
-#### 5. AST Boundary Alignment
+#### AST Leaf-Node Boundary Alignment
 
 Parses source code with tree-sitter, extracts leaf-node spans, and measures the fraction whose boundaries coincide with token boundaries. Tracks five categories independently: identifiers, keywords, operators, literals, and delimiters.
 
@@ -327,21 +327,13 @@ Reports start-alignment rate, end-alignment rate, full-alignment rate, and cross
 
 **Why it matters:** Code has deterministic grammar, so AST node boundaries are objectively derivable with no manual annotation. A tokenizer that splits `return` into `ret` + `urn` fragments a syntactically atomic unit.
 
-#### 6. Identifier Fragmentation Rate
+#### Identifier Fragmentation Rate
 
 Fraction of programmer-defined identifiers split into multiple tokens, plus average tokens per identifier. Computed occurrence-weighted from the same AST extraction pass.
 
 **Example:** A Python file contains identifiers `self` (x10 occurrences), `i` (x5), `process_data` (x3), and `MyAuthenticationFactory` (x1). The tokenizer keeps `self`, `i` as single tokens but splits `process_data` -> `process` | `_` | `data` (3 tokens) and `MyAuthenticationFactory` -> `My` | `Auth` | `entication` | `Factory` (4 tokens). Fragmentation rate: 4 fragmented occurrences out of 19 total = 0.21. Average tokens per identifier: (10x1 + 5x1 + 3x3 + 1x4) / 19 = 1.47. Note that the 10 occurrences of `self` dominate the metric and mask the fragmentation of the rarer, semantically richer identifiers.
 
 **Why it matters:** Identifiers carry domain-specific semantics. Fragmenting `getUserName` into arbitrary sub-pieces destroys meaningful structure, though the current implementation does not yet distinguish semantically-aligned splits (at camelCase/snake_case boundaries) from arbitrary ones.
-
-#### 7. Indentation Consistency
-
-For whitespace-significant languages (Python, Haskell), measures whether the same indentation level maps to the same token pattern across occurrences. Reports consistency rate (fraction of indent levels with a single pattern) and weighted consistency (fraction of lines matching the dominant pattern for their level).
-
-**Example:** A Python file has 20 lines indented with 4 spaces. If the tokenizer always represents those 4 spaces as a single token `"    "`, every line has the pattern `("    ",)` — consistency rate = 1.0. If instead it represents them as `"  "` | `"  "` on 15 lines but `"    "` on 5 lines, there are two patterns for the same indentation level. Consistency rate = 0.0 (the level is not perfectly consistent), but weighted consistency = 15/20 = 0.75 (the dominant pattern covers 75% of occurrences). A level with 5 different patterns across 5 lines has weighted consistency of only 0.2.
-
-**Why it matters:** In Python, indentation defines scope. If a tokenizer represents 4 spaces as one token sometimes and two tokens other times, the model receives inconsistent signals for identical structural information.
 
 ### Multilingual Fairness
 - **Tokenizer Gini Coefficient**: Measures equitable treatment across languages, defined as:
