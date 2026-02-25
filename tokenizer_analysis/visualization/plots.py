@@ -387,7 +387,48 @@ def plot_morphscore(results: Dict[str, Any], save_path: str, tokenizer_names: Li
     save_plot(fig, save_path)
 
 
-def plot_grouped_analysis(grouped_results: Dict[str, Dict[str, Any]], save_dir: str, 
+def plot_indentation_metrics(results: Dict[str, Any], save_path: str, tokenizer_names: List[str]):
+    """Plot indentation consistency metrics: depth proportionality correlation and pattern stability."""
+    if 'indentation_consistency' not in results or 'summary' not in results['indentation_consistency']:
+        return
+
+    summary = results['indentation_consistency']['summary']
+
+    corr_values = []
+    stab_values = []
+    labels = []
+
+    for tok_name in tokenizer_names:
+        if tok_name in summary:
+            tok_summary = summary[tok_name]
+            corr = tok_summary.get('avg_depth_proportionality_correlation')
+            stab = tok_summary.get('avg_pattern_stability_rate')
+            if corr is not None or stab is not None:
+                corr_values.append(corr if corr is not None else 0)
+                stab_values.append(stab if stab is not None else 0)
+                labels.append(tok_name)
+
+    if not labels:
+        return
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+    colors = get_colors(len(labels))
+
+    ax1.bar(labels, corr_values, color=colors, alpha=0.8)
+    ax1.set_ylabel('Spearman Correlation')
+    ax1.set_title('Depth Proportionality Correlation')
+    ax1.tick_params(axis='x', rotation=45)
+
+    ax2.bar(labels, stab_values, color=colors, alpha=0.8)
+    ax2.set_ylabel('Stability Rate')
+    ax2.set_title('Pattern Stability Rate')
+    ax2.tick_params(axis='x', rotation=45)
+
+    plt.tight_layout()
+    save_plot(fig, save_path)
+
+
+def plot_grouped_analysis(grouped_results: Dict[str, Dict[str, Any]], save_dir: str,
                          metric_name: str, group_type: str):
     """Plot grouped analysis results."""
     if group_type not in grouped_results:
@@ -467,6 +508,9 @@ def generate_all_plots(results: Dict[str, Any], save_dir: str, tokenizer_names: 
     
     # Morphological
     plot_morphscore(results, os.path.join(save_dir, 'morphscore_individual.svg'), tokenizer_names)
+
+    # Indentation consistency
+    plot_indentation_metrics(results, os.path.join(save_dir, 'indentation_metrics.svg'), tokenizer_names)
     
     # Per-language plots
     if per_language_plots:

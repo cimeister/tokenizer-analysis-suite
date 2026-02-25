@@ -1140,6 +1140,78 @@ class TestExtractLineIndentation:
 
 
 # ======================================================================
+# _infer_indent_unit
+# ======================================================================
+
+class TestInferIndentUnit:
+    """Verify indentation unit detection."""
+
+    def test_four_space_indent(self):
+        indentation = [("", 0, 0), ("    ", 10, 14), ("        ", 25, 33)]
+        assert ASTBoundaryMetrics._infer_indent_unit(indentation) == 4
+
+    def test_two_space_indent(self):
+        indentation = [("", 0, 0), ("  ", 5, 7), ("    ", 15, 19), ("      ", 25, 31)]
+        assert ASTBoundaryMetrics._infer_indent_unit(indentation) == 2
+
+    def test_tab_indent(self):
+        indentation = [("", 0, 0), ("\t", 5, 6), ("\t\t", 10, 12)]
+        assert ASTBoundaryMetrics._infer_indent_unit(indentation) == 1
+
+    def test_no_indentation(self):
+        indentation = [("", 0, 0), ("", 5, 5)]
+        assert ASTBoundaryMetrics._infer_indent_unit(indentation) == 1
+
+    def test_empty_list(self):
+        assert ASTBoundaryMetrics._infer_indent_unit([]) == 1
+
+    def test_single_level(self):
+        indentation = [("", 0, 0), ("    ", 10, 14)]
+        assert ASTBoundaryMetrics._infer_indent_unit(indentation) == 4
+
+    def test_mixed_widths_gcd(self):
+        # 6 and 3 -> GCD = 3
+        indentation = [("   ", 0, 3), ("      ", 10, 16)]
+        assert ASTBoundaryMetrics._infer_indent_unit(indentation) == 3
+
+
+# ======================================================================
+# _spearman_correlation
+# ======================================================================
+
+class TestSpearmanCorrelation:
+    """Verify the Spearman rank correlation helper."""
+
+    def test_perfect_positive(self):
+        rho = ASTBoundaryMetrics._spearman_correlation(
+            [1.0, 2.0, 3.0, 4.0], [10.0, 20.0, 30.0, 40.0]
+        )
+        assert rho == pytest.approx(1.0)
+
+    def test_perfect_negative(self):
+        rho = ASTBoundaryMetrics._spearman_correlation(
+            [1.0, 2.0, 3.0, 4.0], [40.0, 30.0, 20.0, 10.0]
+        )
+        assert rho == pytest.approx(-1.0)
+
+    def test_no_correlation(self):
+        # With only 2 points, any two distinct pairs have perfect correlation.
+        # Use 4 scrambled points.
+        rho = ASTBoundaryMetrics._spearman_correlation(
+            [1.0, 2.0, 3.0, 4.0], [3.0, 1.0, 4.0, 2.0]
+        )
+        assert -1.0 <= rho <= 1.0
+
+    def test_single_element_returns_zero(self):
+        rho = ASTBoundaryMetrics._spearman_correlation([1.0], [2.0])
+        assert rho == 0.0
+
+    def test_empty_returns_zero(self):
+        rho = ASTBoundaryMetrics._spearman_correlation([], [])
+        assert rho == 0.0
+
+
+# ======================================================================
 # _count_identifier_tokens
 # ======================================================================
 
@@ -1289,8 +1361,8 @@ class TestIndentationConsistencyE2E:
         tok_data = indent["per_tokenizer"]["char_tok"]
         assert "python" in tok_data["by_language"]
         py = tok_data["by_language"]["python"]
-        assert py["total_lines"] > 0
-        assert py["num_indent_levels"] > 0
+        assert py["total_indented_lines"] > 0
+        assert py["num_depth_levels"] > 0
 
     def test_non_ws_lang_excluded(self, ts_pack):
         """Non-whitespace-significant languages should not appear."""
@@ -1319,8 +1391,8 @@ class TestIndentationConsistencyE2E:
         # javascript is not whitespace-significant, so no by_language data
         assert "javascript" not in tok_data.get("by_language", {})
 
-    def test_consistent_indentation_scores_high(self, ts_pack):
-        """When indentation is uniform, consistency should be 1.0."""
+    def test_consistent_indentation_pattern_stability(self, ts_pack):
+        """When indentation is uniform, pattern stability should be 1.0."""
         snippet = 'if True:\n    a = 1\n    b = 2\n    c = 3\n'
         # Each "    " (4 spaces) should produce the same token pattern
         tokens = [
@@ -1349,8 +1421,52 @@ class TestIndentationConsistencyE2E:
         result = inst.compute()
         indent = result["indentation_consistency"]
         py = indent["per_tokenizer"]["perf"]["by_language"]["python"]
-        assert py["consistency_rate"] == pytest.approx(1.0)
-        assert py["weighted_consistency"] == pytest.approx(1.0)
+        assert py["pattern_stability_rate"] == pytest.approx(1.0)
+
+    def test_depth_proportionality_high_for_proportional_tokenizer(self, ts_pack):
+        """A tokenizer that uses proportional tokens for deeper indentation
+        should have a high depth-proportionality correlation."""
+        # Snippet with 3 depth levels: depth 1 (4 spaces), depth 2 (8 spaces),
+        # depth 3 (12 spaces)
+        snippet = (
+            'if True:\n'
+            '    a = 1\n'
+            '    if True:\n'
+            '        b = 2\n'
+            '        if True:\n'
+            '            c = 3\n'
+        )
+        # Tokenizer: depth 1 = 1 ws token, depth 2 = 2 ws tokens, depth 3 = 3 ws tokens
+        tokens = [
+            "if", "ĠTrue", "Ġ:", "\n",
+            "Ġ   ", "a", "Ġ=", "Ġ1", "\n",
+            "Ġ   ", "if", "ĠTrue", "Ġ:", "\n",
+            "Ġ   ", "Ġ   ", "b", "Ġ=", "Ġ2", "\n",
+            "Ġ   ", "Ġ   ", "if", "ĠTrue", "Ġ:", "\n",
+            "Ġ   ", "Ġ   ", "Ġ   ", "c", "Ġ=", "Ġ3", "\n",
+        ]
+        tok = _PerfectTokenizer({snippet: tokens})
+        provider = _MockProvider("prop", tok)
+
+        inst = object.__new__(ASTBoundaryMetrics)
+        inst._tokenizer_vocab_cache = {}
+        inst._warned_tokenizers = set()
+        inst._treesitter_available = True
+        inst._ts_pack = ts_pack
+        inst._parser_cache = {}
+        inst.input_provider = provider
+        inst.tokenizer_names = ["prop"]
+        inst.max_snippets_per_lang = 1
+
+        loader = CodeDataLoader()
+        loader.code_snippets = {"python": [snippet]}
+        inst.code_loader = loader
+
+        result = inst.compute()
+        indent = result["indentation_consistency"]
+        py = indent["per_tokenizer"]["prop"]["by_language"]["python"]
+        assert py["depth_proportionality_correlation"] is not None
+        assert py["depth_proportionality_correlation"] > 0.8
 
 
 # ======================================================================
@@ -1428,18 +1544,18 @@ class TestPrintNewMetrics:
                     "test_tok": {
                         "by_language": {
                             "python": {
-                                "consistency_rate": 0.9,
-                                "weighted_consistency": 0.95,
-                                "num_indent_levels": 3,
-                                "total_lines": 20,
+                                "depth_proportionality_correlation": 0.9,
+                                "pattern_stability_rate": 0.95,
+                                "num_depth_levels": 3,
+                                "total_indented_lines": 20,
                             }
                         },
                     }
                 },
                 "summary": {
                     "test_tok": {
-                        "avg_consistency_rate": 0.9,
-                        "avg_weighted_consistency": 0.95,
+                        "avg_depth_proportionality_correlation": 0.9,
+                        "avg_pattern_stability_rate": 0.95,
                         "languages_analyzed": 1,
                     }
                 },

@@ -259,6 +259,24 @@ class ASTBoundaryMetrics(BaseMetrics):
         return result
 
     @staticmethod
+    def _infer_indent_unit(
+        indentation: List[Tuple[str, int, int]],
+    ) -> int:
+        """Detect the indentation unit size (in characters) for a snippet.
+
+        Collects all non-zero whitespace widths and returns their GCD.
+        Falls back to 1 if no indented lines exist or GCD is 0.
+        """
+        from math import gcd
+        widths = [len(ws) for ws, _, _ in indentation if ws]
+        if not widths:
+            return 1
+        result = widths[0]
+        for w in widths[1:]:
+            result = gcd(result, w)
+        return result if result > 0 else 1
+
+    @staticmethod
     def _extract_line_indentation(
         source_code: str,
     ) -> List[Tuple[str, int, int]]:
@@ -472,9 +490,11 @@ class ASTBoundaryMetrics(BaseMetrics):
             lambda: defaultdict(list)
         )
 
-        # indent_acc: tok -> lang -> ws_string -> [pattern_tuples]
-        indent_acc: Dict[str, Dict[str, Dict[str, List[Tuple]]]] = defaultdict(
-            lambda: defaultdict(lambda: defaultdict(list))
+        # indent_acc: tok -> lang -> [per-line records]
+        # Each record: {"depth": int, "num_ws_tokens": int,
+        #               "pattern": Tuple[str,...], "ws_width": int}
+        indent_acc: Dict[str, Dict[str, List[Dict]]] = defaultdict(
+            lambda: defaultdict(list)
         )
 
         # ----- Phase 1: parse all snippets with tree-sitter -----
@@ -651,6 +671,11 @@ class ASTBoundaryMetrics(BaseMetrics):
                     if is_ws_significant
                     else None
                 )
+                indent_unit = (
+                    self._infer_indent_unit(indentation)
+                    if indentation is not None
+                    else None
+                )
 
                 # Pre-convert ALL byte spans to char spans.
                 char_spans_by_category: Dict[str, List[Tuple[int, int]]] = {}
@@ -754,9 +779,15 @@ class ASTBoundaryMetrics(BaseMetrics):
                             pattern = tuple(
                                 token_strings[ti] for ti in token_indices
                             )
-                            indent_acc[tok_name][code_lang][ws_string].append(
-                                pattern
-                            )
+                            ws_width = len(ws_string)
+                            depth = ws_width // indent_unit if indent_unit else ws_width
+                            num_ws_tokens = len(token_indices)
+                            indent_acc[tok_name][code_lang].append({
+                                "depth": depth,
+                                "num_ws_tokens": num_ws_tokens,
+                                "pattern": pattern,
+                                "ws_width": ws_width,
+                            })
 
         # Log Phase 2 summary: how many AST nodes contributed per tokenizer
         for tok_name in self.tokenizer_names:
@@ -918,71 +949,124 @@ class ASTBoundaryMetrics(BaseMetrics):
 
         return results
 
+    @staticmethod
+    def _spearman_correlation(x: List[float], y: List[float]) -> float:
+        """Compute Spearman rank correlation between two lists.
+
+        Uses scipy.stats.spearmanr if available, otherwise falls back to a
+        pure-Python implementation.  Returns 0.0 if the correlation is
+        undefined (e.g. constant input).
+        """
+        n = len(x)
+        if n < 2:
+            return 0.0
+        try:
+            from scipy.stats import spearmanr
+            rho, _ = spearmanr(x, y)
+            if rho != rho:  # NaN check
+                return 0.0
+            return float(rho)
+        except ImportError:
+            pass
+
+        # Pure-Python rank correlation
+        def _rank(vals):
+            indexed = sorted(range(n), key=lambda i: vals[i])
+            ranks = [0.0] * n
+            i = 0
+            while i < n:
+                j = i
+                while j < n - 1 and vals[indexed[j + 1]] == vals[indexed[j]]:
+                    j += 1
+                avg_rank = (i + j) / 2.0 + 1.0
+                for k in range(i, j + 1):
+                    ranks[indexed[k]] = avg_rank
+                i = j + 1
+            return ranks
+
+        rx = _rank(x)
+        ry = _rank(y)
+        d_sq = sum((a - b) ** 2 for a, b in zip(rx, ry))
+        denom = n * (n * n - 1)
+        if denom == 0:
+            return 0.0
+        rho = 1.0 - 6.0 * d_sq / denom
+        return rho
+
     def _build_indentation_consistency_results(
-        self, indent_acc: Dict[str, Dict[str, Dict[str, List[Tuple]]]]
+        self, indent_acc: Dict[str, Dict[str, List[Dict]]]
     ) -> Dict[str, Any]:
-        """Build indentation consistency results from accumulated data."""
+        """Build indentation consistency results from accumulated data.
+
+        Computes two metrics per language per tokenizer:
+        - depth_proportionality_correlation: Spearman ρ between logical
+          nesting depth and number of whitespace tokens.
+        - pattern_stability_rate: weighted fraction of lines at each depth
+          that share the dominant tokenization pattern.
+        """
         results: Dict[str, Any] = {"per_tokenizer": {}, "summary": {}}
 
         for tok_name in self.tokenizer_names:
             tok_data: Dict[str, Any] = {"by_language": {}}
-            lang_consistency_rates: List[float] = []
-            lang_weighted_rates: List[float] = []
+            lang_correlations: List[float] = []
+            lang_stabilities: List[float] = []
             languages_seen: set = set()
 
             for code_lang in sorted(indent_acc.get(tok_name, {})):
-                ws_groups = indent_acc[tok_name][code_lang]
-                if not ws_groups:
+                records = indent_acc[tok_name][code_lang]
+                if not records:
                     continue
 
-                # Filter to non-empty ws_strings (actual indentation)
-                indent_levels = {
-                    ws: patterns
-                    for ws, patterns in ws_groups.items()
-                    if ws  # skip empty-string (no indentation)
-                }
+                total_indented_lines = len(records)
+                depths = [r["depth"] for r in records]
+                num_ws_tokens = [r["num_ws_tokens"] for r in records]
+                distinct_depths = len(set(depths))
 
-                if not indent_levels:
-                    continue
+                # Depth-proportionality correlation (Spearman ρ)
+                if distinct_depths >= 3:
+                    corr = self._spearman_correlation(
+                        [float(d) for d in depths],
+                        [float(t) for t in num_ws_tokens],
+                    )
+                else:
+                    corr = float("nan")
 
-                consistent_levels = 0
-                total_lines = 0
-                dominant_matches = 0
+                # Pattern stability rate
+                depth_groups: Dict[int, List[Tuple]] = defaultdict(list)
+                for r in records:
+                    depth_groups[r["depth"]].append(r["pattern"])
 
-                for ws_string, patterns in indent_levels.items():
-                    if not patterns:
-                        continue
+                dominant_total = 0
+                for d, patterns in depth_groups.items():
                     counter = Counter(patterns)
-                    most_common_count = counter.most_common(1)[0][1]
-                    total_lines += len(patterns)
-                    dominant_matches += most_common_count
+                    dominant_total += counter.most_common(1)[0][1]
 
-                    # A level is consistent if all patterns are the same
-                    if len(counter) == 1:
-                        consistent_levels += 1
-
-                num_levels = len(indent_levels)
-                consistency_rate = consistent_levels / num_levels if num_levels else 0.0
-                weighted_consistency = dominant_matches / total_lines if total_lines else 0.0
+                stability = dominant_total / total_indented_lines if total_indented_lines else 0.0
 
                 tok_data["by_language"][code_lang] = {
-                    "consistency_rate": float(consistency_rate),
-                    "weighted_consistency": float(weighted_consistency),
-                    "num_indent_levels": num_levels,
-                    "total_lines": total_lines,
+                    "depth_proportionality_correlation": float(corr) if corr == corr else None,
+                    "pattern_stability_rate": float(stability),
+                    "num_depth_levels": distinct_depths,
+                    "total_indented_lines": total_indented_lines,
                 }
-                lang_consistency_rates.append(consistency_rate)
-                lang_weighted_rates.append(weighted_consistency)
+
+                if corr == corr:  # not NaN
+                    lang_correlations.append(corr)
+                lang_stabilities.append(stability)
                 languages_seen.add(code_lang)
 
             results["per_tokenizer"][tok_name] = tok_data
 
-            if lang_consistency_rates:
-                results["summary"][tok_name] = {
-                    "avg_consistency_rate": float(np.mean(lang_consistency_rates)),
-                    "avg_weighted_consistency": float(np.mean(lang_weighted_rates)),
+            if languages_seen:
+                summary: Dict[str, Any] = {
+                    "avg_pattern_stability_rate": float(np.mean(lang_stabilities)),
                     "languages_analyzed": len(languages_seen),
                 }
+                if lang_correlations:
+                    summary["avg_depth_proportionality_correlation"] = float(
+                        np.mean(lang_correlations)
+                    )
+                results["summary"][tok_name] = summary
 
         return results
 
@@ -1101,8 +1185,9 @@ class ASTBoundaryMetrics(BaseMetrics):
                 if tok_name in indent.get("summary", {}):
                     s = indent["summary"][tok_name]
                     print(f"{tok_name}:")
-                    print(f"  {'Avg Consistency Rate':25}: {s['avg_consistency_rate']:.3f}")
-                    print(f"  {'Avg Weighted Consistency':25}: {s['avg_weighted_consistency']:.3f}")
+                    if "avg_depth_proportionality_correlation" in s:
+                        print(f"  {'Avg Depth Correlation':25}: {s['avg_depth_proportionality_correlation']:.3f}")
+                    print(f"  {'Avg Pattern Stability':25}: {s['avg_pattern_stability_rate']:.3f}")
                     print(f"  {'Languages':25}: {s['languages_analyzed']}")
 
                     tok_detail = indent.get("per_tokenizer", {}).get(tok_name, {})
@@ -1110,12 +1195,14 @@ class ASTBoundaryMetrics(BaseMetrics):
                     if by_lang:
                         for lang in sorted(by_lang):
                             d = by_lang[lang]
+                            corr = d.get("depth_proportionality_correlation")
+                            corr_str = f"{corr:.3f}" if corr is not None else "N/A"
                             print(
                                 f"    {lang:13}: "
-                                f"consistency={d['consistency_rate']:.3f}  "
-                                f"weighted={d['weighted_consistency']:.3f}  "
-                                f"levels={d['num_indent_levels']}  "
-                                f"lines={d['total_lines']}"
+                                f"depth_corr={corr_str}  "
+                                f"stability={d['pattern_stability_rate']:.3f}  "
+                                f"levels={d['num_depth_levels']}  "
+                                f"lines={d['total_indented_lines']}"
                             )
 
         print("\n" + "=" * 60)

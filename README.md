@@ -335,6 +335,22 @@ Fraction of programmer-defined identifiers split into multiple tokens, plus aver
 
 **Why it matters:** Identifiers carry domain-specific semantics. Fragmenting `getUserName` into arbitrary sub-pieces destroys meaningful structure, though the current implementation does not yet distinguish semantically-aligned splits (at camelCase/snake_case boundaries) from arbitrary ones.
 
+#### Indentation Depth Proportionality Correlation
+
+Measures whether the number of whitespace tokens a tokenizer produces for leading indentation grows proportionally with nesting depth. Computes the Spearman rank correlation (ρ) between logical nesting depth (from tree-sitter) and the count of whitespace-only tokens in the leading indentation of each line. Only evaluated on whitespace-significant languages (Python, YAML). Requires at least 3 distinct depth levels per language; languages with fewer are skipped.
+
+**Example:** A Python file has lines at depths 1, 2, 3, and 4. A proportional tokenizer encodes depth-1 indentation as 1 whitespace token, depth-2 as 2, depth-3 as 3, and depth-4 as 4 — perfect rank correlation, ρ = 1.0. A tokenizer that merges all indentation into a single token regardless of depth (1, 1, 1, 1 whitespace tokens) produces ρ ≈ 0.0. A tokenizer that uses *more* tokens for shallow depths than deep ones gives ρ < 0.
+
+**Why it matters:** If indentation depth maps monotonically to whitespace token count, the model receives a natural positional signal for nesting structure without needing to learn it from context.
+
+#### Indentation Pattern Stability Rate
+
+Measures whether lines at the same nesting depth are tokenized with the same whitespace pattern. For each depth level, groups all indented lines and counts how many share the dominant tokenization pattern (the tuple of whitespace token lengths). The stability rate is the total number of lines matching their depth's dominant pattern divided by the total number of indented lines.
+
+**Example:** A file has 10 lines at depth 2. Eight of them tokenize the leading whitespace as `(4, 4)` (two 4-space tokens) and two as `(8,)` (one 8-space token). The dominant pattern at depth 2 is `(4, 4)` with 8 matches. If all other depths similarly have high dominant-pattern counts, the overall stability rate approaches 1.0. A tokenizer that encodes the same 8-space indentation differently depending on what follows — sometimes `(4, 4)`, sometimes `(3, 5)`, sometimes `(8,)` — yields a low stability rate.
+
+**Why it matters:** Consistent indentation tokenization means the model sees the same token pattern for the same structural level, reducing the number of surface forms it must learn to associate with a single syntactic meaning.
+
 ### Multilingual Fairness
 - **Tokenizer Gini Coefficient**: Measures equitable treatment across languages, defined as:
 
