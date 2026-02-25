@@ -13,6 +13,7 @@ from .gini import TokenizerGiniMetrics
 from .morphscore import MorphScoreMetrics
 from .math import DigitBoundaryMetrics
 from .code_ast import ASTBoundaryMetrics
+from .utf8_integrity import UTF8IntegrityMetrics
 
 __all__ = [
     "BaseMetrics",
@@ -23,4 +24,5 @@ __all__ = [
     "MorphScoreMetrics",
     "DigitBoundaryMetrics",
     "ASTBoundaryMetrics",
+    "UTF8IntegrityMetrics",
 ]

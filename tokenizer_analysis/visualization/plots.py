@@ -387,6 +387,64 @@ def plot_morphscore(results: Dict[str, Any], save_path: str, tokenizer_names: Li
     save_plot(fig, save_path)
 
 
+def plot_utf8_integrity(results: Dict[str, Any], save_path: str, tokenizer_names: List[str]):
+    """Plot UTF-8 integrity metrics: token integrity rate and char splits per 1k tokens."""
+    has_integrity = 'utf8_token_integrity' in results and 'summary' in results['utf8_token_integrity']
+    has_splits = 'utf8_char_split' in results and 'summary' in results['utf8_char_split']
+
+    if not has_integrity and not has_splits:
+        return
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+
+    integrity_values = []
+    split_values = []
+    labels = []
+
+    for tok_name in tokenizer_names:
+        if has_integrity and tok_name in results['utf8_token_integrity']['summary']:
+            integrity_values.append(
+                results['utf8_token_integrity']['summary'][tok_name].get('integrity_rate', 1.0)
+            )
+        else:
+            integrity_values.append(None)
+
+        if has_splits and tok_name in results['utf8_char_split']['summary']:
+            split_values.append(
+                results['utf8_char_split']['summary'][tok_name].get('splits_per_1k_tokens', 0.0)
+            )
+        else:
+            split_values.append(None)
+
+        labels.append(tok_name)
+
+    colors = get_colors(len(labels))
+
+    # Left panel: Token Boundary Integrity Rate
+    valid_integrity = [(l, v) for l, v in zip(labels, integrity_values) if v is not None]
+    if valid_integrity:
+        vi_labels, vi_vals = zip(*valid_integrity)
+        vi_colors = colors[:len(vi_labels)]
+        ax1.bar(vi_labels, vi_vals, color=vi_colors, alpha=0.8)
+        ax1.set_ylabel('Integrity Rate')
+        ax1.set_title('Token Boundary Integrity Rate')
+        ax1.set_ylim(0, 1.05)
+        ax1.tick_params(axis='x', rotation=45)
+
+    # Right panel: Character Splits per 1k Tokens
+    valid_splits = [(l, v) for l, v in zip(labels, split_values) if v is not None]
+    if valid_splits:
+        vs_labels, vs_vals = zip(*valid_splits)
+        vs_colors = colors[:len(vs_labels)]
+        ax2.bar(vs_labels, vs_vals, color=vs_colors, alpha=0.8)
+        ax2.set_ylabel('Splits per 1k Tokens')
+        ax2.set_title('Character Splits per 1k Tokens')
+        ax2.tick_params(axis='x', rotation=45)
+
+    plt.tight_layout()
+    save_plot(fig, save_path)
+
+
 def plot_indentation_metrics(results: Dict[str, Any], save_path: str, tokenizer_names: List[str]):
     """Plot indentation consistency metrics: depth proportionality correlation and pattern stability."""
     if 'indentation_consistency' not in results or 'summary' not in results['indentation_consistency']:
@@ -508,6 +566,9 @@ def generate_all_plots(results: Dict[str, Any], save_dir: str, tokenizer_names: 
     
     # Morphological
     plot_morphscore(results, os.path.join(save_dir, 'morphscore_individual.svg'), tokenizer_names)
+
+    # UTF-8 integrity
+    plot_utf8_integrity(results, os.path.join(save_dir, 'utf8_integrity.svg'), tokenizer_names)
 
     # Indentation consistency
     plot_indentation_metrics(results, os.path.join(save_dir, 'indentation_metrics.svg'), tokenizer_names)

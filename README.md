@@ -84,6 +84,7 @@ pip install tree-sitter-language-pack
 | `--code-ast-config FILE` | JSON mapping languages to code paths for AST analysis |
 | `--no-code-ast` | Skip AST boundary analysis |
 | `--no-digit-boundary` | Skip math metrics (digit boundaries, operators) |
+| `--no-utf8-integrity` | Skip UTF-8 character boundary integrity analysis |
 | `--generate-latex-tables` | Generate LaTeX tables |
 | `--update-results-md [PATH]` | Generate/update cumulative Markdown leaderboard |
 | `--dataset NAME` | Dataset label for the results table |
@@ -313,6 +314,26 @@ Fraction of mathematical operators (`+`, `-`, `*`, `=`, `<=`, etc.) tokenized as
 
 **Why it matters:** Merging an operator with its operand (e.g., `+3` as one token) forces the model to disentangle operation from value within a single embedding.
 
+### UTF-8 Character Boundary Integrity
+
+Evaluates whether byte-level tokenizers split multi-byte UTF-8 characters across token boundaries. Runs on any text data (no special config needed). Disable with `--no-utf8-integrity`.
+
+#### Token Boundary Integrity Rate
+
+Fraction of content tokens whose bytes form valid, complete UTF-8 sequences. A token containing an orphan continuation byte (e.g., `0xA9` alone) or a truncated leading byte (e.g., `0xC3` alone) is counted as invalid.
+
+**Example:** The character `é` (U+00E9) is encoded as bytes `C3 A9`. A tokenizer that keeps `café` as `caf` | `é` produces two tokens, both valid UTF-8 — integrity rate 1.0. A byte-fallback tokenizer that produces `caf` | `<0xC3>` | `<0xA9>` has 3 content tokens, of which 2 (`<0xC3>` and `<0xA9>`) are individually invalid UTF-8 — integrity rate 1/3.
+
+**Why it matters:** Invalid byte fragments force the model to reconstruct characters from meaningless pieces. Each orphan byte wastes a position in the context window while carrying no character-level information.
+
+#### Character Boundary Split Count
+
+Counts how many multi-byte characters in the source text have their constituent bytes spread across multiple tokens. Reports the split rate (splits / total multi-byte characters) and splits per 1k tokens.
+
+**Example:** The Chinese text `你好` contains two 3-byte characters (`你` = `E4 BD A0`, `好` = `E5 A5 BD`). A tokenizer that keeps each character as a single token has 0 splits. A byte-fallback tokenizer that splits `你` into `<0xE4>` | `<0xBD>` | `<0xA0>` has 1 split (the character's bytes span 3 different tokens). The split rate would be 1/2 = 0.5 if `好` remains intact.
+
+**Why it matters:** Split characters are the text-centric complement to the token-centric integrity metric. A tokenizer might have few invalid tokens overall (high integrity rate) but still split most multi-byte characters because each split produces multiple invalid tokens — the split count reveals the actual character-level damage.
+
 ### Code Tokenization Metrics
 
 Evaluates tokenizer handling of source code by parsing it with tree-sitter and measuring alignment between AST node boundaries and token boundaries. Requires `pip install tree-sitter-language-pack`. Supports 19 languages (Python, JavaScript, Java, C, C++, Go, Rust, TypeScript, PHP, Ruby, C#, Scala, Swift, Kotlin, Lua, R, Perl, Haskell, Bash). Configure with `--code-ast-config`; disable with `--no-code-ast`.
@@ -409,6 +430,7 @@ tokenizer_analysis/
 │   ├── information_theoretic.py  # Information-theoretic metrics
 │   ├── math.py                   # Mathematical content metrics (digit boundaries, operators)
 │   ├── code_ast.py               # Code tokenization metrics (AST alignment, indentation)
+│   ├── utf8_integrity.py         # UTF-8 character boundary integrity metrics
 │   ├── morphological.py          # Morphological boundary alignment
 │   ├── morphscore.py             # MorphScore neural evaluation
 │   └── gini.py                   # Multilingual fairness metrics

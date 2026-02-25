@@ -19,6 +19,7 @@ from .metrics.morphological import MorphologicalMetrics
 from .metrics.morphscore import MorphScoreMetrics
 from .metrics.math import DigitBoundaryMetrics
 from .metrics.code_ast import ASTBoundaryMetrics
+from .metrics.utf8_integrity import UTF8IntegrityMetrics
 from .visualization import TokenizerVisualizer
 from .visualization.latex_tables import LaTeXTableGenerator
 from .visualization.markdown_tables import (
@@ -127,6 +128,9 @@ class UnifiedTokenizerAnalyzer:
         # Initialize digit boundary metrics (always available -- no external data)
         self.digit_boundary_metrics = DigitBoundaryMetrics(input_provider)
 
+        # Initialize UTF-8 integrity metrics (always available -- no external data)
+        self.utf8_integrity_metrics = UTF8IntegrityMetrics(input_provider)
+
         # Initialize AST boundary metrics if config provided
         self.ast_boundary_metrics = None
         if code_ast_config is not None:
@@ -153,6 +157,7 @@ class UnifiedTokenizerAnalyzer:
                     include_morphscore: bool = True,
                     include_digit_boundary: bool = True,
                     include_code_ast: bool = True,
+                    include_utf8_integrity: bool = True,
                     verbose: bool = True,
                     save_tokenized_data: bool = False,
                     tokenized_data_path: str = None) -> Dict[str, Any]:
@@ -233,6 +238,15 @@ class UnifiedTokenizerAnalyzer:
 
             if verbose:
                 self.ast_boundary_metrics.print_results(ast_results)
+
+        # Run UTF-8 integrity metrics if requested
+        if include_utf8_integrity:
+            logger.info("Computing UTF-8 character boundary integrity metrics...")
+            utf8_results = self.utf8_integrity_metrics.compute(tokenized_data)
+            results.update(utf8_results)
+
+            if verbose:
+                self.utf8_integrity_metrics.print_results(utf8_results)
 
         # Save tokenized data if requested
         if save_tokenized_data:
@@ -330,6 +344,12 @@ class UnifiedTokenizerAnalyzer:
                     logger.info(f"Computing MorphScore results for group {group_name}")
                     morphscore_results = self.morphscore_metrics.compute(filtered_data)
                     group_result.update(morphscore_results)
+
+                # UTF-8 integrity metrics - recompute on filtered data (fast)
+                if base_results and 'utf8_token_integrity' in base_results:
+                    logger.info(f"Computing UTF-8 integrity results for group {group_name}")
+                    utf8_results = self.utf8_integrity_metrics.compute(filtered_data)
+                    group_result.update(utf8_results)
 
                 # Digit boundary metrics - filter from base results if available
                 if base_results and 'three_digit_boundary_alignment' in base_results:

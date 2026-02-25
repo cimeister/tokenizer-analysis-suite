@@ -225,6 +225,13 @@ def slim_results_for_json(results: Dict) -> Dict:
                     slimmed_metric['summary'] = metric_data['summary']
                 if 'per_tokenizer' in metric_data:
                     slimmed_metric['per_tokenizer'] = metric_data['per_tokenizer']
+
+            # Keep UTF-8 integrity results (already compact)
+            if metric_name in ('utf8_token_integrity', 'utf8_char_split'):
+                if 'summary' in metric_data:
+                    slimmed_metric['summary'] = metric_data['summary']
+                if 'per_tokenizer' in metric_data:
+                    slimmed_metric['per_tokenizer'] = metric_data['per_tokenizer']
             
             # Keep metadata for Gini metrics
             if metric_name in ['tokenizer_fairness_gini', 'lorenz_curve_data'] and 'metadata' in metric_data:
@@ -513,6 +520,11 @@ Examples:
         help="Skip AST boundary alignment analysis"
     )
     parser.add_argument(
+        "--no-utf8-integrity",
+        action="store_true",
+        help="Skip UTF-8 character boundary integrity analysis"
+    )
+    parser.add_argument(
         "--sort-results-by",
         type=str,
         default=None,
@@ -725,6 +737,7 @@ Examples:
             include_morphscore=morphscore_config is not None,
             include_digit_boundary=not args.no_digit_boundary,
             include_code_ast=not args.no_code_ast,
+            include_utf8_integrity=not args.no_utf8_integrity,
             verbose=args.verbose,
             save_tokenized_data=args.save_tokenized_data,
             tokenized_data_path=args.tokenized_data_output_path
@@ -737,6 +750,7 @@ Examples:
             include_morphscore=morphscore_config is not None,
             include_digit_boundary=not args.no_digit_boundary,
             include_code_ast=not args.no_code_ast,
+            include_utf8_integrity=not args.no_utf8_integrity,
             verbose=args.verbose,
             save_tokenized_data=args.save_tokenized_data,
             tokenized_data_path=args.tokenized_data_output_path
