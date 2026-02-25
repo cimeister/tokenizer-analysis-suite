@@ -23,84 +23,24 @@ import logging
 from .base import BaseMetrics
 from ..core.input_providers import InputProvider
 
-logger = logging.getLogger(__name__)
-
-# ======================================================================
-# AST node category constants
-# ======================================================================
-
-_IDENTIFIER_TYPES: Set[str] = {
-    "identifier",
-    "type_identifier",
-    "field_identifier",
-    "property_identifier",
-    "shorthand_property_identifier",
-    "shorthand_property_identifier_pattern",
-    "variable_name",
-    "name",
-    "attribute",
-    "word",  # bash
-}
-
-_LITERAL_TYPES: Set[str] = {
-    "string",
-    "string_literal",
-    "string_content",
-    "string_fragment",
-    "raw_string_literal",
-    "char_literal",
-    "character_literal",
-    "template_string",
-    "heredoc_body",
-    "integer",
-    "integer_literal",
-    "decimal_integer_literal",
-    "hex_integer_literal",
-    "octal_integer_literal",
-    "binary_integer_literal",
-    "float",
-    "float_literal",
-    "decimal_floating_point_literal",
-    "number",
-    "number_literal",
-    "true",
-    "false",
-    "none",
-    "null",
-    "nil",
-    "boolean",
-    "boolean_literal",
-    "null_literal",
-    "regex",
-    "regex_pattern",
-}
-
-_DELIMITER_CHARS: Set[str] = set("(){}[];,")
-
-# Punctuation that is syntactically not an operator in most languages.
-_NON_OPERATOR_PUNCTUATION: Set[str] = {
-    ".", ":", "::", "@", "#", "...", "\\",
-}
-
-# Keywords that may appear as named nodes in some grammars
-_KNOWN_KEYWORDS: Set[str] = {
-    "if", "else", "elif", "for", "while", "do", "switch", "case",
-    "break", "continue", "return", "yield", "class", "struct",
-    "enum", "interface", "trait", "impl", "def", "func", "fn",
-    "function", "var", "let", "const", "static", "public", "private",
-    "protected", "import", "from", "export", "module", "package",
-    "try", "catch", "except", "finally", "throw", "throws", "raise",
-    "async", "await", "match", "where", "in", "is", "as", "not",
-    "and", "or", "with", "lambda", "new", "delete", "typeof",
-    "instanceof", "void", "self", "this", "super",
-    "then", "end", "local", "elsif", "unless", "until",
-    "begin", "rescue", "ensure", "when", "val", "object", "extends",
-    "override", "abstract", "final", "sealed", "lazy",
-    "mut", "ref", "pub", "crate", "mod", "use", "extern",
-    "type", "foreach", "namespace", "using",
-}
+# Import constants and helpers from the lightweight worker module.
+# The worker is kept free of heavy imports (BaseMetrics, InputProvider, etc.)
+# so it can be spawned as a subprocess without pulling in the tokenizer stack.
+from ._treesitter_worker import (
+    CATEGORIES as _CATEGORIES_TUPLE,
+    IDENTIFIER_TYPES as _IDENTIFIER_TYPES,
+    LITERAL_TYPES as _LITERAL_TYPES,
+    DELIMITER_CHARS as _DELIMITER_CHARS,
+    NON_OPERATOR_PUNCTUATION as _NON_OPERATOR_PUNCTUATION,
+    KNOWN_KEYWORDS as _KNOWN_KEYWORDS,
+    classify_node as _classify_node_fn,
+    extract_leaf_spans as _extract_leaf_spans_fn,
+    parse_snippets as _parse_snippets,
+)
 
 _WHITESPACE_SIGNIFICANT_LANGS: Set[str] = {"python", "haskell"}
+
+logger = logging.getLogger(__name__)
 
 
 class ASTBoundaryMetrics(BaseMetrics):
@@ -111,19 +51,18 @@ class ASTBoundaryMetrics(BaseMetrics):
     ``tokenized_data`` parameter passed to :meth:`compute`.
     """
 
-    _CATEGORIES = ("identifier", "keyword", "operator", "literal", "delimiter")
+    _CATEGORIES = _CATEGORIES_TUPLE
 
     def __init__(
         self,
         input_provider: InputProvider,
         code_config: Optional[Dict[str, str]] = None,
-        max_snippets_per_lang: int = 500,
+        max_snippets_per_lang: Optional[int] = None,
     ):
         super().__init__(input_provider)
 
         # Tree-sitter availability (lazy)
         self._treesitter_available: Optional[bool] = None
-        self._parser_cache: Dict[str, Any] = {}
 
         # Load code data
         from ..loaders.code_data import CodeDataLoader
@@ -131,7 +70,7 @@ class ASTBoundaryMetrics(BaseMetrics):
         self.code_loader = CodeDataLoader(
             code_config, max_snippets_per_lang=max_snippets_per_lang
         )
-        self.max_snippets_per_lang = max_snippets_per_lang
+        self.max_snippets_per_lang = self.code_loader.max_snippets_per_lang
 
         if code_config:
             self.code_loader.load_all()
@@ -152,7 +91,6 @@ class ASTBoundaryMetrics(BaseMetrics):
             return self._treesitter_available
         try:
             import tree_sitter_language_pack as _ts_pack  # noqa: F401
-            self._ts_pack = _ts_pack
             self._treesitter_available = True
         except ImportError:
             logger.warning(
@@ -163,112 +101,13 @@ class ASTBoundaryMetrics(BaseMetrics):
             self._treesitter_available = False
         return self._treesitter_available
 
-    def _get_parser(self, lang: str):
-        """Get or create a cached tree-sitter parser for *lang*."""
-        if lang in self._parser_cache:
-            return self._parser_cache[lang]
-
-        from ..loaders.code_data import CodeDataLoader
-
-        ts_name = CodeDataLoader._LANG_TO_TREESITTER.get(lang)
-        if ts_name is None:
-            return None
-
-        try:
-            parser = self._ts_pack.get_parser(ts_name)
-            self._parser_cache[lang] = parser
-            return parser
-        except Exception as e:
-            logger.warning("Failed to create tree-sitter parser for %s: %s", lang, e)
-            return None
-
     # ------------------------------------------------------------------
-    # AST node classification
+    # AST node classification & span extraction
+    # Delegated to _treesitter_worker (single source of truth).
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _classify_node(node) -> Optional[str]:
-        """Classify a tree-sitter leaf node into one of the five categories.
-
-        Returns ``'identifier'``, ``'keyword'``, ``'operator'``,
-        ``'literal'``, ``'delimiter'``, or ``None``.
-        """
-        node_type = node.type
-        text = node.text.decode("utf-8") if isinstance(node.text, bytes) else node.text
-
-        if not text:
-            return None
-
-        # Delimiters
-        if text in _DELIMITER_CHARS and len(text) == 1:
-            return "delimiter"
-
-        # Identifiers — checked before keywords intentionally: if the grammar
-        # assigns an identifier type, we trust that classification even when
-        # the text appears in _KNOWN_KEYWORDS (e.g. ``self`` in Python is
-        # a conventional identifier, not a reserved keyword).
-        if node_type in _IDENTIFIER_TYPES:
-            return "identifier"
-
-        # Literals
-        if node_type in _LITERAL_TYPES:
-            return "literal"
-
-        # Keywords: anonymous nodes whose type equals their text and is
-        # alphabetic (tree-sitter represents keyword tokens this way).
-        if not node.is_named and node_type == text and text.isalpha():
-            return "keyword"
-
-        # Some grammars expose keywords as named nodes
-        if node.is_named and text in _KNOWN_KEYWORDS and text.isalpha():
-            return "keyword"
-
-        # Operators: anonymous non-alphanumeric leaf nodes that aren't
-        # delimiters, whitespace, or structural punctuation
-        if not node.is_named and not text.isalnum() and text not in _DELIMITER_CHARS:
-            stripped = text.strip()
-            if stripped and not stripped.isspace() and stripped not in _NON_OPERATOR_PUNCTUATION:
-                return "operator"
-
-        return None
-
-    # ------------------------------------------------------------------
-    # AST span extraction
-    # ------------------------------------------------------------------
-
-    def _extract_leaf_spans(
-        self, tree
-    ) -> Dict[str, List[Tuple[int, int]]]:
-        """Extract categorised leaf-node spans from a parse tree.
-
-        Returns a dict mapping category names to lists of
-        ``(start_byte, end_byte)`` spans.
-        """
-        categorized: Dict[str, List[Tuple[int, int]]] = {
-            cat: [] for cat in self._CATEGORIES
-        }
-
-        def _walk(node):
-            # Skip error nodes
-            if node.type == "ERROR":
-                return
-            if node.child_count == 0:
-                cat = self._classify_node(node)
-                if cat is not None:
-                    start = node.start_byte
-                    end = node.end_byte
-                    if start < end:
-                        categorized[cat].append((start, end))
-            else:
-                for child in node.children:
-                    _walk(child)
-
-        _walk(tree.root_node)
-        return categorized
-
-    # ------------------------------------------------------------------
-    # Byte ↔ character offset conversion
-    # ------------------------------------------------------------------
+    _classify_node = staticmethod(_classify_node_fn)
+    _extract_leaf_spans = staticmethod(_extract_leaf_spans_fn)
 
     @staticmethod
     def _byte_to_char_offsets(source_bytes: bytes) -> List[int]:
@@ -278,17 +117,17 @@ class ASTBoundaryMetrics(BaseMetrics):
         of length ``len(source_bytes) + 1`` so that ``end_byte`` lookups
         (exclusive) work without special-casing.
         """
-        byte_to_char: List[int] = []
+        result: List[int] = []
         source_str = source_bytes.decode("utf-8")
         char_idx = 0
         for ch in source_str:
             n_bytes = len(ch.encode("utf-8"))
             for _ in range(n_bytes):
-                byte_to_char.append(char_idx)
+                result.append(char_idx)
             char_idx += 1
         # Sentinel for exclusive end positions
-        byte_to_char.append(char_idx)
-        return byte_to_char
+        result.append(char_idx)
+        return result
 
     # ------------------------------------------------------------------
     # Source → reconstructed-text coordinate mapping
@@ -419,10 +258,6 @@ class ASTBoundaryMetrics(BaseMetrics):
 
         return result
 
-    # ------------------------------------------------------------------
-    # Line indentation extraction
-    # ------------------------------------------------------------------
-
     @staticmethod
     def _extract_line_indentation(
         source_code: str,
@@ -510,6 +345,92 @@ class ASTBoundaryMetrics(BaseMetrics):
         }
 
     # ------------------------------------------------------------------
+    # Numpy-accelerated helpers (used by compute() hot loop)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _check_boundary_alignment_fast(
+        char_start: int,
+        char_end: int,
+        s2r_arr: np.ndarray,
+        c2t_arr: np.ndarray,
+        c2t_len: int,
+    ) -> Optional[Dict[str, bool]]:
+        """Fast boundary alignment using pre-built numpy arrays.
+
+        Same semantics as :meth:`_check_boundary_alignment` but operates
+        on numpy ``int64`` arrays (``-1`` for unmapped positions) to avoid
+        repeated Python list-indexing overhead.
+        """
+        s2r_len = len(s2r_arr)
+
+        # Forward scan for recon_start
+        hi = min(char_end, s2r_len)
+        if char_start >= hi:
+            return None
+        segment = s2r_arr[char_start:hi]
+        mapped = segment >= 0
+        if not mapped.any():
+            return None
+        first_offset = int(mapped.argmax())
+        recon_start = int(segment[first_offset])
+
+        # Backward scan for recon_end (exclusive)
+        last_offset = len(segment) - 1 - int(np.flip(mapped).argmax())
+        recon_end = int(segment[last_offset]) + 1
+
+        if recon_start >= recon_end or recon_end > c2t_len:
+            return None
+
+        start_aligned = (
+            recon_start == 0
+            or int(c2t_arr[recon_start]) != int(c2t_arr[recon_start - 1])
+        )
+        end_aligned = (
+            recon_end >= c2t_len
+            or int(c2t_arr[recon_end - 1]) != int(c2t_arr[recon_end])
+        )
+        fully_aligned = start_aligned and end_aligned
+
+        return {
+            "start_aligned": start_aligned,
+            "end_aligned": end_aligned,
+            "fully_aligned": fully_aligned,
+            "cross_boundary": not fully_aligned,
+        }
+
+    @staticmethod
+    def _count_identifier_tokens_fast(
+        char_start: int,
+        char_end: int,
+        s2r_arr: np.ndarray,
+        c2t_arr: np.ndarray,
+        c2t_len: int,
+    ) -> Optional[int]:
+        """Fast identifier token counting using pre-built numpy arrays.
+
+        Same semantics as :meth:`_count_identifier_tokens`.
+        """
+        s2r_len = len(s2r_arr)
+        hi = min(char_end, s2r_len)
+        if char_start >= hi:
+            return None
+
+        segment = s2r_arr[char_start:hi]
+        mapped = segment[segment >= 0]
+
+        if len(mapped) == 0:
+            return None
+
+        recon_start = int(mapped.min())
+        recon_end = int(mapped.max()) + 1  # exclusive
+
+        if recon_end > c2t_len:
+            return None
+
+        return int(np.unique(c2t_arr[recon_start:recon_end]).size)
+
+    # ------------------------------------------------------------------
     # Main compute
     # ------------------------------------------------------------------
 
@@ -556,105 +477,299 @@ class ASTBoundaryMetrics(BaseMetrics):
             lambda: defaultdict(lambda: defaultdict(list))
         )
 
-        # ----- Phase 1: encode all snippets with all tokenizers -----
-        # Encoding uses the tokenizer's C/Rust backend.  Separating it
-        # from tree-sitter parsing (Phase 2) avoids interleaving two
-        # native extensions whose heap usage can conflict on some
-        # platforms, causing hard-to-diagnose memory corruption.
+        # ----- Phase 1: parse all snippets with tree-sitter -----
+        # Tree-sitter uses a C backend.  On some platforms, earlier metrics
+        # (DigitBoundaryMetrics, MorphScore, etc.) call tokenizer.encode()
+        # through a Rust/C backend that corrupts heap metadata.  By the
+        # time AST metrics run, the heap is already corrupted and the first
+        # tree-sitter malloc triggers a crash.
         #
-        # Structure: encoded[tok_name][code_lang] = [(snippet, token_ids, token_strings), ...]
-        encoded: Dict[str, Dict[str, List[Tuple]]] = defaultdict(lambda: defaultdict(list))
+        # Fix: run tree-sitter work in *subprocesses* with their own clean
+        # heaps.  One subprocess is spawned **per language** so that a
+        # pathological snippet in one language cannot stall all others.
+        # Each subprocess gets a moderate timeout; languages that exceed
+        # it are skipped with a warning.
+        #
+        # The subprocess returns ONLY categorized byte-offset spans
+        # (the one thing that requires tree-sitter's C library).
+        # byte_to_char mapping and indentation extraction are pure Python
+        # and are computed here in the main process.
+        #
+        # Structure: parsed_spans[code_lang] = [categorized_spans_dict, ...]
 
-        for tok_name in self.tokenizer_names:
-            tokenizer = self.input_provider.get_tokenizer(tok_name)
+        from ..loaders.code_data import CodeDataLoader
+        import os
+        import pickle
+        import subprocess
+        import sys
+        import tempfile
 
-            if not tokenizer.can_encode():
-                logger.info("Tokenizer %s cannot encode text; skipping AST metrics", tok_name)
+        # Per-language subprocess timeout in seconds.
+        _PER_LANG_TIMEOUT = 120
+
+        code_snippets = {
+            lang: self.code_loader.get_code_snippets(lang)
+            for lang in self.code_loader.get_languages()
+        }
+        lang_to_treesitter = CodeDataLoader._LANG_TO_TREESITTER
+
+        total_input = sum(len(v) for v in code_snippets.values())
+        logger.info(
+            "Phase 1: parsing %d snippet(s) across %d language(s) via "
+            "per-language subprocesses (timeout=%ds each).",
+            total_input, len(code_snippets), _PER_LANG_TIMEOUT,
+        )
+
+        worker_path = os.path.join(os.path.dirname(__file__), "_treesitter_worker.py")
+
+        parsed_spans: Dict[str, list] = {}
+
+        for lang, snippets in code_snippets.items():
+            if not snippets:
+                continue
+            ts_name = lang_to_treesitter.get(lang)
+            if ts_name is None:
+                logger.debug("No tree-sitter grammar for %s; skipping.", lang)
                 continue
 
-            for code_lang in self.code_loader.get_languages():
-                snippets = self.code_loader.get_code_snippets(code_lang)
-                for snippet in snippets:
+            tmp_in = tmp_out = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                    suffix=".pkl", prefix=f"ts_in_{lang}_", delete=False
+                ) as f_in:
+                    tmp_in = f_in.name
+                    pickle.dump(({lang: snippets}, lang_to_treesitter), f_in)
+
+                with tempfile.NamedTemporaryFile(
+                    suffix=".pkl", prefix=f"ts_out_{lang}_", delete=False
+                ) as f_out:
+                    tmp_out = f_out.name
+
+                proc = subprocess.run(
+                    [sys.executable, worker_path, tmp_in, tmp_out],
+                    capture_output=True,
+                    timeout=_PER_LANG_TIMEOUT,
+                )
+                if proc.returncode != 0:
+                    raise RuntimeError(proc.stderr.decode(errors="replace"))
+
+                stderr_msg = proc.stderr.decode(errors="replace").strip()
+                if stderr_msg:
+                    logger.info("Tree-sitter worker [%s]: %s", lang, stderr_msg)
+
+                with open(tmp_out, "rb") as f:
+                    lang_result = pickle.load(f)
+                parsed_spans.update(lang_result)
+                logger.info(
+                    "  %s: parsed %d snippet(s) in subprocess.",
+                    lang, len(snippets),
+                )
+            except subprocess.TimeoutExpired:
+                logger.warning(
+                    "  %s: subprocess timed out after %ds for %d snippet(s); "
+                    "skipping language.",
+                    lang, _PER_LANG_TIMEOUT, len(snippets),
+                )
+            except Exception as e:
+                logger.warning(
+                    "  %s: subprocess failed (%s); attempting in-process fallback.",
+                    lang, e,
+                )
+                try:
+                    fallback = _parse_snippets({lang: snippets}, lang_to_treesitter)
+                    parsed_spans.update(fallback)
+                except Exception as e2:
+                    logger.warning(
+                        "  %s: in-process fallback also failed (%s); skipping.",
+                        lang, e2,
+                    )
+            finally:
+                for tmp_path in (tmp_in, tmp_out):
+                    if tmp_path and os.path.exists(tmp_path):
+                        try:
+                            os.unlink(tmp_path)
+                        except OSError:
+                            pass
+
+        total_parsed = sum(len(v) for v in parsed_spans.values())
+        # Count snippets that produced at least one AST span (non-empty parse).
+        non_empty_parsed = sum(
+            1
+            for spans_list in parsed_spans.values()
+            for spans_dict in spans_list
+            if any(spans_dict.get(cat) for cat in self._CATEGORIES)
+        )
+        for lang in sorted(parsed_spans):
+            lang_total = len(parsed_spans[lang])
+            lang_non_empty = sum(
+                1 for sd in parsed_spans[lang]
+                if any(sd.get(cat) for cat in self._CATEGORIES)
+            )
+            logger.info(
+                "  %s: %d snippet(s) loaded, %d with AST spans "
+                "(%.0f%% non-empty)",
+                lang, lang_total, lang_non_empty,
+                100 * lang_non_empty / lang_total if lang_total else 0,
+            )
+        logger.info(
+            "Phase 1 complete: parsed %d snippet(s) across %d language(s) "
+            "(%d with AST spans). Starting Phase 2 (tokenizer encoding + alignment).",
+            total_parsed, len(parsed_spans), non_empty_parsed,
+        )
+
+        # ----- Phase 2: encode with tokenizers and measure alignment -----
+        # Loop order: (language → snippet → tokenizer) so that
+        # tokenizer-independent per-snippet work (byte_to_char, indentation,
+        # byte→char span conversion) is computed ONCE and reused across all
+        # tokenizers.
+
+        # Pre-filter encodable tokenizers (avoid repeated can_encode() checks).
+        active_tokenizers: List[Tuple[str, Any]] = []
+        for tok_name in self.tokenizer_names:
+            tokenizer = self.input_provider.get_tokenizer(tok_name)
+            if tokenizer.can_encode():
+                active_tokenizers.append((tok_name, tokenizer))
+            else:
+                logger.info(
+                    "Tokenizer %s cannot encode text; skipping AST metrics",
+                    tok_name,
+                )
+
+        for code_lang, spans_list in parsed_spans.items():
+            snippets = code_snippets[code_lang]
+            is_ws_significant = code_lang in _WHITESPACE_SIGNIFICANT_LANGS
+
+            for si, categorized_spans in enumerate(spans_list):
+                snippet = snippets[si]
+
+                # -- Tokenizer-independent pre-computation (ONCE per snippet) --
+                source_bytes = snippet.encode("utf-8")
+                byte_to_char = self._byte_to_char_offsets(source_bytes)
+
+                indentation = (
+                    self._extract_line_indentation(snippet)
+                    if is_ws_significant
+                    else None
+                )
+
+                # Pre-convert ALL byte spans to char spans.
+                char_spans_by_category: Dict[str, List[Tuple[int, int]]] = {}
+                for category, spans in categorized_spans.items():
+                    char_spans: List[Tuple[int, int]] = []
+                    for byte_start, byte_end in spans:
+                        if byte_start >= len(byte_to_char) or byte_end >= len(byte_to_char):
+                            continue
+                        char_spans.append(
+                            (byte_to_char[byte_start], byte_to_char[byte_end])
+                        )
+                    char_spans_by_category[category] = char_spans
+
+                # Pre-extract identifier texts.
+                ident_char_spans = char_spans_by_category.get("identifier", [])
+                ident_texts = [
+                    snippet[c_start:c_end]
+                    for c_start, c_end in ident_char_spans
+                ]
+
+                logger.debug(
+                    "Phase 2 pre-computed: lang=%s snippet=%d/%d",
+                    code_lang, si + 1, len(spans_list),
+                )
+
+                # -- Per-tokenizer work --
+                for tok_name, tokenizer in active_tokenizers:
                     try:
                         token_ids = tokenizer.encode(snippet)
                     except Exception as e:
-                        logger.debug("Encoding failed for %s on %s snippet: %s", tok_name, code_lang, e)
+                        logger.debug(
+                            "Encoding failed for %s on %s snippet: %s",
+                            tok_name, code_lang, e,
+                        )
                         continue
                     if not token_ids:
                         continue
-                    token_strings = self._convert_ids_to_tokens(tokenizer, token_ids)
-                    encoded[tok_name][code_lang].append((snippet, token_ids, token_strings))
 
-        # ----- Phase 2: parse with tree-sitter and measure alignment -----
-        for tok_name in self.tokenizer_names:
-            for code_lang in self.code_loader.get_languages():
-                parser = self._get_parser(code_lang)
-                if parser is None:
-                    continue
-
-                for snippet, token_ids, token_strings in encoded[tok_name].get(code_lang, []):
-                    source_bytes = snippet.encode("utf-8")
-                    tree = parser.parse(source_bytes)
-
-                    categorized_spans = self._extract_leaf_spans(tree)
-
-                    byte_to_char = self._byte_to_char_offsets(source_bytes)
-
-                    recon_text, char_to_token = self._build_char_to_token_map(token_strings)
-
+                    token_strings = self._convert_ids_to_tokens(
+                        tokenizer, token_ids
+                    )
+                    recon_text, char_to_token = self._build_char_to_token_map(
+                        token_strings
+                    )
                     if not char_to_token:
                         continue
 
-                    source_to_recon = self._build_source_to_recon_map(snippet, recon_text)
+                    source_to_recon = self._build_source_to_recon_map(
+                        snippet, recon_text
+                    )
 
-                    for category, spans in categorized_spans.items():
-                        for byte_start, byte_end in spans:
-                            # byte_end is exclusive (tree-sitter convention).
-                            # byte_to_char has a sentinel at len(source_bytes) so
-                            # byte_to_char[byte_end] yields an exclusive char offset.
-                            if byte_start >= len(byte_to_char) or byte_end >= len(byte_to_char):
-                                continue
+                    # Build numpy arrays ONCE per (snippet, tokenizer).
+                    s2r_arr = np.array(
+                        [x if x is not None else -1 for x in source_to_recon],
+                        dtype=np.int64,
+                    )
+                    c2t_arr = np.array(char_to_token, dtype=np.int64)
+                    c2t_len = len(char_to_token)
 
-                            c_start = byte_to_char[byte_start]   # inclusive
-                            c_end = byte_to_char[byte_end]       # exclusive
-
-                            alignment = self._check_boundary_alignment(
-                                c_start, c_end, source_to_recon, char_to_token
+                    for category, char_spans in char_spans_by_category.items():
+                        for span_idx, (c_start, c_end) in enumerate(char_spans):
+                            alignment = self._check_boundary_alignment_fast(
+                                c_start, c_end, s2r_arr, c2t_arr, c2t_len
                             )
                             if alignment is not None:
-                                acc[tok_name][code_lang][category].append(alignment)
+                                acc[tok_name][code_lang][category].append(
+                                    alignment
+                                )
 
                             # Identifier fragmentation tracking
                             if category == "identifier":
-                                num_tokens = self._count_identifier_tokens(
-                                    c_start, c_end, source_to_recon, char_to_token
+                                num_tokens = self._count_identifier_tokens_fast(
+                                    c_start, c_end, s2r_arr, c2t_arr, c2t_len
                                 )
                                 if num_tokens is not None:
                                     ident_acc[tok_name][code_lang].append({
-                                        "text": snippet[c_start:c_end],
+                                        "text": ident_texts[span_idx],
                                         "num_tokens": num_tokens,
                                         "fragmented": num_tokens > 1,
                                     })
 
                     # Indentation consistency (whitespace-significant languages)
-                    if code_lang in _WHITESPACE_SIGNIFICANT_LANGS:
-                        source_char_to_token = self._build_source_char_to_token_map(
-                            snippet, token_strings
+                    if indentation is not None:
+                        source_char_to_token = (
+                            self._build_source_char_to_token_map(
+                                snippet, token_strings
+                            )
                         )
-                        for ws_string, line_start, ws_end in self._extract_line_indentation(snippet):
+                        for ws_string, line_start, ws_end in indentation:
                             if not ws_string:
                                 continue
-                            # Collect ordered unique token indices in [line_start, ws_end)
                             token_indices: List[int] = []
                             for pos in range(line_start, ws_end):
                                 if pos < len(source_char_to_token):
                                     tidx = source_char_to_token[pos]
                                     if tidx is not None and (
-                                        not token_indices or token_indices[-1] != tidx
+                                        not token_indices
+                                        or token_indices[-1] != tidx
                                     ):
                                         token_indices.append(tidx)
-                            pattern = tuple(token_strings[ti] for ti in token_indices)
-                            indent_acc[tok_name][code_lang][ws_string].append(pattern)
+                            pattern = tuple(
+                                token_strings[ti] for ti in token_indices
+                            )
+                            indent_acc[tok_name][code_lang][ws_string].append(
+                                pattern
+                            )
+
+        # Log Phase 2 summary: how many AST nodes contributed per tokenizer
+        for tok_name in self.tokenizer_names:
+            tok_node_count = sum(
+                len(items)
+                for lang_cats in acc.get(tok_name, {}).values()
+                for items in lang_cats.values()
+            )
+            tok_lang_count = len(acc.get(tok_name, {}))
+            logger.info(
+                "Phase 2 complete for %s: %d AST nodes aligned across %d language(s).",
+                tok_name, tok_node_count, tok_lang_count,
+            )
 
         return {
             "ast_boundary_alignment": self._build_results(acc),

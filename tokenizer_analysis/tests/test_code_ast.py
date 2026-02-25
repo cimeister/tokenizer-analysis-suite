@@ -11,6 +11,7 @@ from tokenizer_analysis.metrics.code_ast import (
     _NON_OPERATOR_PUNCTUATION,
     _WHITESPACE_SIGNIFICANT_LANGS,
 )
+# _WHITESPACE_SIGNIFICANT_LANGS is now defined in code_ast.py (not the worker)
 from tokenizer_analysis.loaders.code_data import CodeDataLoader
 from tokenizer_analysis.core.input_types import TokenizedData
 
@@ -1450,3 +1451,466 @@ class TestPrintNewMetrics:
         assert "0.900" in captured.out
         assert "0.950" in captured.out
         assert "python" in captured.out
+
+
+# ======================================================================
+# Subprocess worker isolation
+# ======================================================================
+
+class TestSubprocessWorker:
+    """Verify that tree-sitter parsing via the subprocess worker produces
+    correct results and completes within a reasonable time.
+
+    These tests exercise the actual subprocess path (``_treesitter_worker.py``
+    invoked via ``subprocess.run``) so they catch pickle, import, and
+    timeout regressions without running a full tokenizer analysis.
+    """
+
+    @pytest.fixture(scope="class")
+    def ts_available(self):
+        try:
+            import tree_sitter_language_pack  # noqa: F401
+            return True
+        except ImportError:
+            pytest.skip("tree-sitter-language-pack not installed")
+
+    @staticmethod
+    def _run_worker(code_snippets, lang_to_ts, timeout=30):
+        """Helper: run the tree-sitter worker subprocess using temp files."""
+        import os, pickle, subprocess, sys, tempfile
+
+        worker_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            "metrics", "_treesitter_worker.py",
+        )
+
+        tmp_in = tmp_out = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                suffix=".pkl", prefix="ts_test_in_", delete=False
+            ) as f_in:
+                tmp_in = f_in.name
+                pickle.dump((code_snippets, lang_to_ts), f_in)
+
+            with tempfile.NamedTemporaryFile(
+                suffix=".pkl", prefix="ts_test_out_", delete=False
+            ) as f_out:
+                tmp_out = f_out.name
+
+            proc = subprocess.run(
+                [sys.executable, worker_path, tmp_in, tmp_out],
+                capture_output=True,
+                timeout=timeout,
+            )
+            assert proc.returncode == 0, (
+                f"Worker failed: {proc.stderr.decode(errors='replace')}"
+            )
+
+            with open(tmp_out, "rb") as f:
+                return pickle.load(f)
+        finally:
+            for p in (tmp_in, tmp_out):
+                if p and os.path.exists(p):
+                    try:
+                        os.unlink(p)
+                    except OSError:
+                        pass
+
+    def test_subprocess_roundtrip(self, ts_available):
+        """Spawn the worker, send a small snippet, verify parsed output.
+
+        The subprocess now returns spans only (no snippet text,
+        byte_to_char, or indentation).
+        """
+        code_snippets = {
+            "python": ["def add(a, b):\n    return a + b\n"],
+        }
+        lang_to_ts = CodeDataLoader._LANG_TO_TREESITTER
+
+        parsed = self._run_worker(code_snippets, lang_to_ts)
+        assert "python" in parsed
+        assert len(parsed["python"]) == 1
+
+        # Each entry is now just a categorized_spans dict (not a 4-tuple)
+        spans = parsed["python"][0]
+        assert isinstance(spans, dict)
+
+        # spans should contain at least identifiers and keywords
+        assert len(spans["identifier"]) > 0, "Expected identifier spans"
+        assert len(spans["keyword"]) > 0, "Expected keyword spans"
+
+        # Each span is a (start_byte, end_byte) tuple
+        for cat, cat_spans in spans.items():
+            for span in cat_spans:
+                assert len(span) == 2
+                assert span[0] < span[1]
+
+    def test_subprocess_non_ws_lang(self, ts_available):
+        """Non-whitespace-significant languages should still return spans."""
+        code_snippets = {
+            "javascript": ["function add(a, b) { return a + b; }"],
+        }
+        lang_to_ts = CodeDataLoader._LANG_TO_TREESITTER
+
+        parsed = self._run_worker(code_snippets, lang_to_ts)
+        spans = parsed["javascript"][0]
+        assert isinstance(spans, dict)
+        # Should have parsed some identifiers and keywords
+        assert len(spans["identifier"]) > 0
+        assert len(spans["keyword"]) > 0
+
+    def test_subprocess_unknown_language_skipped(self, ts_available):
+        """Languages without a tree-sitter mapping should be silently skipped."""
+        code_snippets = {
+            "brainfuck": ["+++++[>+++<-]>."],
+        }
+        lang_to_ts = CodeDataLoader._LANG_TO_TREESITTER
+
+        parsed = self._run_worker(code_snippets, lang_to_ts)
+        assert "brainfuck" not in parsed
+
+    def test_subprocess_matches_in_process(self, ts_available):
+        """Subprocess result should be identical to in-process result."""
+        from tokenizer_analysis.metrics._treesitter_worker import parse_snippets
+
+        samples = CodeDataLoader.generate_synthetic_samples()
+        # Use one snippet per language to keep it fast
+        code_snippets = {lang: snips[:1] for lang, snips in samples.items()}
+        lang_to_ts = CodeDataLoader._LANG_TO_TREESITTER
+
+        # In-process
+        in_proc = parse_snippets(code_snippets, lang_to_ts)
+
+        # Subprocess
+        sub_proc = self._run_worker(code_snippets, lang_to_ts, timeout=60)
+
+        # Same languages parsed
+        assert set(in_proc.keys()) == set(sub_proc.keys())
+
+        for lang in in_proc:
+            assert len(in_proc[lang]) == len(sub_proc[lang]), f"Mismatch for {lang}"
+            for i, (ip_spans, sp_spans) in enumerate(zip(in_proc[lang], sub_proc[lang])):
+                assert ip_spans == sp_spans, f"Span mismatch: {lang} snippet {i}"
+
+
+class TestPerSnippetTimeout:
+    """Verify that the thread-based per-snippet timeout in
+    ``_parse_one_snippet`` correctly handles hanging parsers and that
+    ``parse_snippets`` emits aligned empty spans for timed-out snippets
+    while still producing results for healthy ones.
+    """
+
+    def test_parse_one_snippet_timeout_returns_none(self):
+        """A parser whose .parse() blocks indefinitely should be timed out."""
+        import time
+        from unittest.mock import MagicMock
+        from tokenizer_analysis.metrics._treesitter_worker import _parse_one_snippet
+
+        # Create a mock parser whose parse() sleeps far longer than the
+        # timeout.  The daemon thread will be left behind but is harmless.
+        mock_parser = MagicMock()
+        mock_parser.parse.side_effect = lambda _src: time.sleep(30)
+
+        start = time.monotonic()
+        result = _parse_one_snippet(mock_parser, "x = 1", timeout=0.5)
+        elapsed = time.monotonic() - start
+
+        assert result is None, "Expected None for a timed-out snippet"
+        assert elapsed < 5, f"Should have returned quickly after timeout, took {elapsed:.1f}s"
+
+    def test_parse_one_snippet_success(self):
+        """A well-behaved parser should return spans normally."""
+        try:
+            import tree_sitter_language_pack  # noqa: F401
+        except ImportError:
+            pytest.skip("tree-sitter-language-pack not installed")
+
+        import tree_sitter_language_pack as ts_pack
+        from tokenizer_analysis.metrics._treesitter_worker import (
+            _parse_one_snippet,
+            CATEGORIES,
+        )
+
+        parser = ts_pack.get_parser("python")
+        result = _parse_one_snippet(parser, "x = 1\n", timeout=10)
+
+        assert result is not None, "Expected spans for a simple snippet"
+        assert isinstance(result, dict)
+        for cat in CATEGORIES:
+            assert cat in result
+
+    def test_parse_one_snippet_exception_returns_none(self):
+        """If parse() raises, _parse_one_snippet returns None (not crash)."""
+        from unittest.mock import MagicMock
+        from tokenizer_analysis.metrics._treesitter_worker import _parse_one_snippet
+
+        mock_parser = MagicMock()
+        mock_parser.parse.side_effect = RuntimeError("boom")
+
+        result = _parse_one_snippet(mock_parser, "x = 1", timeout=5)
+        assert result is None
+
+    def test_parse_snippets_mixed_healthy_and_hanging(self):
+        """parse_snippets with a hanging snippet should skip it (empty spans)
+        while still returning real spans for the healthy snippet.
+
+        Index alignment between input and output lists must be preserved.
+        """
+        import time
+        from unittest.mock import patch, MagicMock
+        from tokenizer_analysis.metrics._treesitter_worker import (
+            parse_snippets,
+            CATEGORIES,
+        )
+
+        try:
+            import tree_sitter_language_pack  # noqa: F401
+        except ImportError:
+            pytest.skip("tree-sitter-language-pack not installed")
+
+        good_snippet = "def foo():\n    return 42\n"
+        bad_snippet = "x = 1\n"  # content doesn't matter — we'll make it hang
+
+        code_snippets = {"python": [good_snippet, bad_snippet, good_snippet]}
+        lang_to_ts = CodeDataLoader._LANG_TO_TREESITTER
+
+        # Patch _parse_one_snippet: let good_snippet through normally,
+        # simulate a timeout (return None) for bad_snippet.
+        original_parse_one = None
+        import tokenizer_analysis.metrics._treesitter_worker as worker_mod
+        original_parse_one = worker_mod._parse_one_snippet
+
+        call_count = [0]
+
+        def patched_parse_one(parser, snippet, timeout):
+            call_count[0] += 1
+            if snippet is bad_snippet:
+                return None  # simulate timeout
+            return original_parse_one(parser, snippet, timeout)
+
+        with patch.object(worker_mod, "_parse_one_snippet", side_effect=patched_parse_one):
+            start = time.monotonic()
+            result = parse_snippets(code_snippets, lang_to_ts, per_snippet_timeout=5)
+            elapsed = time.monotonic() - start
+
+        assert "python" in result
+        spans_list = result["python"]
+
+        # Must have exactly 3 entries — one per input snippet
+        assert len(spans_list) == 3, f"Expected 3 entries, got {len(spans_list)}"
+
+        # First and third (good) should have real spans
+        for idx in (0, 2):
+            assert any(
+                len(spans_list[idx].get(cat, [])) > 0 for cat in CATEGORIES
+            ), f"Snippet {idx} should have real AST spans"
+
+        # Second (bad) should have all-empty spans
+        for cat in CATEGORIES:
+            assert spans_list[1].get(cat) == [], (
+                f"Timed-out snippet should have empty '{cat}' spans"
+            )
+
+        # Should complete quickly (no actual 30s sleep)
+        assert elapsed < 10, f"Mixed parse took too long: {elapsed:.1f}s"
+
+    def test_subprocess_per_snippet_timeout(self):
+        """End-to-end: the subprocess worker skips a genuinely slow snippet
+        without stalling the entire language.
+
+        We send two snippets — one normal and one enormous — and verify
+        that the worker completes within its per-snippet timeout window
+        and that both entries are present (the slow one with empty spans).
+        """
+        try:
+            import tree_sitter_language_pack  # noqa: F401
+        except ImportError:
+            pytest.skip("tree-sitter-language-pack not installed")
+
+        import os, pickle, subprocess, sys, tempfile
+
+        worker_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            "metrics", "_treesitter_worker.py",
+        )
+
+        good_snippet = "def foo():\n    return 42\n"
+        # Create a deeply nested snippet that may stress the parser.
+        # Even if tree-sitter handles it fast, the test still validates
+        # that the output list stays aligned.
+        stress_snippet = "(((" * 2000 + ")))" * 2000
+
+        code_snippets = {"python": [good_snippet, stress_snippet]}
+        lang_to_ts = CodeDataLoader._LANG_TO_TREESITTER
+
+        tmp_in = tmp_out = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                suffix=".pkl", prefix="ts_test_in_", delete=False
+            ) as f_in:
+                tmp_in = f_in.name
+                pickle.dump((code_snippets, lang_to_ts), f_in)
+
+            with tempfile.NamedTemporaryFile(
+                suffix=".pkl", prefix="ts_test_out_", delete=False
+            ) as f_out:
+                tmp_out = f_out.name
+
+            proc = subprocess.run(
+                [sys.executable, worker_path, tmp_in, tmp_out],
+                capture_output=True,
+                timeout=60,
+            )
+            assert proc.returncode == 0, (
+                f"Worker failed: {proc.stderr.decode(errors='replace')}"
+            )
+
+            with open(tmp_out, "rb") as f:
+                parsed = pickle.load(f)
+        finally:
+            for p in (tmp_in, tmp_out):
+                if p and os.path.exists(p):
+                    try:
+                        os.unlink(p)
+                    except OSError:
+                        pass
+
+        assert "python" in parsed
+        spans_list = parsed["python"]
+
+        # Both entries must be present to preserve index alignment
+        assert len(spans_list) == 2, (
+            f"Expected 2 entries (good + stress), got {len(spans_list)}"
+        )
+
+        # First snippet (good) should have real AST spans
+        good_spans = spans_list[0]
+        assert isinstance(good_spans, dict)
+        assert any(
+            len(good_spans.get(cat, [])) > 0
+            for cat in ("identifier", "keyword", "literal")
+        ), "Good snippet should produce AST spans"
+
+        # Second snippet (stress) — whether it parsed or timed out,
+        # it must be a valid spans dict with all categories present
+        stress_spans = spans_list[1]
+        assert isinstance(stress_spans, dict)
+        for cat in ("identifier", "keyword", "operator", "literal", "delimiter"):
+            assert cat in stress_spans, f"Missing category '{cat}' in stress result"
+
+
+class TestFastMethodsParity:
+    """Verify that the numpy-accelerated ``_fast`` methods produce identical
+    results to the original Python-list-based methods across a range of
+    inputs including edge cases.
+    """
+
+    @staticmethod
+    def _make_arrays(source_to_recon, char_to_token):
+        import numpy as np
+        s2r_arr = np.array(
+            [x if x is not None else -1 for x in source_to_recon],
+            dtype=np.int64,
+        )
+        c2t_arr = np.array(char_to_token, dtype=np.int64)
+        return s2r_arr, c2t_arr, len(char_to_token)
+
+    def test_alignment_fast_matches_original(self):
+        """_check_boundary_alignment_fast matches _check_boundary_alignment."""
+        source_to_recon = [0, None, 1, 2, 3, None, 4, 5]
+        char_to_token = [0, 0, 1, 1, 2, 2]
+        s2r_arr, c2t_arr, c2t_len = self._make_arrays(
+            source_to_recon, char_to_token
+        )
+
+        test_spans = [
+            (0, 3), (2, 5), (0, 8), (1, 2), (6, 8),
+            (0, 1), (7, 8),  # single-char spans
+            (5, 6),          # unmapped span (only None)
+            (0, 0),          # empty span
+            (10, 12),        # out of bounds
+        ]
+        for c_start, c_end in test_spans:
+            original = ASTBoundaryMetrics._check_boundary_alignment(
+                c_start, c_end, source_to_recon, char_to_token
+            )
+            fast = ASTBoundaryMetrics._check_boundary_alignment_fast(
+                c_start, c_end, s2r_arr, c2t_arr, c2t_len
+            )
+            assert original == fast, (
+                f"Alignment mismatch for span ({c_start}, {c_end}): "
+                f"original={original}, fast={fast}"
+            )
+
+    def test_identifier_tokens_fast_matches_original(self):
+        """_count_identifier_tokens_fast matches _count_identifier_tokens."""
+        source_to_recon = [0, None, 1, 2, 3, None, 4, 5]
+        char_to_token = [0, 0, 1, 1, 2, 2]
+        s2r_arr, c2t_arr, c2t_len = self._make_arrays(
+            source_to_recon, char_to_token
+        )
+
+        test_spans = [
+            (0, 3), (2, 5), (0, 8), (1, 2), (6, 8),
+            (0, 1), (7, 8),
+            (5, 6),
+            (0, 0),
+            (10, 12),
+        ]
+        for c_start, c_end in test_spans:
+            original = ASTBoundaryMetrics._count_identifier_tokens(
+                c_start, c_end, source_to_recon, char_to_token
+            )
+            fast = ASTBoundaryMetrics._count_identifier_tokens_fast(
+                c_start, c_end, s2r_arr, c2t_arr, c2t_len
+            )
+            assert original == fast, (
+                f"Token count mismatch for span ({c_start}, {c_end}): "
+                f"original={original}, fast={fast}"
+            )
+
+    def test_fast_methods_identity_mapping(self):
+        """Parity on a simple identity mapping (no Nones, no gaps)."""
+        source_to_recon = list(range(10))
+        char_to_token = [0, 0, 0, 1, 1, 2, 2, 2, 3, 3]
+        s2r_arr, c2t_arr, c2t_len = self._make_arrays(
+            source_to_recon, char_to_token
+        )
+
+        for c_start in range(10):
+            for c_end in range(c_start, 11):
+                orig_align = ASTBoundaryMetrics._check_boundary_alignment(
+                    c_start, c_end, source_to_recon, char_to_token
+                )
+                fast_align = ASTBoundaryMetrics._check_boundary_alignment_fast(
+                    c_start, c_end, s2r_arr, c2t_arr, c2t_len
+                )
+                assert orig_align == fast_align, (
+                    f"Alignment mismatch at ({c_start}, {c_end})"
+                )
+
+                orig_count = ASTBoundaryMetrics._count_identifier_tokens(
+                    c_start, c_end, source_to_recon, char_to_token
+                )
+                fast_count = ASTBoundaryMetrics._count_identifier_tokens_fast(
+                    c_start, c_end, s2r_arr, c2t_arr, c2t_len
+                )
+                assert orig_count == fast_count, (
+                    f"Token count mismatch at ({c_start}, {c_end})"
+                )
+
+    def test_fast_methods_all_none_mapping(self):
+        """Both methods return None when source_to_recon is all None."""
+        source_to_recon = [None, None, None, None]
+        char_to_token = [0, 1, 2]
+        s2r_arr, c2t_arr, c2t_len = self._make_arrays(
+            source_to_recon, char_to_token
+        )
+
+        for c_start, c_end in [(0, 4), (0, 2), (1, 3)]:
+            assert ASTBoundaryMetrics._check_boundary_alignment_fast(
+                c_start, c_end, s2r_arr, c2t_arr, c2t_len
+            ) is None
+            assert ASTBoundaryMetrics._count_identifier_tokens_fast(
+                c_start, c_end, s2r_arr, c2t_arr, c2t_len
+            ) is None

@@ -69,7 +69,12 @@ class CodeDataLoader:
 
     # Default cap on snippets loaded per language from files/parquet.
     # Keeps memory usage bounded when large code corpora are provided.
-    DEFAULT_MAX_SNIPPETS_PER_LANG: int = 500
+    DEFAULT_MAX_SNIPPETS_PER_LANG: int = 100
+
+    # Maximum character length for a single snippet.  Snippets longer than
+    # this are truncated before storage.  Keeps pickle payloads and
+    # tree-sitter parse times bounded.
+    MAX_SNIPPET_SIZE_CHARS: int = 15_000
 
     def __init__(
         self,
@@ -137,6 +142,10 @@ class CodeDataLoader:
         if cap_active and existing + len(snippets) > cap:
             snippets = snippets[: cap - existing]
 
+        # Truncate oversized snippets
+        size_cap = self.MAX_SNIPPET_SIZE_CHARS
+        snippets = [s[:size_cap] for s in snippets]
+
         if snippets:
             self.code_snippets.setdefault(lang, []).extend(snippets)
             total = len(self.code_snippets[lang])
@@ -146,9 +155,11 @@ class CodeDataLoader:
                 f", capped at {cap}" if cap_active else "",
             )
 
-    @staticmethod
-    def _read_file(path: str, max_chars: int = 50_000) -> Optional[str]:
+    @classmethod
+    def _read_file(cls, path: str, max_chars: Optional[int] = None) -> Optional[str]:
         """Read a text file, returning ``None`` on failure or empty content."""
+        if max_chars is None:
+            max_chars = cls.MAX_SNIPPET_SIZE_CHARS
         try:
             with open(path, "r", encoding="utf-8", errors="replace") as f:
                 text = f.read(max_chars)
@@ -171,7 +182,7 @@ class CodeDataLoader:
 
     @classmethod
     def _read_parquet(
-        cls, path: str, content_column: str = "content", max_chars: int = 50_000
+        cls, path: str, content_column: str = "content", max_chars: Optional[int] = None
     ) -> List[str]:
         """Read code snippets from a parquet file.
 
@@ -184,6 +195,9 @@ class CodeDataLoader:
         except ImportError:
             logger.warning("pandas is required to read parquet files; skipping %s", path)
             return []
+
+        if max_chars is None:
+            max_chars = cls.MAX_SNIPPET_SIZE_CHARS
 
         try:
             df = pd.read_parquet(path)
@@ -209,8 +223,16 @@ class CodeDataLoader:
         return snippets
 
     def get_code_snippets(self, lang: str) -> List[str]:
-        """Return loaded code snippets for *lang*."""
-        return self.code_snippets.get(lang, [])
+        """Return loaded code snippets for *lang*.
+
+        Enforces :attr:`max_snippets_per_lang` as a final safety net so
+        callers never receive more snippets than the configured cap.
+        """
+        snippets = self.code_snippets.get(lang, [])
+        cap = self.max_snippets_per_lang
+        if cap > 0 and len(snippets) > cap:
+            return snippets[:cap]
+        return snippets
 
     def get_languages(self) -> List[str]:
         """Return list of languages with loaded code data."""
