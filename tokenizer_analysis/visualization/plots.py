@@ -404,7 +404,7 @@ def plot_utf8_integrity(results: Dict[str, Any], save_path: str, tokenizer_names
     for tok_name in tokenizer_names:
         if has_integrity and tok_name in results['utf8_token_integrity']['summary']:
             integrity_values.append(
-                results['utf8_token_integrity']['summary'][tok_name].get('integrity_rate', 1.0)
+                results['utf8_token_integrity']['summary'][tok_name].get('completeness_rate', 1.0)
             )
         else:
             integrity_values.append(None)
@@ -426,8 +426,8 @@ def plot_utf8_integrity(results: Dict[str, Any], save_path: str, tokenizer_names
         vi_labels, vi_vals = zip(*valid_integrity)
         vi_colors = colors[:len(vi_labels)]
         ax1.bar(vi_labels, vi_vals, color=vi_colors, alpha=0.8)
-        ax1.set_ylabel('Integrity Rate')
-        ax1.set_title('Token Boundary Integrity Rate')
+        ax1.set_ylabel('Completeness Rate')
+        ax1.set_title('Token UTF-8 Completeness Rate')
         ax1.set_ylim(0, 1.05)
         ax1.tick_params(axis='x', rotation=45)
 

@@ -198,13 +198,13 @@ class MarkdownTableGenerator:
                 'lower_is_better': False,
             },
             {
-                'key': 'utf8_integrity',
-                'title': 'UTF-8 Integ.',
+                'key': 'utf8_boundary_crossing',
+                'title': 'Bound. Cross',
                 'key_path': ['utf8_token_integrity', 'summary'],
-                'value_key': 'integrity_rate',
+                'value_key': 'boundary_crossing_rate',
                 'stat_key': None,
-                'format': '{:.3f}',
-                'lower_is_better': False,
+                'format': '{:.4f}',
+                'lower_is_better': True,
             },
             {
                 'key': 'utf8_char_split',
@@ -622,15 +622,7 @@ class MarkdownTableGenerator:
         # "Tokenizer" is always first; then current metric titles; then any
         # extra columns from the old file that we don't know about;
         # "Dataset", "User" and "Date" are always last.
-        meta_columns = {'Dataset', 'User', 'Date'}
-        extra_headers: List[str] = []
-        if old_headers:
-            for h in old_headers:
-                clean = _strip_arrow(h)
-                if clean != 'Tokenizer' and clean not in current_titles and clean not in meta_columns:
-                    extra_headers.append(clean)
-
-        all_titles = current_titles + extra_headers + ['Dataset', 'User', 'Date']
+        all_titles = current_titles + ['Dataset', 'User', 'Date']
         headers = ['Tokenizer'] + all_titles
 
         username = getpass.getuser()
@@ -687,7 +679,7 @@ class MarkdownTableGenerator:
             rows.append(row)
 
         # Filter empty metric columns
-        metric_titles = current_titles + extra_headers
+        metric_titles = current_titles
         headers, rows = self._filter_empty_columns(headers, rows, metric_titles)
 
         # Sort if requested
@@ -797,6 +789,21 @@ def _plots_dir_for_results_file(md_filepath: str) -> str:
     else:
         folder_name = stem.replace("RESULTS_", "", 1)
     return os.path.join(parent, folder_name)
+
+
+def _plots_dirname_for_remote_filename(remote_filename: str) -> str:
+    """Derive the plot subdirectory name from a remote filename string.
+
+    Same logic as :func:`_plots_dir_for_results_file` but returns only the
+    directory *name* (no parent path).
+
+    ``'RESULTS_flores_bytes.md'`` → ``'flores_bytes'``
+    ``'RESULTS.md'`` → ``'default'``
+    """
+    stem = Path(remote_filename).stem
+    if stem == "RESULTS":
+        return "default"
+    return stem.replace("RESULTS_", "", 1)
 
 
 def _truncate_name(name: str, max_len: int = 30) -> str:
@@ -1024,10 +1031,14 @@ def push_results_to_branch(
 
                     if merged:
                         # Rewrite local file with merged data
-                        # Determine column order: local headers first, then extra remote-only
+                        # Only keep headers that are known metric titles or meta columns.
+                        known_titles = {
+                            c['title']
+                            for c in MarkdownTableGenerator.DEFAULT_METRIC_CONFIGS
+                        } | {'Tokenizer', 'Dataset', 'User', 'Date'}
                         all_headers = list(local_headers) if local_headers else []
                         for h in remote_headers:
-                            if h not in all_headers:
+                            if h not in all_headers and h in known_titles:
                                 all_headers.append(h)
 
                         data_headers = [h for h in all_headers if h != 'Tokenizer']
@@ -1068,6 +1079,12 @@ def push_results_to_branch(
                         logger.info(
                             f"Merged remote rows into local {remote_filename} before pushing"
                         )
+                        try:
+                            generate_bar_plots_from_markdown(filepath)
+                        except Exception as exc:
+                            logger.warning(
+                                "Bar plot regeneration after remote merge failed: %s", exc
+                            )
 
         # Get parent commit SHA for the branch (if it exists)
         rev_result = _run_git(
@@ -1119,6 +1136,14 @@ def push_results_to_branch(
                 tree_entries.append(
                     f"040000 tree {subtree.stdout.strip()}\t{plot_dirname}"
                 )
+        elif skip_merge:
+            # Removal path: if no new plot_dir was provided, drop the stale
+            # plot subtree that corresponds to this results file.
+            stale_dirname = _plots_dirname_for_remote_filename(remote_filename)
+            tree_entries = [
+                e for e in tree_entries
+                if e.split('\t', 1)[1] != stale_dirname
+            ]
 
         tree_input = '\n'.join(tree_entries)
         tree_result = _run_git('mktree', stdin=tree_input)

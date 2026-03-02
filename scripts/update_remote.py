@@ -29,6 +29,7 @@ import getpass
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -38,6 +39,7 @@ from typing import List, Optional
 from tokenizer_analysis.visualization.markdown_tables import (
     MarkdownTableGenerator,
     _plots_dir_for_results_file,
+    generate_bar_plots_from_markdown,
     push_results_to_branch,
     results_filename,
     _run_git,
@@ -293,10 +295,11 @@ def remove_my_results(
         row = [key] + [row_map.get(h, '---') for h in data_headers]
         table_rows.append(row)
 
-    # Write cleaned file to temp location
-    with tempfile.NamedTemporaryFile(
-        mode='w', suffix='.md', delete=False
-    ) as tmp:
+    # Write cleaned file to a temp directory using the real remote_filename
+    # so that _plots_dir_for_results_file() derives the correct plot subdir.
+    tmp_dir = tempfile.mkdtemp()
+    try:
+        tmp_path = os.path.join(tmp_dir, remote_filename)
         if table_rows:
             md = MarkdownTableGenerator._render_markdown(
                 full_headers, separator, table_rows
@@ -305,10 +308,16 @@ def remove_my_results(
             md = MarkdownTableGenerator._render_markdown(
                 full_headers, separator, []
             )
-        tmp.write(md)
-        tmp_path = tmp.name
+        Path(tmp_path).write_text(md, encoding='utf-8')
 
-    try:
+        # Regenerate bar plots from the cleaned markdown (if rows remain)
+        plot_dir = None
+        if table_rows:
+            try:
+                plot_dir = generate_bar_plots_from_markdown(tmp_path)
+            except Exception as e:
+                logger.warning(f"Bar plot generation failed during removal: {e}")
+
         success = push_results_to_branch(
             filepath=tmp_path,
             remote=remote,
@@ -316,9 +325,10 @@ def remove_my_results(
             commit_message=f"Remove results for user '{username}' from {remote_filename}",
             skip_merge=True,
             remote_filename=remote_filename,
+            plot_dir=plot_dir,
         )
     finally:
-        os.unlink(tmp_path)
+        shutil.rmtree(tmp_dir)
 
     return success
 

@@ -52,10 +52,11 @@ class UnifiedTokenizerAnalyzer:
                  plot_tokenizers: Optional[List[str]] = None,
                  per_language_plots: bool = False,
                  faceted_plots: bool = False,
-                 code_ast_config: Optional[Dict[str, str]] = None):
+                 code_ast_config: Optional[Dict[str, str]] = None,
+                 math_data_path: Optional[str] = None):
         """
         Initialize unified analyzer.
-        
+
         Args:
             input_provider: InputProvider instance with tokenized data
             measurement_config: Configuration for text measurement method
@@ -67,6 +68,7 @@ class UnifiedTokenizerAnalyzer:
             plot_tokenizers: Optional list of tokenizer names to include in plots
             per_language_plots: Whether to generate per-language plots
             faceted_plots: Whether to generate faceted plots (one subplot per tokenizer)
+            math_data_path: Optional path to math-rich text file for digit boundary metrics
         """
         # Validate input provider
         validation_report = InputValidator.validate_input_provider(input_provider)
@@ -126,7 +128,9 @@ class UnifiedTokenizerAnalyzer:
                 logger.warning(f"MorphScore metrics disabled: {e}")
 
         # Initialize digit boundary metrics (always available -- no external data)
-        self.digit_boundary_metrics = DigitBoundaryMetrics(input_provider)
+        self.digit_boundary_metrics = DigitBoundaryMetrics(
+            input_provider, math_data_path=math_data_path
+        )
 
         # Initialize UTF-8 integrity metrics (always available -- no external data)
         self.utf8_integrity_metrics = UTF8IntegrityMetrics(input_provider)

@@ -292,6 +292,57 @@ class TestClassifyMalformation:
 
 
 # ===================================================================
+# _crosses_character_boundary
+# ===================================================================
+
+class TestCrossesCharacterBoundary:
+
+    def test_single_byte_never_crosses(self, inst):
+        assert inst._crosses_character_boundary(b"\xc3") is False
+        assert inst._crosses_character_boundary(b"\xa9") is False
+        assert inst._crosses_character_boundary(b"a") is False
+
+    def test_empty_never_crosses(self, inst):
+        assert inst._crosses_character_boundary(b"") is False
+
+    def test_complete_ascii_no_crossing(self, inst):
+        assert inst._crosses_character_boundary(b"hello") is False
+
+    def test_complete_multibyte_no_crossing(self, inst):
+        # Complete é (C3 A9) — one char, complete
+        assert inst._crosses_character_boundary(b"\xc3\xa9") is False
+
+    def test_multiple_complete_chars_no_crossing(self, inst):
+        # "aé" — two complete chars
+        assert inst._crosses_character_boundary(b"a\xc3\xa9") is False
+
+    def test_continuation_then_leader_crosses(self, inst):
+        # A9 (tail of é) + E4 (lead of 你) — two chars, both incomplete
+        assert inst._crosses_character_boundary(b"\xa9\xe4") is True
+
+    def test_complete_char_plus_orphan_crosses(self, inst):
+        # "a" + A9 (orphan continuation) — two chars, second is incomplete
+        assert inst._crosses_character_boundary(b"a\xa9") is True
+
+    def test_leader_plus_non_continuation_crosses(self, inst):
+        # C3 (lead of 2-byte) + 41 ('A') — two chars, first is incomplete
+        assert inst._crosses_character_boundary(b"\xc3\x41") is True
+
+    def test_full_boundary_crossing_example(self, inst):
+        # A9 E4 — tail of é merged with lead of CJK char
+        assert inst._crosses_character_boundary(b"\xa9\xe4") is True
+
+    def test_two_orphan_continuations_crosses(self, inst):
+        # A9 BD — two orphan continuation bytes, each an incomplete char
+        assert inst._crosses_character_boundary(b"\xa9\xbd") is True
+
+    def test_byte_fallback_single_does_not_cross(self, inst):
+        # Single-byte tokens from byte fallback never cross
+        for b in [0xC3, 0xA9, 0xE4, 0xBD, 0xA0]:
+            assert inst._crosses_character_boundary(bytes([b])) is False
+
+
+# ===================================================================
 # _align_byte_sequences
 # ===================================================================
 
@@ -485,8 +536,8 @@ class TestComputeEndToEnd:
         results = metrics.compute(data)
 
         integrity = results['utf8_token_integrity']['summary']['good_tok']
-        assert integrity['integrity_rate'] == 1.0
-        assert integrity['total_invalid_tokens'] == 0
+        assert integrity['completeness_rate'] == 1.0
+        assert integrity['total_incomplete_tokens'] == 0
 
         char_split = results['utf8_char_split']['summary']['good_tok']
         assert char_split['total_splits'] == 0
@@ -503,8 +554,8 @@ class TestComputeEndToEnd:
 
         integrity = results['utf8_token_integrity']['summary']['bad_tok']
         # Token "caf" is valid, "<0xC3>" alone is invalid, "<0xA9>" alone is invalid
-        assert integrity['integrity_rate'] < 1.0
-        assert integrity['total_invalid_tokens'] == 2
+        assert integrity['completeness_rate'] < 1.0
+        assert integrity['total_incomplete_tokens'] == 2
 
         char_split = results['utf8_char_split']['summary']['bad_tok']
         assert char_split['total_splits'] > 0
@@ -524,6 +575,46 @@ class TestComputeEndToEnd:
         assert integrity['trailing_incomplete'] == 1
         assert integrity['orphan_continuation'] == 1
 
+    def test_byte_fallback_no_boundary_crossings(self):
+        """Single-byte fallback tokens are incomplete but do NOT cross boundaries."""
+        tok = MockTokenizer({0: "caf", 1: "<0xC3>", 2: "<0xA9>"})
+        prov = MockProvider("bf_tok", tok)
+        metrics = UTF8IntegrityMetrics(prov)
+
+        data = self._make_data("bf_tok", "café", [0, 1, 2])
+        results = metrics.compute(data)
+
+        integrity = results['utf8_token_integrity']['summary']['bf_tok']
+        assert integrity['total_incomplete_tokens'] == 2
+        # Single-byte tokens don't cross boundaries
+        assert integrity['boundary_crossings'] == 0
+        assert integrity['boundary_crossing_rate'] == 0.0
+
+    def test_boundary_crossing_token(self):
+        """A token whose bytes span two incomplete chars crosses a boundary."""
+        # Token 0: bytes A9 E4 — tail of é (A9) + lead of 你 (E4)
+        # This is a BPE merge across a character boundary.
+        # We need a non-GPT-2 tokenizer where _token_string_to_bytes
+        # produces these raw bytes. Use byte-fallback-style but as a
+        # 2-char token won't work since it would UTF-8-encode.
+        # Instead: construct via GPT-2 path where we control exact bytes.
+        ch_a9 = _GPT2_BYTE_TO_UNICODE[0xA9]
+        ch_e4 = _GPT2_BYTE_TO_UNICODE[0xE4]
+
+        tok = GPT2MockTokenizer({
+            0: f"{ch_a9}{ch_e4}",  # bytes: A9 E4 — crosses boundary
+        })
+        prov = MockProvider("cross_tok", tok)
+        metrics = UTF8IntegrityMetrics(prov)
+
+        # Source text doesn't matter much for this test, but provide something
+        data = self._make_data("cross_tok", "x", [0])
+        results = metrics.compute(data)
+
+        integrity = results['utf8_token_integrity']['summary']['cross_tok']
+        assert integrity['boundary_crossings'] == 1
+        assert integrity['boundary_crossing_rate'] > 0.0
+
     def test_ascii_only_text(self):
         """ASCII-only text -> integrity=1.0, splits=0 for any tokenizer."""
         tok = MockTokenizer({0: "hello", 1: "\u0120world"})
@@ -534,7 +625,7 @@ class TestComputeEndToEnd:
         results = metrics.compute(data)
 
         integrity = results['utf8_token_integrity']['summary']['ascii_tok']
-        assert integrity['integrity_rate'] == 1.0
+        assert integrity['completeness_rate'] == 1.0
 
         char_split = results['utf8_char_split']['summary']['ascii_tok']
         assert char_split['total_splits'] == 0
@@ -551,7 +642,7 @@ class TestComputeEndToEnd:
         results = metrics.compute(data)
 
         integrity = results['utf8_token_integrity']['summary']['cjk_tok']
-        assert integrity['integrity_rate'] == 1.0
+        assert integrity['completeness_rate'] == 1.0
 
         char_split = results['utf8_char_split']['summary']['cjk_tok']
         assert char_split['total_splits'] == 0
@@ -567,7 +658,7 @@ class TestComputeEndToEnd:
         results = metrics.compute(data)
 
         integrity = results['utf8_token_integrity']['summary']['cjk_bad']
-        assert integrity['integrity_rate'] < 1.0
+        assert integrity['completeness_rate'] < 1.0
 
         char_split = results['utf8_char_split']['summary']['cjk_bad']
         assert char_split['total_splits'] == 1
@@ -609,8 +700,8 @@ class TestComputeEndToEnd:
         # Without GPT-2 detection, "Ã" and "©" would each appear as valid UTF-8.
         # WITH GPT-2 detection, they map to bytes 0xC3 and 0xA9 respectively,
         # which are individually invalid UTF-8.
-        assert integrity['integrity_rate'] < 1.0
-        assert integrity['total_invalid_tokens'] == 2
+        assert integrity['completeness_rate'] < 1.0
+        assert integrity['total_incomplete_tokens'] == 2
 
         char_split = results['utf8_char_split']['summary']['gpt2_tok']
         assert char_split['total_splits'] == 1
@@ -631,8 +722,8 @@ class TestComputeEndToEnd:
         results = metrics.compute(data)
 
         integrity = results['utf8_token_integrity']['summary']['gpt2_good']
-        assert integrity['integrity_rate'] == 1.0
-        assert integrity['total_invalid_tokens'] == 0
+        assert integrity['completeness_rate'] == 1.0
+        assert integrity['total_incomplete_tokens'] == 0
 
         char_split = results['utf8_char_split']['summary']['gpt2_good']
         assert char_split['total_splits'] == 0

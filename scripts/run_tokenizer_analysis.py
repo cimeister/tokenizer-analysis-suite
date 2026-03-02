@@ -510,6 +510,14 @@ Examples:
         help="Skip digit boundary alignment, cross-number boundary entropy, numeric magnitude consistency, and operator isolation analysis"
     )
     parser.add_argument(
+        "--math-data",
+        type=str,
+        help="Path to math-rich text file (.txt or .json) for digit boundary metrics. "
+             "When provided, this data is tokenized per-tokenizer and used instead of "
+             "the general dataset for digit boundary, cross-number entropy, numeric "
+             "magnitude consistency, and operator isolation metrics."
+    )
+    parser.add_argument(
         "--code-ast-config",
         type=str,
         help="JSON file mapping programming languages to code file/directory paths for AST boundary analysis"
@@ -675,7 +683,8 @@ Examples:
             code_ast_config=code_ast_config,
             show_global_lines=not args.no_global_lines,
             per_language_plots=args.per_language_plots,
-            faceted_plots=args.faceted_plots
+            faceted_plots=args.faceted_plots,
+            math_data_path=args.math_data
         )
     else:
         # Raw tokenizer mode
@@ -719,7 +728,8 @@ Examples:
             code_ast_config=code_ast_config,
             show_global_lines=not args.no_global_lines,
             per_language_plots=args.per_language_plots,
-            faceted_plots=args.faceted_plots
+            faceted_plots=args.faceted_plots,
+            math_data_path=args.math_data
         )
     if args.test:
         logger.warning("Test methods not yet updated for unified system")

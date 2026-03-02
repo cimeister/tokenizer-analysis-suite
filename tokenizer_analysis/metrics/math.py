@@ -21,6 +21,7 @@ Four failure modes are measured here:
    isolated units?
 """
 
+import json
 import math
 import re
 from collections import defaultdict
@@ -81,6 +82,51 @@ class DigitBoundaryMetrics(BaseMetrics):
     for _cat, _ops in _OPERATOR_CATEGORIES.items():
         for _op in _ops:
             _OPERATOR_TO_CATEGORY[_op] = _cat
+
+    # ------------------------------------------------------------------
+    # Constructor
+    # ------------------------------------------------------------------
+
+    def __init__(
+        self,
+        input_provider: InputProvider,
+        math_data_path: Optional[str] = None,
+    ):
+        super().__init__(input_provider)
+        self._math_data_path = math_data_path
+        self._math_texts: List[str] = []
+        if math_data_path:
+            self._math_texts = self._load_math_data(math_data_path)
+            logger.info(
+                "Loaded %d math texts from %s", len(self._math_texts), math_data_path
+            )
+
+    @staticmethod
+    def _load_math_data(path: str) -> List[str]:
+        """Load math-rich text from a file.
+
+        Supported formats:
+
+        * ``.json`` -- expects ``{"texts": ["...", ...]}`` or a bare list
+          of strings.
+        * ``.txt`` / other -- reads non-empty lines.
+        """
+        if path.endswith(".json"):
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                texts = [str(t) for t in data if str(t).strip()]
+            elif isinstance(data, dict) and "texts" in data:
+                texts = [str(t) for t in data["texts"] if str(t).strip()]
+            else:
+                raise ValueError(
+                    f"JSON math data must be a list of strings or "
+                    f'{{"texts": [...]}}; got {type(data).__name__}'
+                )
+        else:
+            with open(path, "r", encoding="utf-8") as f:
+                texts = [line.strip() for line in f if line.strip()]
+        return texts
 
     # ------------------------------------------------------------------
     # Digit-span boundary extraction
@@ -285,11 +331,36 @@ class DigitBoundaryMetrics(BaseMetrics):
         """Compute digit boundary alignment, cross-number boundary entropy,
         numeric magnitude consistency, and operator isolation rate.
 
+        When *math_data_path* was provided at construction time, this method
+        tokenizes the loaded math texts with each tokenizer and uses that
+        data **instead of** the ``tokenized_data`` parameter.
+
         Returns a dict with four top-level keys:
         ``three_digit_boundary_alignment``, ``cross_number_boundary_entropy``,
         ``numeric_magnitude_consistency``, and ``operator_isolation_rate``.
         """
-        if tokenized_data is None:
+        if self._math_texts:
+            # Build tokenized data from the dedicated math texts.
+            tokenized_data = {}
+            for tok_name in self.tokenizer_names:
+                tokenizer_obj = self.input_provider.get_tokenizer(tok_name)
+                items: List[TokenizedData] = []
+                for text in self._math_texts:
+                    tokens = tokenizer_obj.encode(text)
+                    items.append(
+                        TokenizedData(
+                            tokenizer_name=tok_name,
+                            language="math",
+                            tokens=tokens,
+                            text=text,
+                        )
+                    )
+                tokenized_data[tok_name] = items
+            logger.info(
+                "Using %d dedicated math texts for digit boundary metrics",
+                len(self._math_texts),
+            )
+        elif tokenized_data is None:
             tokenized_data = self.input_provider.get_tokenized_data()
 
         # ---- accumulators ----

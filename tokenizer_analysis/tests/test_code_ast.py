@@ -1423,6 +1423,130 @@ class TestIndentationConsistencyE2E:
         py = indent["per_tokenizer"]["perf"]["by_language"]["python"]
         assert py["pattern_stability_rate"] == pytest.approx(1.0)
 
+    def test_depth_corr_zero_for_constant_ws_tokens(self, ts_pack):
+        """When the tokenizer produces exactly 1 ws token at every depth,
+        num_ws_tokens is constant → Spearman ρ is 0.0."""
+        snippet = (
+            'if True:\n'
+            '    a = 1\n'
+            '    if True:\n'
+            '        b = 2\n'
+            '        if True:\n'
+            '            c = 3\n'
+        )
+        # Single ws token per indented line regardless of width:
+        #   "    " → "Ġ   " (1 token), "        " → "Ġ       " (1 token),
+        #   "            " → "Ġ           " (1 token)
+        tokens = [
+            "if", "ĠTrue", "Ġ:", "\n",
+            "Ġ   ", "a", "Ġ=", "Ġ1", "\n",
+            "Ġ   ", "if", "ĠTrue", "Ġ:", "\n",
+            "Ġ       ", "b", "Ġ=", "Ġ2", "\n",
+            "Ġ       ", "if", "ĠTrue", "Ġ:", "\n",
+            "Ġ           ", "c", "Ġ=", "Ġ3", "\n",
+        ]
+        tok = _PerfectTokenizer({snippet: tokens})
+        provider = _MockProvider("const_ws", tok)
+
+        inst = object.__new__(ASTBoundaryMetrics)
+        inst._tokenizer_vocab_cache = {}
+        inst._warned_tokenizers = set()
+        inst._treesitter_available = True
+        inst._ts_pack = ts_pack
+        inst._parser_cache = {}
+        inst.input_provider = provider
+        inst.tokenizer_names = ["const_ws"]
+        inst.max_snippets_per_lang = 1
+
+        loader = CodeDataLoader()
+        loader.code_snippets = {"python": [snippet]}
+        inst.code_loader = loader
+
+        result = inst.compute()
+        indent = result["indentation_consistency"]
+        py = indent["per_tokenizer"]["const_ws"]["by_language"]["python"]
+        # Constant num_ws_tokens → correlation should be 0.0
+        assert py["depth_proportionality_correlation"] == pytest.approx(0.0)
+
+    def test_depth_corr_negative_for_inverse_tokenizer(self, ts_pack):
+        """When deeper indentation uses *fewer* tokens, correlation is negative."""
+        snippet = (
+            'if True:\n'
+            '    a = 1\n'
+            '    if True:\n'
+            '        b = 2\n'
+            '        if True:\n'
+            '            c = 3\n'
+        )
+        # Inverse: depth 1 (4 sp) → 3 ws tokens, depth 2 (8 sp) → 2 ws tokens,
+        # depth 3 (12 sp) → 1 ws token
+        tokens = [
+            "if", "ĠTrue", "Ġ:", "\n",
+            "Ġ", " ", " ", "a", "Ġ=", "Ġ1", "\n",
+            "Ġ", " ", " ", "if", "ĠTrue", "Ġ:", "\n",
+            "Ġ   ", "Ġ   ", "b", "Ġ=", "Ġ2", "\n",
+            "Ġ   ", "Ġ   ", "if", "ĠTrue", "Ġ:", "\n",
+            "Ġ           ", "c", "Ġ=", "Ġ3", "\n",
+        ]
+        tok = _PerfectTokenizer({snippet: tokens})
+        provider = _MockProvider("inv", tok)
+
+        inst = object.__new__(ASTBoundaryMetrics)
+        inst._tokenizer_vocab_cache = {}
+        inst._warned_tokenizers = set()
+        inst._treesitter_available = True
+        inst._ts_pack = ts_pack
+        inst._parser_cache = {}
+        inst.input_provider = provider
+        inst.tokenizer_names = ["inv"]
+        inst.max_snippets_per_lang = 1
+
+        loader = CodeDataLoader()
+        loader.code_snippets = {"python": [snippet]}
+        inst.code_loader = loader
+
+        result = inst.compute()
+        indent = result["indentation_consistency"]
+        py = indent["per_tokenizer"]["inv"]["by_language"]["python"]
+        assert py["depth_proportionality_correlation"] is not None
+        assert py["depth_proportionality_correlation"] < 0.0
+
+    def test_depth_corr_none_with_fewer_than_3_depths(self, ts_pack):
+        """With only 2 distinct depth levels, correlation should be None."""
+        snippet = (
+            'if True:\n'
+            '    a = 1\n'
+            '    b = 2\n'
+        )
+        tokens = [
+            "if", "ĠTrue", "Ġ:", "\n",
+            "Ġ   ", "a", "Ġ=", "Ġ1", "\n",
+            "Ġ   ", "b", "Ġ=", "Ġ2", "\n",
+        ]
+        tok = _PerfectTokenizer({snippet: tokens})
+        provider = _MockProvider("shallow", tok)
+
+        inst = object.__new__(ASTBoundaryMetrics)
+        inst._tokenizer_vocab_cache = {}
+        inst._warned_tokenizers = set()
+        inst._treesitter_available = True
+        inst._ts_pack = ts_pack
+        inst._parser_cache = {}
+        inst.input_provider = provider
+        inst.tokenizer_names = ["shallow"]
+        inst.max_snippets_per_lang = 1
+
+        loader = CodeDataLoader()
+        loader.code_snippets = {"python": [snippet]}
+        inst.code_loader = loader
+
+        result = inst.compute()
+        indent = result["indentation_consistency"]
+        py = indent["per_tokenizer"]["shallow"]["by_language"]["python"]
+        # Only 2 depth levels (0 is excluded since depth=0 lines have no ws)
+        # → correlation should be None
+        assert py["depth_proportionality_correlation"] is None
+
     def test_depth_proportionality_high_for_proportional_tokenizer(self, ts_pack):
         """A tokenizer that uses proportional tokens for deeper indentation
         should have a high depth-proportionality correlation."""

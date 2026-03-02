@@ -203,6 +203,87 @@ class UTF8IntegrityMetrics(BaseMetrics):
             return False
 
     @staticmethod
+    def _crosses_character_boundary(data: bytes) -> bool:
+        """Return True if *data* contains bytes from more than one UTF-8
+        character and at least one of those characters is incomplete.
+
+        A boundary-crossing token is the product of a BPE merge that fused
+        bytes across a character boundary.  For example, ``b'\\xa9\\xe4'``
+        contains the tail of one character and the lead of another —
+        neither is complete.
+
+        Single-byte tokens and tokens that decode cleanly as one or more
+        complete characters do NOT cross a boundary.
+        """
+        if len(data) <= 1:
+            return False
+
+        # Walk the bytes and identify character fragments.
+        char_count = 0
+        has_incomplete = False
+        i = 0
+        n = len(data)
+
+        while i < n:
+            b = data[i]
+            if b < 0x80:
+                # ASCII — always complete
+                char_count += 1
+                i += 1
+            elif 0x80 <= b <= 0xBF:
+                # Orphan continuation byte — incomplete fragment
+                has_incomplete = True
+                char_count += 1
+                i += 1
+            elif 0xC0 <= b <= 0xDF:
+                expected = 2
+                available = min(expected, n - i)
+                # Check that all following bytes are continuations
+                actual = 1
+                for k in range(1, available):
+                    if 0x80 <= data[i + k] <= 0xBF:
+                        actual += 1
+                    else:
+                        break
+                char_count += 1
+                if actual < expected:
+                    has_incomplete = True
+                i += actual
+            elif 0xE0 <= b <= 0xEF:
+                expected = 3
+                available = min(expected, n - i)
+                actual = 1
+                for k in range(1, available):
+                    if 0x80 <= data[i + k] <= 0xBF:
+                        actual += 1
+                    else:
+                        break
+                char_count += 1
+                if actual < expected:
+                    has_incomplete = True
+                i += actual
+            elif 0xF0 <= b <= 0xF7:
+                expected = 4
+                available = min(expected, n - i)
+                actual = 1
+                for k in range(1, available):
+                    if 0x80 <= data[i + k] <= 0xBF:
+                        actual += 1
+                    else:
+                        break
+                char_count += 1
+                if actual < expected:
+                    has_incomplete = True
+                i += actual
+            else:
+                # Invalid byte (0xF8+)
+                has_incomplete = True
+                char_count += 1
+                i += 1
+
+        return char_count > 1 and has_incomplete
+
+    @staticmethod
     def _classify_malformation(data: bytes) -> Optional[str]:
         """Classify the type of UTF-8 malformation in *data*.
 
@@ -422,11 +503,13 @@ class UTF8IntegrityMetrics(BaseMetrics):
             tokenized_data = self.input_provider.get_tokenized_data()
 
         # Accumulators
-        # integrity: tok -> lang -> {valid, total, trailing_incomplete, orphan_continuation}
+        # integrity: tok -> lang -> {valid, total, trailing_incomplete,
+        #                            orphan_continuation, boundary_crossings}
         integrity_acc: Dict[str, Dict[str, Dict[str, int]]] = defaultdict(
             lambda: defaultdict(
                 lambda: {'valid': 0, 'total': 0,
-                         'trailing_incomplete': 0, 'orphan_continuation': 0}
+                         'trailing_incomplete': 0, 'orphan_continuation': 0,
+                         'boundary_crossings': 0}
             )
         )
         # splits: tok -> lang -> {splits, multibyte, chars, tokens, mismatches,
@@ -474,7 +557,7 @@ class UTF8IntegrityMetrics(BaseMetrics):
                     if total == 0:
                         continue
 
-                    # --- Metric 1: Token Integrity ---
+                    # --- Metric 1: Token Completeness & Boundary Crossings ---
                     iacc = integrity_acc[tok_name][lang]
                     valid = 0
                     for _, b in token_bytes_list:
@@ -486,6 +569,8 @@ class UTF8IntegrityMetrics(BaseMetrics):
                                 iacc['trailing_incomplete'] += 1
                             elif mtype == 'orphan_continuation':
                                 iacc['orphan_continuation'] += 1
+                            if self._crosses_character_boundary(b):
+                                iacc['boundary_crossings'] += 1
                     iacc['valid'] += valid
                     iacc['total'] += total
 
@@ -532,8 +617,8 @@ class UTF8IntegrityMetrics(BaseMetrics):
             'summary': {},
             'metadata': {
                 'description': (
-                    'Fraction of content tokens whose bytes form valid, '
-                    'complete UTF-8 sequences.'
+                    'Fraction of content tokens whose bytes form complete '
+                    'UTF-8 characters, plus boundary-crossing token counts.'
                 ),
             },
         }
@@ -544,40 +629,49 @@ class UTF8IntegrityMetrics(BaseMetrics):
             global_total = 0
             global_trailing = 0
             global_orphan = 0
+            global_crossings = 0
 
             for lang in sorted(acc.get(tok_name, {})):
                 d = acc[tok_name][lang]
                 v, t = d['valid'], d['total']
                 ti, oc = d['trailing_incomplete'], d['orphan_continuation']
+                bc = d['boundary_crossings']
                 per_lang[lang] = {
-                    'integrity_rate': v / t if t > 0 else 1.0,
-                    'total_invalid_tokens': t - v,
+                    'completeness_rate': v / t if t > 0 else 1.0,
+                    'total_incomplete_tokens': t - v,
                     'total_content_tokens': t,
                     'trailing_incomplete': ti,
                     'orphan_continuation': oc,
+                    'boundary_crossings': bc,
+                    'boundary_crossing_rate': bc / t if t > 0 else 0.0,
                 }
                 global_valid += v
                 global_total += t
                 global_trailing += ti
                 global_orphan += oc
+                global_crossings += bc
 
             results['per_tokenizer'][tok_name] = {
                 'global': {
-                    'integrity_rate': global_valid / global_total if global_total > 0 else 1.0,
-                    'total_invalid_tokens': global_total - global_valid,
+                    'completeness_rate': global_valid / global_total if global_total > 0 else 1.0,
+                    'total_incomplete_tokens': global_total - global_valid,
                     'total_content_tokens': global_total,
                     'trailing_incomplete': global_trailing,
                     'orphan_continuation': global_orphan,
+                    'boundary_crossings': global_crossings,
+                    'boundary_crossing_rate': global_crossings / global_total if global_total > 0 else 0.0,
                 },
                 'per_language': per_lang,
             }
 
             results['summary'][tok_name] = {
-                'integrity_rate': global_valid / global_total if global_total > 0 else 1.0,
-                'total_invalid_tokens': global_total - global_valid,
+                'completeness_rate': global_valid / global_total if global_total > 0 else 1.0,
+                'total_incomplete_tokens': global_total - global_valid,
                 'total_content_tokens': global_total,
                 'trailing_incomplete': global_trailing,
                 'orphan_continuation': global_orphan,
+                'boundary_crossings': global_crossings,
+                'boundary_crossing_rate': global_crossings / global_total if global_total > 0 else 0.0,
                 'languages_analyzed': len(per_lang),
             }
 
@@ -678,11 +772,11 @@ class UTF8IntegrityMetrics(BaseMetrics):
     # ------------------------------------------------------------------
 
     def print_results(self, results: Dict[str, Any]) -> None:
-        """Print UTF-8 integrity results."""
+        """Print UTF-8 completeness and boundary crossing results."""
         integrity = results.get('utf8_token_integrity')
         if integrity and 'summary' in integrity:
             print("\n" + "=" * 60)
-            print("UTF-8 TOKEN BOUNDARY INTEGRITY RESULTS")
+            print("UTF-8 TOKEN COMPLETENESS & BOUNDARY CROSSING RESULTS")
             print("=" * 60)
             print("\nSUMMARY STATISTICS")
             print("-" * 40)
@@ -690,10 +784,12 @@ class UTF8IntegrityMetrics(BaseMetrics):
                 if tok_name in integrity['summary']:
                     s = integrity['summary'][tok_name]
                     print(f"{tok_name}:")
-                    print(f"  {'Integrity Rate':25}: {s['integrity_rate']:.4f}")
-                    print(f"  {'Invalid Tokens':25}: {s['total_invalid_tokens']:,}")
+                    print(f"  {'Completeness Rate':25}: {s['completeness_rate']:.4f}")
+                    print(f"  {'Incomplete Tokens':25}: {s['total_incomplete_tokens']:,}")
                     print(f"  {'  Trailing Incomplete':25}: {s.get('trailing_incomplete', 0):,}")
                     print(f"  {'  Orphan Continuation':25}: {s.get('orphan_continuation', 0):,}")
+                    print(f"  {'Boundary Crossings':25}: {s.get('boundary_crossings', 0):,}")
+                    print(f"  {'Boundary Crossing Rate':25}: {s.get('boundary_crossing_rate', 0.0):.4f}")
                     print(f"  {'Content Tokens':25}: {s['total_content_tokens']:,}")
                     print(f"  {'Languages':25}: {s['languages_analyzed']}")
 
