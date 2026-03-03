@@ -11,13 +11,24 @@
       "class": "custom_bpe",
       "path": "tokenizers/PA_BPE_tokenizers/128k/unbalanced/30languages/30languages-parity-hybrid-63936-255744"
     },
-    "Gemma 3 (262k)":{
+    "Gemma 3":{
         "class": "hf",
       "path": "google/gemma-3-1b-it"
     },
-    "Qwen 3 (151k)":{
+    "Qwen 3":{
         "class": "hf",
       "path": "Qwen/Qwen3-8B"
+    },
+   "Qwen 3.5":{
+        "class": "hf",
+      "path": "Qwen/Qwen3.5-35B-A3B"},
+    "GPT-4":{
+        "class": "hf",
+      "path": "tokenizers/gpt_4_hf.json"
+    },
+    "GPT-4o":{
+        "class": "hf",
+      "path": "tokenizers/gpt_4o_hf.json"
     },
     "Mistral-Nemo":{
         "class": "hf",
@@ -27,19 +38,53 @@
         "class": "hf",
       "path": "deepseek-ai/DeepSeek-R1"
     },
-    "Kimi (160k)":{
+ "Cohere Command R": {
+        "class": "hf",
+      "path": "CohereLabs/c4ai-command-r-plus"},
+    "Kimi":{
         "class": "hf",
       "path": "moonshotai/Kimi-K2-Instruct-0905"
     },
-    "GLM (151k)": {
+    "GLM": {
         "class": "hf",
       "path": "THUDM/glm-4-9b-chat"
     },
-    "GPT OSS (201k)": {
+    "GPT OSS": {
         "class": "hf",
       "path": "openai/gpt-oss-120b"
     },
     "Apertus": {
         "class": "hf",
-      "path": "swiss-ai/Apertus-8B-2509"}
+      "path": "swiss-ai/Apertus-8B-2509"},
+      "SuperBPE default regex": {
+        "class": "hf",
+      "path": "test_tokenizers/superbpe.json"
+},
+"DeepSeek V3":{"class": "hf",
+	"path": "deepseek-ai/DeepSeek-V3"
+},
+"SuperBPE Apertus regex": {
+        "class": "hf",
+      "path": "test_tokenizers/superbpe_new_reg.json"
+},
+"SuperBPE qwen regex": {
+        "class": "hf",
+      "path": "test_tokenizers/superbpe_qwen_reg.json"
+},
+"SuperBPE math": {
+        "class": "hf",
+      "path": "test_tokenizers/superbpe_math.json"
+},
+"SuperBPE math new reg": {
+        "class": "hf",
+      "path": "test_tokenizers/superbpe_math_new_reg.json"
+},
+"PA BPE grouped": {
+        "class": "hf",
+      "path": "test_tokenizers/pabpe_grouped.json"
+},
+"PA BPE grouped math": {
+        "class": "hf",
+      "path": "test_tokenizers/pabpe_grouped_math.json"
+}
 }

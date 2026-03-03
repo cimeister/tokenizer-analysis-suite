@@ -289,7 +289,7 @@ For each number, compares actual token boundaries against ideal boundaries at po
 
 **Why it matters:** Singh & Strouse (2024) showed that right-to-left digit grouping improves arithmetic accuracy by ensuring corresponding digit positions across operands occupy consistent token positions.
 
-#### Cross-Number Boundary Pattern Entropy
+#### Digit Split Variability
 
 For numbers of the same digit length, measures Shannon entropy of the distribution of boundary patterns. Low entropy means the tokenizer uses a consistent splitting scheme; high entropy means chaotic splitting.
 

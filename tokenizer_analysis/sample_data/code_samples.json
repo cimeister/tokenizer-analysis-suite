@@ -1,0 +1,59 @@
+{
+  "python": [
+    "def fibonacci(n):\n    if n <= 1:\n        return n\n    result = fibonacci(n - 1) + fibonacci(n - 2)\n    return result\n\nclass Calculator:\n    PI = 3.14159\n    name = \"calc\"\n\n    def add(self, a, b):\n        return a + b\n\n    def is_positive(self, x):\n        return x > 0 and x != None\n\nvalues = [1, 2, 3]\ntotal = 0\nfor v in values:\n    total += v\nflag = True\n"
+  ],
+  "javascript": [
+    "function fibonacci(n) {\n    if (n <= 1) {\n        return n;\n    }\n    let result = fibonacci(n - 1) + fibonacci(n - 2);\n    const name = \"fib\";\n    return result;\n}\n\nclass Calculator {\n    constructor(precision) {\n        this.precision = precision;\n    }\n    add(a, b) {\n        return a + b;\n    }\n}\n\nconst values = [1, 2, 3];\nlet total = 0;\nfor (let i = 0; i < values.length; i++) {\n    total += values[i];\n}\n"
+  ],
+  "java": [
+    "public class Calculator {\n    static final double PI = 3.14159;\n    private String name = \"calc\";\n\n    public int fibonacci(int n) {\n        if (n <= 1) {\n            return n;\n        }\n        int result = fibonacci(n - 1) + fibonacci(n - 2);\n        return result;\n    }\n\n    public boolean isPositive(int x) {\n        return x > 0 && x != 0;\n    }\n\n    public static void main(String[] args) {\n        Calculator calc = new Calculator();\n        int[] values = {1, 2, 3};\n        int total = 0;\n        for (int v : values) {\n            total += v;\n        }\n    }\n}\n"
+  ],
+  "c": [
+    "#include <stdio.h>\n#include <stdbool.h>\n\nint fibonacci(int n) {\n    if (n <= 1) {\n        return n;\n    }\n    int result = fibonacci(n - 1) + fibonacci(n - 2);\n    return result;\n}\n\nbool is_positive(int x) {\n    return x > 0 && x != 0;\n}\n\nint main() {\n    int values[] = {1, 2, 3};\n    int total = 0;\n    const char* name = \"calc\";\n    for (int i = 0; i < 3; i++) {\n        total += values[i];\n    }\n    printf(\"total: %d\\n\", total);\n    return 0;\n}\n"
+  ],
+  "cpp": [
+    "#include <iostream>\n#include <string>\n#include <vector>\n\nclass Calculator {\npublic:\n    static constexpr double PI = 3.14159;\n    std::string name = \"calc\";\n\n    int fibonacci(int n) {\n        if (n <= 1) {\n            return n;\n        }\n        int result = fibonacci(n - 1) + fibonacci(n - 2);\n        return result;\n    }\n\n    bool isPositive(int x) {\n        return x > 0 && x != 0;\n    }\n};\n\nint main() {\n    Calculator calc;\n    std::vector<int> values = {1, 2, 3};\n    int total = 0;\n    for (auto v : values) {\n        total += v;\n    }\n    std::cout << total << std::endl;\n    return 0;\n}\n"
+  ],
+  "go": [
+    "package main\n\nimport \"fmt\"\n\nfunc fibonacci(n int) int {\n    if n <= 1 {\n        return n\n    }\n    result := fibonacci(n-1) + fibonacci(n-2)\n    return result\n}\n\nfunc isPositive(x int) bool {\n    return x > 0 && x != 0\n}\n\nfunc main() {\n    values := []int{1, 2, 3}\n    total := 0\n    name := \"calc\"\n    for _, v := range values {\n        total += v\n    }\n    fmt.Println(name, total)\n}\n"
+  ],
+  "rust": [
+    "fn fibonacci(n: u64) -> u64 {\n    if n <= 1 {\n        return n;\n    }\n    let result = fibonacci(n - 1) + fibonacci(n - 2);\n    return result;\n}\n\nfn is_positive(x: i32) -> bool {\n    x > 0 && x != 0\n}\n\nfn main() {\n    let values = vec![1, 2, 3];\n    let mut total = 0;\n    let name = \"calc\";\n    for v in &values {\n        total += v;\n    }\n    println!(\"{} {}\", name, total);\n}\n"
+  ],
+  "typescript": [
+    "function fibonacci(n: number): number {\n    if (n <= 1) {\n        return n;\n    }\n    let result: number = fibonacci(n - 1) + fibonacci(n - 2);\n    const name: string = \"fib\";\n    return result;\n}\n\nclass Calculator {\n    readonly PI: number = 3.14159;\n    add(a: number, b: number): number {\n        return a + b;\n    }\n}\n\nconst values: number[] = [1, 2, 3];\nlet total: number = 0;\nfor (let i = 0; i < values.length; i++) {\n    total += values[i];\n}\n"
+  ],
+  "php": [
+    "<?php\nfunction fibonacci(int $n): int {\n    if ($n <= 1) {\n        return $n;\n    }\n    $result = fibonacci($n - 1) + fibonacci($n - 2);\n    return $result;\n}\n\nclass Calculator {\n    const PI = 3.14159;\n    public string $name = \"calc\";\n\n    public function add(int $a, int $b): int {\n        return $a + $b;\n    }\n}\n\n$values = [1, 2, 3];\n$total = 0;\nforeach ($values as $v) {\n    $total += $v;\n}\necho $total;\n?>\n"
+  ],
+  "ruby": [
+    "def fibonacci(n)\n  if n <= 1\n    return n\n  end\n  result = fibonacci(n - 1) + fibonacci(n - 2)\n  return result\nend\n\nclass Calculator\n  PI = 3.14159\n  attr_accessor :name\n\n  def initialize\n    @name = \"calc\"\n  end\n\n  def add(a, b)\n    a + b\n  end\nend\n\nvalues = [1, 2, 3]\ntotal = 0\nvalues.each do |v|\n  total += v\nend\nflag = true\n"
+  ],
+  "csharp": [
+    "using System;\n\nclass Calculator {\n    const double PI = 3.14159;\n    string name = \"calc\";\n\n    int Fibonacci(int n) {\n        if (n <= 1) {\n            return n;\n        }\n        int result = Fibonacci(n - 1) + Fibonacci(n - 2);\n        return result;\n    }\n\n    bool IsPositive(int x) {\n        return x > 0 && x != 0;\n    }\n\n    static void Main() {\n        int[] values = {1, 2, 3};\n        int total = 0;\n        foreach (int v in values) {\n            total += v;\n        }\n        Console.WriteLine(total);\n    }\n}\n"
+  ],
+  "scala": [
+    "object Calculator {\n  val PI: Double = 3.14159\n  var name: String = \"calc\"\n\n  def fibonacci(n: Int): Int = {\n    if (n <= 1) {\n      return n\n    }\n    val result = fibonacci(n - 1) + fibonacci(n - 2)\n    result\n  }\n\n  def isPositive(x: Int): Boolean = {\n    x > 0 && x != 0\n  }\n\n  def main(args: Array[String]): Unit = {\n    val values = List(1, 2, 3)\n    var total = 0\n    for (v <- values) {\n      total += v\n    }\n    println(total)\n  }\n}\n"
+  ],
+  "swift": [
+    "func fibonacci(_ n: Int) -> Int {\n    if n <= 1 {\n        return n\n    }\n    let result = fibonacci(n - 1) + fibonacci(n - 2)\n    return result\n}\n\nclass Calculator {\n    let pi = 3.14159\n    var name = \"calc\"\n\n    func add(_ a: Int, _ b: Int) -> Int {\n        return a + b\n    }\n\n    func isPositive(_ x: Int) -> Bool {\n        return x > 0 && x != 0\n    }\n}\n\nlet values = [1, 2, 3]\nvar total = 0\nfor v in values {\n    total += v\n}\n"
+  ],
+  "kotlin": [
+    "fun fibonacci(n: Int): Int {\n    if (n <= 1) {\n        return n\n    }\n    val result = fibonacci(n - 1) + fibonacci(n - 2)\n    return result\n}\n\nclass Calculator {\n    val pi = 3.14159\n    var name = \"calc\"\n\n    fun add(a: Int, b: Int): Int {\n        return a + b\n    }\n\n    fun isPositive(x: Int): Boolean {\n        return x > 0 && x != 0\n    }\n}\n\nfun main() {\n    val values = listOf(1, 2, 3)\n    var total = 0\n    for (v in values) {\n        total += v\n    }\n    println(total)\n}\n"
+  ],
+  "lua": [
+    "function fibonacci(n)\n    if n <= 1 then\n        return n\n    end\n    local result = fibonacci(n - 1) + fibonacci(n - 2)\n    return result\nend\n\nCalculator = {}\nCalculator.PI = 3.14159\nCalculator.name = \"calc\"\n\nfunction Calculator.add(a, b)\n    return a + b\nend\n\nlocal values = {1, 2, 3}\nlocal total = 0\nfor _, v in ipairs(values) do\n    total = total + v\nend\nlocal flag = true\n"
+  ],
+  "r": [
+    "fibonacci <- function(n) {\n  if (n <= 1) {\n    return(n)\n  }\n  result <- fibonacci(n - 1) + fibonacci(n - 2)\n  return(result)\n}\n\nis_positive <- function(x) {\n  return(x > 0 && x != 0)\n}\n\nvalues <- c(1, 2, 3)\ntotal <- 0\nname <- \"calc\"\nfor (v in values) {\n  total <- total + v\n}\nflag <- TRUE\ncat(name, total, \"\\n\")\n"
+  ],
+  "perl": [
+    "use strict;\nuse warnings;\n\nsub fibonacci {\n    my ($n) = @_;\n    if ($n <= 1) {\n        return $n;\n    }\n    my $result = fibonacci($n - 1) + fibonacci($n - 2);\n    return $result;\n}\n\nmy @values = (1, 2, 3);\nmy $total = 0;\nmy $name = \"calc\";\nforeach my $v (@values) {\n    $total += $v;\n}\nprint \"$name $total\\n\";\n"
+  ],
+  "haskell": [
+    "module Main where\n\nfibonacci :: Int -> Int\nfibonacci n\n  | n <= 1    = n\n  | otherwise = fibonacci (n - 1) + fibonacci (n - 2)\n\nisPositive :: Int -> Bool\nisPositive x = x > 0 && x /= 0\n\nname :: String\nname = \"calc\"\n\nmain :: IO ()\nmain = do\n  let values = [1, 2, 3]\n  let total = sum values\n  putStrLn (name ++ \" \" ++ show total)\n"
+  ],
+  "bash": [
+    "#!/bin/bash\n\nfibonacci() {\n    local n=$1\n    if [ \"$n\" -le 1 ]; then\n        echo \"$n\"\n        return\n    fi\n    local a=$(fibonacci $((n - 1)))\n    local b=$(fibonacci $((n - 2)))\n    echo $((a + b))\n}\n\nvalues=(1 2 3)\ntotal=0\nname=\"calc\"\nfor v in \"${values[@]}\"; do\n    total=$((total + v))\ndone\necho \"$name $total\"\n"
+  ]
+}

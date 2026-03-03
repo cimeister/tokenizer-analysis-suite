@@ -1,5 +1,5 @@
 """
-Digit boundary alignment, cross-number boundary entropy, numeric magnitude
+Digit boundary alignment, digit split variability, numeric magnitude
 consistency, and operator isolation metrics.
 
 Based on Singh & Strouse (2024, arXiv:2402.14903), which showed that
@@ -12,7 +12,7 @@ Four failure modes are measured here:
 
 1. **Three-Digit Boundary Alignment Score** -- the tokenizer splits at the
    wrong positions inside a number.
-2. **Cross-Number Boundary Entropy** -- the tokenizer splits numbers of
+2. **Digit Split Variability** -- the tokenizer splits numbers of
    the same digit length at *different* positions depending on the
    specific digit values (value-dependent BPE merges).
 3. **Numeric Magnitude Consistency** -- does fertility (tokens per digit)
@@ -23,6 +23,7 @@ Four failure modes are measured here:
 
 import json
 import math
+import os
 import re
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -39,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 
 class DigitBoundaryMetrics(BaseMetrics):
-    """Digit boundary alignment and cross-number boundary entropy.
+    """Digit boundary alignment and digit split variability.
 
     Worked examples -- Three-Digit Boundary Alignment
     =============================================
@@ -56,7 +57,7 @@ class DigitBoundaryMetrics(BaseMetrics):
     * Tokenized as ``"42"``   -> actual {} -> P=1.0 R=1.0 F1=1.0
     * Tokenized as ``"4" "2"`` -> actual {1} -> P=0.0 R=1.0 F1=0.0
 
-    Worked examples -- Cross-Number Boundary Entropy
+    Worked examples -- Digit Split Variability
     =================================================
 
     L=4, numbers ``["1234","5678","9012","3456"]`` all tokenized as
@@ -87,10 +88,17 @@ class DigitBoundaryMetrics(BaseMetrics):
     # Constructor
     # ------------------------------------------------------------------
 
+    _BUILTIN_MATH_SAMPLES_PATH = os.path.join(
+        os.path.dirname(os.path.dirname(__file__)),
+        "sample_data",
+        "math_samples.json",
+    )
+
     def __init__(
         self,
         input_provider: InputProvider,
         math_data_path: Optional[str] = None,
+        use_builtin_math_data: bool = False,
     ):
         super().__init__(input_provider)
         self._math_data_path = math_data_path
@@ -99,6 +107,13 @@ class DigitBoundaryMetrics(BaseMetrics):
             self._math_texts = self._load_math_data(math_data_path)
             logger.info(
                 "Loaded %d math texts from %s", len(self._math_texts), math_data_path
+            )
+        elif use_builtin_math_data:
+            self._math_texts = self._load_math_data(
+                self._BUILTIN_MATH_SAMPLES_PATH
+            )
+            logger.info(
+                "Loaded %d built-in math samples", len(self._math_texts)
             )
 
     @staticmethod
@@ -328,7 +343,7 @@ class DigitBoundaryMetrics(BaseMetrics):
     def compute(
         self, tokenized_data: Optional[Dict[str, List[TokenizedData]]] = None
     ) -> Dict[str, Any]:
-        """Compute digit boundary alignment, cross-number boundary entropy,
+        """Compute digit boundary alignment, digit split variability,
         numeric magnitude consistency, and operator isolation rate.
 
         When *math_data_path* was provided at construction time, this method
@@ -336,7 +351,7 @@ class DigitBoundaryMetrics(BaseMetrics):
         data **instead of** the ``tokenized_data`` parameter.
 
         Returns a dict with four top-level keys:
-        ``three_digit_boundary_alignment``, ``cross_number_boundary_entropy``,
+        ``three_digit_boundary_alignment``, ``digit_split_variability``,
         ``numeric_magnitude_consistency``, and ``operator_isolation_rate``.
         """
         if self._math_texts:
@@ -506,7 +521,7 @@ class DigitBoundaryMetrics(BaseMetrics):
 
         return {
             "three_digit_boundary_alignment": alignment_results,
-            "cross_number_boundary_entropy": entropy_results,
+            "digit_split_variability": entropy_results,
             "numeric_magnitude_consistency": magnitude_results,
             "operator_isolation_rate": operator_results,
         }
@@ -980,7 +995,7 @@ class DigitBoundaryMetrics(BaseMetrics):
     # ------------------------------------------------------------------
 
     def print_results(self, results: Dict[str, Any]) -> None:
-        """Print digit boundary alignment and cross-number entropy results."""
+        """Print digit boundary alignment and digit split variability results."""
         # ---- Alignment ----
         align = results.get("three_digit_boundary_alignment")
         if align:
@@ -1025,10 +1040,10 @@ class DigitBoundaryMetrics(BaseMetrics):
                             )
 
         # ---- Entropy ----
-        ent = results.get("cross_number_boundary_entropy")
+        ent = results.get("digit_split_variability")
         if ent:
             print("\n" + "=" * 60)
-            print("CROSS-NUMBER BOUNDARY ENTROPY RESULTS")
+            print("DIGIT SPLIT VARIABILITY RESULTS")
             print("=" * 60)
 
             if "summary" in ent:

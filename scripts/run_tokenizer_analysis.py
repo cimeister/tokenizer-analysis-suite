@@ -212,7 +212,7 @@ def slim_results_for_json(results: Dict) -> Dict:
                 slimmed_metric['summary'] = metric_data['summary']
 
             # Keep digit boundary alignment, entropy, magnitude, and operator results (already compact)
-            if metric_name in ('three_digit_boundary_alignment', 'cross_number_boundary_entropy',
+            if metric_name in ('three_digit_boundary_alignment', 'digit_split_variability',
                                'numeric_magnitude_consistency', 'operator_isolation_rate'):
                 if 'summary' in metric_data:
                     slimmed_metric['summary'] = metric_data['summary']
@@ -507,15 +507,22 @@ Examples:
     parser.add_argument(
         "--no-digit-boundary",
         action="store_true",
-        help="Skip digit boundary alignment, cross-number boundary entropy, numeric magnitude consistency, and operator isolation analysis"
+        help="Skip digit boundary alignment, digit split variability, numeric magnitude consistency, and operator isolation analysis"
     )
     parser.add_argument(
         "--math-data",
         type=str,
         help="Path to math-rich text file (.txt or .json) for digit boundary metrics. "
              "When provided, this data is tokenized per-tokenizer and used instead of "
-             "the general dataset for digit boundary, cross-number entropy, numeric "
+             "the general dataset for digit boundary, digit split variability, numeric "
              "magnitude consistency, and operator isolation metrics."
+    )
+    parser.add_argument(
+        "--use-builtin-math-data",
+        action="store_true",
+        help="Use the built-in math sample dataset (~100 diverse expressions) for "
+             "digit boundary metrics instead of the general input text. "
+             "Ignored if --math-data is also provided."
     )
     parser.add_argument(
         "--code-ast-config",
@@ -684,7 +691,8 @@ Examples:
             show_global_lines=not args.no_global_lines,
             per_language_plots=args.per_language_plots,
             faceted_plots=args.faceted_plots,
-            math_data_path=args.math_data
+            math_data_path=args.math_data,
+            use_builtin_math_data=args.use_builtin_math_data
         )
     else:
         # Raw tokenizer mode
@@ -729,7 +737,8 @@ Examples:
             show_global_lines=not args.no_global_lines,
             per_language_plots=args.per_language_plots,
             faceted_plots=args.faceted_plots,
-            math_data_path=args.math_data
+            math_data_path=args.math_data,
+            use_builtin_math_data=args.use_builtin_math_data
         )
     if args.test:
         logger.warning("Test methods not yet updated for unified system")

@@ -1097,6 +1097,20 @@ class TestSourceCharToTokenMap:
         result = self.inst._build_source_char_to_token_map(source, tokens)
         assert result == [0, 0, 0, 0, 1]
 
+    def test_tab_space_mismatch(self):
+        """Source has tab but token decodes as space — pointer must not stall.
+
+        Without the whitespace-class fallback the space in the decoded
+        token never matches the tab in the source, so src_idx stays at 0
+        and every subsequent position is None.
+        """
+        source = "\tx = 1"
+        # Token " x" decodes a leading space where source has a tab
+        tokens = [" x", "Ġ=", "Ġ1"]
+        result = self.inst._build_source_char_to_token_map(source, tokens)
+        # ' ' matches '\t' via whitespace-class fallback, then rest aligns
+        assert result == [0, 0, 1, 1, 2, 2]
+
     def test_longer_than_source(self):
         """Tokens with more characters than source should stop cleanly."""
         source = "ab"
@@ -1155,8 +1169,9 @@ class TestInferIndentUnit:
         assert ASTBoundaryMetrics._infer_indent_unit(indentation) == 2
 
     def test_tab_indent(self):
+        # With expandtabs(), "\t" → 8 chars, "\t\t" → 16 chars, GCD = 8
         indentation = [("", 0, 0), ("\t", 5, 6), ("\t\t", 10, 12)]
-        assert ASTBoundaryMetrics._infer_indent_unit(indentation) == 1
+        assert ASTBoundaryMetrics._infer_indent_unit(indentation) == 8
 
     def test_no_indentation(self):
         indentation = [("", 0, 0), ("", 5, 5)]
@@ -1173,6 +1188,20 @@ class TestInferIndentUnit:
         # 6 and 3 -> GCD = 3
         indentation = [("   ", 0, 3), ("      ", 10, 16)]
         assert ASTBoundaryMetrics._infer_indent_unit(indentation) == 3
+
+    def test_mixed_tabs_and_spaces(self):
+        """Tab (expands to 8) + 4 spaces → GCD should be 4, not 1."""
+        indentation = [("\t", 0, 1), ("    ", 10, 14)]
+        assert ASTBoundaryMetrics._infer_indent_unit(indentation) == 4
+
+    def test_single_stray_tab(self):
+        """One tab line among 4-space lines → GCD should be 4, not 1."""
+        indentation = [
+            ("    ", 0, 4),
+            ("\t", 10, 11),
+            ("        ", 20, 28),
+        ]
+        assert ASTBoundaryMetrics._infer_indent_unit(indentation) == 4
 
 
 # ======================================================================

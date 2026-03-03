@@ -1066,11 +1066,11 @@ class TestGoodVsBadTokenizer:
         assert iso["avg_f1"] == pytest.approx(1.0)
         assert cmp["avg_f1"] == pytest.approx(1.0)
 
-    # -- Cross-Number Boundary Entropy --
+    # -- Digit Split Variability --
 
     def test_good_consistent_patterns_zero_entropy(self, good_results):
         """Good tokenizer: three 4-digit numbers all share pattern (1,)."""
-        by_dl = good_results["cross_number_boundary_entropy"][
+        by_dl = good_results["digit_split_variability"][
             "per_tokenizer"]["good_tok"]["by_digit_length"]
         assert by_dl["4"]["en"]["entropy"] == pytest.approx(0.0)
 
@@ -1078,7 +1078,7 @@ class TestGoodVsBadTokenizer:
         self, bad_boundary_results,
     ):
         """Bad-boundary tokenizer: 4-digit patterns (2,), (2,), (3,) diverge."""
-        by_dl = bad_boundary_results["cross_number_boundary_entropy"][
+        by_dl = bad_boundary_results["digit_split_variability"][
             "per_tokenizer"]["bad_bnd"]["by_digit_length"]
         assert by_dl["4"]["en"]["entropy"] > 0.0
 

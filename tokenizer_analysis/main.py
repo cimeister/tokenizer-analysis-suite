@@ -53,7 +53,8 @@ class UnifiedTokenizerAnalyzer:
                  per_language_plots: bool = False,
                  faceted_plots: bool = False,
                  code_ast_config: Optional[Dict[str, str]] = None,
-                 math_data_path: Optional[str] = None):
+                 math_data_path: Optional[str] = None,
+                 use_builtin_math_data: bool = False):
         """
         Initialize unified analyzer.
 
@@ -129,7 +130,9 @@ class UnifiedTokenizerAnalyzer:
 
         # Initialize digit boundary metrics (always available -- no external data)
         self.digit_boundary_metrics = DigitBoundaryMetrics(
-            input_provider, math_data_path=math_data_path
+            input_provider,
+            math_data_path=math_data_path,
+            use_builtin_math_data=use_builtin_math_data,
         )
 
         # Initialize UTF-8 integrity metrics (always available -- no external data)
@@ -361,8 +364,8 @@ class UnifiedTokenizerAnalyzer:
                     group_result['three_digit_boundary_alignment'] = self._filter_digit_boundary_results(
                         base_results['three_digit_boundary_alignment'], group_languages
                     )
-                    group_result['cross_number_boundary_entropy'] = self._filter_digit_boundary_results(
-                        base_results['cross_number_boundary_entropy'], group_languages
+                    group_result['digit_split_variability'] = self._filter_digit_boundary_results(
+                        base_results['digit_split_variability'], group_languages
                     )
                     # Magnitude consistency uses the same structure as digit boundary
                     if 'numeric_magnitude_consistency' in base_results:

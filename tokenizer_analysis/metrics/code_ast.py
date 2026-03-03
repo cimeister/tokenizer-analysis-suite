@@ -254,6 +254,9 @@ class ASTBoundaryMetrics(BaseMetrics):
                 elif source_code[src_idx].lower() == ch.lower():
                     result[src_idx] = tok_idx
                     src_idx += 1
+                elif ch.isspace() and source_code[src_idx].isspace():
+                    result[src_idx] = tok_idx
+                    src_idx += 1
                 # else: skip character in decoded token (mismatch)
 
         return result
@@ -268,7 +271,7 @@ class ASTBoundaryMetrics(BaseMetrics):
         Falls back to 1 if no indented lines exist or GCD is 0.
         """
         from math import gcd
-        widths = [len(ws) for ws, _, _ in indentation if ws]
+        widths = [len(ws.expandtabs()) for ws, _, _ in indentation if ws]
         if not widths:
             return 1
         result = widths[0]
@@ -779,7 +782,7 @@ class ASTBoundaryMetrics(BaseMetrics):
                             pattern = tuple(
                                 token_strings[ti] for ti in token_indices
                             )
-                            ws_width = len(ws_string)
+                            ws_width = len(ws_string.expandtabs())
                             depth = ws_width // indent_unit if indent_unit else ws_width
                             num_ws_tokens = len(token_indices)
                             indent_acc[tok_name][code_lang].append({
