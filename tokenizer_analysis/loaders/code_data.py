@@ -158,13 +158,20 @@ class CodeDataLoader:
 
     @classmethod
     def _read_file(cls, path: str, max_chars: Optional[int] = None) -> Optional[str]:
-        """Read a text file, returning ``None`` on failure or empty content."""
+        """Read a text file, returning ``None`` on failure or empty content.
+
+        Whitespace is preserved (including leading indentation) so that
+        downstream metrics such as indentation consistency see the original
+        layout.  Only trailing whitespace is removed.
+        """
         if max_chars is None:
             max_chars = cls.MAX_SNIPPET_SIZE_CHARS
         try:
             with open(path, "r", encoding="utf-8", errors="replace") as f:
                 text = f.read(max_chars)
-            return text.strip() if text.strip() else None
+            if not text or not text.strip():
+                return None
+            return text.rstrip()
         except Exception as e:
             logger.debug("Could not read %s: %s", path, e)
             return None
@@ -218,9 +225,10 @@ class CodeDataLoader:
             if not isinstance(raw, str) or not raw.strip():
                 continue
             text = cls._strip_starcoder_metadata(raw)
-            text = text[:max_chars].strip()
-            if text:
-                snippets.append(text)
+            text = text[:max_chars].rstrip()
+            if not text.strip():
+                continue
+            snippets.append(text)
         return snippets
 
     def get_code_snippets(self, lang: str) -> List[str]:
