@@ -152,75 +152,84 @@ class InformationTheoreticMetrics(BaseMetrics):
         
         return results
     
-    def compute_compression_ratio(self, tokenized_data: Dict[str, List[TokenizedData]]) -> Dict[str, Any]:
+    def compute_compression_rate(self, tokenized_data: Dict[str, List[TokenizedData]]) -> Dict[str, Any]:
         """
-        Compute compression ratios: average of individual (normalization_unit / tokens) ratios.
-        
+        Compute compression rates using ratio-of-means: total_units / total_tokens.
+
+        This produces a single global statistic rather than averaging per-sample
+        ratios, which avoids bias from short texts.
+
         Args:
             tokenized_data: Dict mapping tokenizer names to TokenizedData lists
-            
+
         Returns:
-            Dict with compression ratio results
+            Dict with compression rate results
         """
-        
+
         results = {
             'per_tokenizer': {},
             'per_language': {},
             'pairwise_comparisons': {}
         }
-        
+
         for tok_name in self.tokenizer_names:
             if tok_name not in tokenized_data:
                 continue
-                
+
             tok_data = tokenized_data[tok_name]
             per_lang_ratios = {}
-            all_individual_ratios = []  # Store individual text ratios
-            
+            total_units = 0
+            total_tokens = 0
+            num_texts = 0
+
             # Group data by language
             lang_groups = TokenizedDataProcessor.group_by_language(tok_data)
-            
+
             for lang, lang_data in lang_groups.items():
-                lang_ratios = []
-                
+                lang_units = 0
+                lang_tokens = 0
+
                 for data in lang_data:
-                    if data.text and data.text.strip():  # Skip empty texts
-                        # Use configurable normalization
+                    if data.text and data.text.strip():
                         normalization_count = self.text_measurer.get_unit_count(data.text)
                         if normalization_count > 0 and data.tokens:
-                            ratio = normalization_count / len(data.tokens)
-                            lang_ratios.append(ratio)
-                            all_individual_ratios.append(ratio)
-                
-                if lang_ratios:
-                    # Average of individual ratios for this language
-                    per_lang_ratios[lang] = np.mean(lang_ratios)
-            
-            # Global compression: compute full statistics from individual ratios
-            if all_individual_ratios:
-                global_stats = self.compute_basic_stats(all_individual_ratios)
+                            lang_units += normalization_count
+                            lang_tokens += len(data.tokens)
+                            num_texts += 1
+
+                if lang_tokens > 0:
+                    per_lang_ratios[lang] = lang_units / lang_tokens
+                    total_units += lang_units
+                    total_tokens += lang_tokens
+
+            # Global compression: ratio of totals
+            if total_tokens > 0:
+                global_rate = total_units / total_tokens
             else:
-                global_stats = self.empty_stats()
-                global_stats['mean'] = 1.0  # Default compression ratio
-            
+                global_rate = 1.0  # Default compression rate
+
             results['per_tokenizer'][tok_name] = {
-                'global': global_stats,
+                'global': {
+                    'compression_rate': global_rate,
+                    'total_units': total_units,
+                    'total_tokens': total_tokens,
+                },
                 'per_language': per_lang_ratios,
-                'num_texts_analyzed': len(all_individual_ratios)
+                'num_texts_analyzed': num_texts
             }
-        
+
         # Add metadata
         results['metadata'] = {
             'normalization_method': self.measurement_config.method.value
         }
-        
+
         # Compute pairwise comparisons
-        global_ratios = {name: results['per_tokenizer'][name]['global']['mean'] 
+        global_ratios = {name: results['per_tokenizer'][name]['global']['compression_rate']
                         for name in self.tokenizer_names if name in results['per_tokenizer']}
         results['pairwise_comparisons'] = self.compute_pairwise_comparisons(
-            global_ratios, 'compression_ratio'
+            global_ratios, 'compression_rate'
         )
-        
+
         return results
         
     
@@ -343,21 +352,8 @@ class InformationTheoreticMetrics(BaseMetrics):
             
         results = {}
         
-        results['compression_ratio'] = self.compute_compression_ratio(tokenized_data)
+        results['compression_rate'] = self.compute_compression_rate(tokenized_data)
         results['renyi_efficiency'] = self.compute_renyi_efficiency_analysis(tokenized_data)
         results['unigram_distribution_metrics'] = self.compute_unigram_distribution_metrics(tokenized_data)
 
         return results
-    
-    # Convenience methods for common groupings
-    def compute_by_script_family(self, tokenized_data: Optional[Dict[str, List[TokenizedData]]] = None) -> Dict[str, Any]:
-        """Compute information-theoretic metrics grouped by script family."""
-        # This functionality should be handled by the analyzer's grouped analysis
-        # For now, just return regular compute results
-        return self.compute(tokenized_data)
-    
-    def compute_by_resource_level(self, tokenized_data: Optional[Dict[str, List[TokenizedData]]] = None) -> Dict[str, Any]:
-        """Compute information-theoretic metrics grouped by resource level."""
-        # This functionality should be handled by the analyzer's grouped analysis
-        # For now, just return regular compute results
-        return self.compute(tokenized_data)

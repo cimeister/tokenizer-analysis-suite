@@ -44,23 +44,23 @@ def _build_gpt2_byte_tables() -> Tuple[Dict[int, str], Dict[str, int]]:
     Returns ``(byte_to_unicode, unicode_to_byte)``.
     """
     # Ranges that map to themselves (printable ASCII + Latin-1 supplement)
-    bs: List[int] = (
+    byte_values: List[int] = (
         list(range(ord('!'), ord('~') + 1))
         + list(range(ord('\xa1'), ord('\xac') + 1))
         + list(range(ord('\xae'), ord('\xff') + 1))
     )
-    cs = list(bs)
+    char_codes = list(byte_values)
 
     # Everything else gets mapped starting from U+0100
     n = 0
     for b in range(256):
-        if b not in bs:
-            bs.append(b)
-            cs.append(256 + n)
+        if b not in byte_values:
+            byte_values.append(b)
+            char_codes.append(256 + n)
             n += 1
 
-    byte_to_unicode = {b: chr(c) for b, c in zip(bs, cs)}
-    unicode_to_byte = {chr(c): b for b, c in zip(bs, cs)}
+    byte_to_unicode = {b: chr(c) for b, c in zip(byte_values, char_codes)}
+    unicode_to_byte = {chr(c): b for b, c in zip(byte_values, char_codes)}
     return byte_to_unicode, unicode_to_byte
 
 

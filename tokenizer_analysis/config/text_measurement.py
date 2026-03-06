@@ -156,13 +156,17 @@ class TextMeasurer:
             if not self.config.include_empty_splits:
                 parts = [p for p in parts if p.strip()]
             return len(parts)
-    
+        else:
+            raise ValueError(f"Unsupported line counting method: {self.config.line_counting}")
+
     def _count_bytes(self, text: str) -> int:
         """Count bytes using the configured method."""
         if self.config.byte_counting == ByteCountingMethod.UTF8:
             return len(text.encode('utf-8'))
         elif self.config.byte_counting == ByteCountingMethod.HUGGINGFACE_BYTELEVEL:
             return self._count_hf_bytes(text)
+        else:
+            raise ValueError(f"Unsupported byte counting method: {self.config.byte_counting}")
     
     def _count_characters(self, text: str) -> int:
         """Count characters."""

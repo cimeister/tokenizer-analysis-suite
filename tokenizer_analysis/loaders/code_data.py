@@ -163,12 +163,27 @@ class CodeDataLoader:
         Whitespace is preserved (including leading indentation) so that
         downstream metrics such as indentation consistency see the original
         layout.  Only trailing whitespace is removed.
+
+        Lines that fail strict UTF-8 decoding are skipped individually
+        rather than silently replacing invalid bytes.
         """
         if max_chars is None:
             max_chars = cls.MAX_SNIPPET_SIZE_CHARS
         try:
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
-                text = f.read(max_chars)
+            lines: List[str] = []
+            chars_read = 0
+            with open(path, "rb") as f:
+                for raw_line in f:
+                    if chars_read >= max_chars:
+                        break
+                    try:
+                        line = raw_line.decode("utf-8")
+                    except UnicodeDecodeError:
+                        logger.debug("Skipping non-UTF-8 line in %s", path)
+                        continue
+                    lines.append(line)
+                    chars_read += len(line)
+            text = "".join(lines)
             if not text or not text.strip():
                 return None
             return text.rstrip()

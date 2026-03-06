@@ -30,6 +30,7 @@ python scripts/run_tokenizer_analysis.py \
     --tokenizer-config configs/baseline_tokenizers.json \
     --language-config configs/core_lang_config.json \
     --measurement-config configs/text_measurement_config_lines.json \
+    --code-ast-config configs/starcoder_ast_config.json \
     --verbose --run-grouped-analysis --per-language-plots --no-global-lines \
     --update-results-md --dataset flores_core
 
@@ -38,6 +39,50 @@ python scripts/update_remote.py
 ```
 
 Specify the path to your tokenizer file in the JSON given to `--tokenizer-config` (see [Configuration Files](#configuration-files)).
+
+> **Note:** The `--code-ast-config` flag points to `configs/starcoder_ast_config.json`, which expects a `starcoder/` directory in the repo root containing language-specific parquet files. If you're working on the Alps cluster, then creating this symlink will solve that problem.
+
+```bash
+ln -s /capstor/store/cscs/swissai/a139/datasets/tokenizer_training/tokenizer_training_dataset/starcoder starcoder
+```
+Without this data the AST metrics still run but fall back to small built-in synthetic samples. If you are working off-cluster or don't have access to the shared data, you can omit `--code-ast-config` entirely.
+
+## Visualizing Tokenization
+
+The `scripts/visualize_tokenization.py` script renders token boundaries directly on source text, making it easy to inspect how different tokenizers split code, math, and multilingual content.
+
+```bash
+# Show built-in samples (Python code, LaTeX math, multilingual text)
+python scripts/visualize_tokenization.py \
+    --tokenizer-config configs/baseline_tokenizers.json
+
+# Show only specific tokenizers
+python scripts/visualize_tokenization.py \
+    --tokenizer-config configs/baseline_tokenizers.json \
+    --tokenizers "GPT-4o" "Qwen 3"
+
+# Visualize your own file
+python scripts/visualize_tokenization.py \
+    --tokenizer-config configs/baseline_tokenizers.json \
+    --input my_script.py
+
+# Visualize all files in a directory (1 sample per file)
+python scripts/visualize_tokenization.py \
+    --tokenizer-config configs/baseline_tokenizers.json \
+    --input data/samples/
+
+# Files can contain multiple samples separated by a line with only "---".
+# Use --samples-per-file to control how many are read (default: 1).
+python scripts/visualize_tokenization.py \
+    --tokenizer-config configs/baseline_tokenizers.json \
+    --input data/samples/ --samples-per-file 3
+
+# Plain text output (no ANSI colours) for saving to a file
+python scripts/visualize_tokenization.py \
+    --tokenizer-config configs/baseline_tokenizers.json --no-color > out.txt
+```
+
+Each sample is shown with line-numbered source text followed by a colour-coded token-boundary view for every tokenizer, plus whitespace and indentation statistics.
 
 ## Setup
 
@@ -261,25 +306,25 @@ results/
 ## Metrics
 
 ### Basic Tokenization Metrics
-- **Compression Rate**: Text size (bytes/chars/lines) per token — measures encoding efficiency
-- **Fertility**: Tokens per word/character — measures tokenization granularity
+- **Compression Rate** (`compression_rate`): Ratio of total text units (bytes/chars/lines) to total tokens across the corpus — measures encoding efficiency
+- **Fertility** (`fertility`): Tokens per word/character — measures tokenization granularity
 - **Token Length**: Average token size in bytes/characters
 - **Type-Token Ratio**: Unique tokens / total tokens — measures vocabulary usage diversity
+- **Vocabulary Utilization** (`vocabulary_utilization`): Fraction of vocabulary actually used
 
 ### Information-Theoretic Metrics
 - **Renyi Entropy**: Information content at different alpha values — generalizes Shannon entropy
-- **Vocabulary Utilization**: Fraction of vocabulary actually used
-- **Average Token Rank**: Typical position of tokens within the frequency-ordered vocabulary
+- **Average Token Rank** (`avg_token_rank`): Typical position of tokens within the frequency-ordered vocabulary
 
 ### Morphological Metrics
 - **Boundary Precision/Recall**: How well tokens align with morpheme boundaries
-- **MorphScore V2**: Advanced morphological evaluation ([Arnett et al. 2025](https://arxiv.org/abs/2507.06378))
+- **MorphScore V2** (`morphscore_recall`): Advanced morphological evaluation ([Arnett et al. 2025](https://arxiv.org/abs/2507.06378))
 
 ### Mathematical Content Metrics
 
 Evaluates tokenizer handling of mathematical expressions. Based on Singh & Strouse (2024, [arXiv:2402.14903](https://arxiv.org/abs/2402.14903)), who showed that right-to-left tokenization of numbers improved arithmetic accuracy by >22 percentage points. These metrics run on any text data containing numbers or operators. Disable with `--no-digit-boundary`.
 
-#### Three-Digit Place-Value Boundary Alignment (F1)
+#### Three-Digit Place-Value Boundary Alignment (`three_digit_boundary_f1`)
 
 Measures whether numbers are tokenized with right-aligned 3-digit groupings that match place-value structure (units, thousands, millions).
 
@@ -293,9 +338,9 @@ For each number, compares actual token boundaries against ideal boundaries at po
 
 For numbers of the same digit length, measures Shannon entropy of the distribution of boundary patterns. Low entropy means the tokenizer uses a consistent splitting scheme; high entropy means chaotic splitting.
 
-Entropy is computed on patterns pooled across languages, not averaged per-language. Reports normalized entropy, dominant pattern, and dominant frequency per digit-length bucket.
+Entropy is computed on patterns pooled across languages, not averaged per-language. Reports Shannon entropy (bits), dominant pattern, and dominant frequency per digit-length bucket.
 
-**Example:** A corpus contains three 5-digit numbers. If all are split as `XX|XXX` (pattern `{2}`), the entropy for the 5-digit bucket is 0.0 — perfectly consistent. If instead one is split `XX|XXX`, one as `X|XXXX`, and one as `XXX|XX`, there are three distinct patterns with equal frequency, giving normalized entropy of 1.0 — maximally chaotic. The first tokenizer has a learnable (if wrong) scheme; the second forces the model to handle every number as a special case.
+**Example:** A corpus contains three 5-digit numbers. If all are split as `XX|XXX` (pattern `{2}`), the entropy for the 5-digit bucket is 0.0 bits — perfectly consistent. If instead one is split `XX|XXX`, one as `X|XXXX`, and one as `XXX|XX`, there are three distinct patterns with equal frequency, giving entropy of log2(3) ≈ 1.58 bits. The first tokenizer has a learnable (if wrong) scheme; the second forces the model to handle every number as a special case.
 
 **Why it matters:** A tokenizer with moderate F1 but low entropy has a consistent-but-wrong scheme (potentially fixable by retraining). Moderate F1 with high entropy indicates a deeper structural problem.
 
@@ -307,9 +352,9 @@ Tracks fertility-per-digit (tokens per digit) across digit lengths. Reports Spea
 
 **Why it matters:** Tokenizers trained on natural language often have dense vocabulary coverage for small numbers (0-999 as single tokens) but fragment larger numbers unpredictably, creating representational discontinuities.
 
-#### Operator Isolation Rate
+#### Operator Isolation Rate (`operator_isolation`)
 
-Fraction of mathematical operators (`+`, `-`, `*`, `=`, `<=`, etc.) tokenized as standalone tokens rather than merged with adjacent content. Includes a compound preservation sub-metric measuring whether multi-character operators (`**`, `<=`, `!=`) are kept as single tokens vs. split.
+Fraction of mathematical operators (`+`, `-`, `*`, `=`, `<=`, etc.) tokenized as standalone tokens rather than merged with adjacent content. The hyphen-minus `-` is always treated as an operator, even when it appears as a unary negative sign (e.g., `-42`), since disambiguating unary minus from subtraction requires expression parsing. Includes a compound preservation sub-metric measuring whether multi-character operators (`**`, `<=`, `!=`) are kept as single tokens vs. split.
 
 **Example:** In the expression `3+5>=8`, a good tokenizer produces `3` | `+` | `5` | `>=` | `8` — isolation rate 1.0 and compound preservation 1.0. A bad tokenizer produces `3+` | `5` | `>` | `=` | `8` — the `+` is merged with `3` (isolation fails), and `>=` is split into `>` and `=` (compound preservation fails). Isolation rate: 1/3 (only `=` might be isolated depending on boundaries). Compound preservation: 0/1.
 
@@ -325,7 +370,7 @@ Fraction of content tokens whose bytes form complete UTF-8 characters. A token l
 
 **Example:** The character `é` (U+00E9) is encoded as bytes `C3 A9`. A tokenizer that keeps `café` as `caf` | `é` produces two tokens, both containing complete UTF-8 — completeness rate 1.0. A byte-fallback tokenizer that produces `caf` | `<0xC3>` | `<0xA9>` has 3 content tokens, of which 2 contain incomplete UTF-8 sequences — completeness rate 1/3.
 
-#### Character Boundary Crossing Rate
+#### Character Boundary Crossing Rate (`utf8_boundary_crossing`)
 
 Fraction of content tokens that cross a UTF-8 character boundary — tokens containing bytes from more than one UTF-8 character where at least one of those characters is incomplete within the token. These tokens are the direct product of BPE merges that fused bytes across character boundaries, permanently preventing the affected characters from being represented as whole tokens.
 
@@ -335,7 +380,7 @@ This is distinct from simple byte-fallback tokens. A byte-fallback token like `<
 
 **Why it matters:** Boundary-crossing tokens are fundamentally unrecoverable. While a byte-fallback token can be recombined with its neighbors to reconstruct a character, a boundary-crossing token has fused bytes from different characters in a way that no amount of context can cleanly separate within a single embedding.
 
-#### Character Boundary Split Count
+#### Character Boundary Split Count (`utf8_char_split`)
 
 Counts how many multi-byte characters in the source text have their constituent bytes spread across multiple tokens. Reports the split rate (splits / total multi-byte characters) and splits per 1k tokens.
 
@@ -347,7 +392,7 @@ Counts how many multi-byte characters in the source text have their constituent 
 
 Evaluates tokenizer handling of source code by parsing it with tree-sitter and measuring alignment between AST node boundaries and token boundaries. Requires `pip install tree-sitter-language-pack`. Supports 19 languages (Python, JavaScript, Java, C, C++, Go, Rust, TypeScript, PHP, Ruby, C#, Scala, Swift, Kotlin, Lua, R, Perl, Haskell, Bash). Configure with `--code-ast-config`; disable with `--no-code-ast`.
 
-#### AST Leaf-Node Boundary Alignment
+#### AST Leaf-Node Boundary Alignment (`ast_full_alignment`)
 
 Parses source code with tree-sitter, extracts leaf-node spans, and measures the fraction whose boundaries coincide with token boundaries. Tracks five categories independently: identifiers, keywords, operators, literals, and delimiters.
 
@@ -357,7 +402,7 @@ Reports start-alignment rate, end-alignment rate, full-alignment rate, and cross
 
 **Why it matters:** Code has deterministic grammar, so AST node boundaries are objectively derivable with no manual annotation. A tokenizer that splits `return` into `ret` + `urn` fragments a syntactically atomic unit.
 
-#### Identifier Fragmentation Rate
+#### Identifier Fragmentation Rate (`ident_fragmentation`)
 
 Fraction of programmer-defined identifiers split into multiple tokens, plus average tokens per identifier. Computed occurrence-weighted from the same AST extraction pass.
 
@@ -365,7 +410,7 @@ Fraction of programmer-defined identifiers split into multiple tokens, plus aver
 
 **Why it matters:** Identifiers carry domain-specific semantics. Fragmenting `getUserName` into arbitrary sub-pieces destroys meaningful structure, though the current implementation does not yet distinguish semantically-aligned splits (at camelCase/snake_case boundaries) from arbitrary ones.
 
-#### Indentation Depth Proportionality Correlation
+#### Indentation Depth Proportionality Correlation (`indent_depth_corr`)
 
 Measures whether the number of whitespace tokens a tokenizer produces for leading indentation grows proportionally with nesting depth. Computes the Spearman rank correlation (ρ) between logical nesting depth (from tree-sitter) and the count of whitespace-only tokens in the leading indentation of each line. Only evaluated on whitespace-significant languages (Python, YAML). Requires at least 3 distinct depth levels per language; languages with fewer are skipped.
 
@@ -373,7 +418,7 @@ Measures whether the number of whitespace tokens a tokenizer produces for leadin
 
 **Why it matters:** If indentation depth maps monotonically to whitespace token count, the model receives a natural positional signal for nesting structure without needing to learn it from context.
 
-#### Indentation Pattern Stability Rate
+#### Indentation Pattern Stability Rate (`indent_pattern_stability`)
 
 Measures whether lines at the same nesting depth are tokenized with the same whitespace pattern. For each depth level, groups all indented lines and counts how many share the dominant tokenization pattern (the tuple of whitespace token lengths). The stability rate is the total number of lines matching their depth's dominant pattern divided by the total number of indented lines.
 
@@ -382,7 +427,7 @@ Measures whether lines at the same nesting depth are tokenized with the same whi
 **Why it matters:** Consistent indentation tokenization means the model sees the same token pattern for the same structural level, reducing the number of surface forms it must learn to associate with a single syntactic meaning.
 
 ### Multilingual Fairness
-- **Tokenizer Gini Coefficient**: Measures equitable treatment across languages, defined as:
+- **Tokenizer Gini Coefficient** (`tokenizer_fairness_gini`): Measures equitable treatment across languages, defined as:
 
 * $`L = \{1, \dots, n\}`$ be the set of languages, each weighted equally.
 * For every language $`\ell \in L`$, define the **token cost**
@@ -461,6 +506,7 @@ tokenizer_analysis/
 
 scripts/
 ├── run_tokenizer_analysis.py     # Main CLI for analysis
+├── visualize_tokenization.py     # Token boundary visualization
 └── update_remote.py              # Push RESULTS.md to a remote git branch
 ```
 

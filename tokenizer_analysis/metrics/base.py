@@ -14,9 +14,8 @@ from ..core.input_types import TokenizedData
 from ..core.input_providers import InputProvider
 from ..constants import (
     DEFAULT_SAFE_DIVIDE_VALUE,
-    Statistics,
-    Validation,
-    MAX_ERROR_DISPLAY_COUNT
+    PERCENTAGE_MULTIPLIER,
+    MAX_ERROR_DISPLAY_COUNT,
 )
 
 logger = logging.getLogger(__name__)
@@ -170,6 +169,30 @@ class BaseMetrics(ABC):
 
         return "".join(reconstructed), char_to_token
 
+    @staticmethod
+    def _build_source_to_recon_map(
+        source_text: str, recon_text: str
+    ) -> List[Optional[int]]:
+        """Map each source-text character position to its position in the
+        reconstructed (whitespace-stripped) text.
+
+        Uses a greedy forward scan with exact (case-sensitive) matching.
+        Characters dropped during reconstruction (e.g. whitespace consumed
+        by subword prefixes) get ``None``.
+
+        Returns a list of length ``len(source_text)`` where each entry is
+        either a valid index into *recon_text* or ``None``.
+        """
+        source_to_recon: List[Optional[int]] = [None] * len(source_text)
+        recon_idx = 0
+        for src_idx in range(len(source_text)):
+            if recon_idx >= len(recon_text):
+                break
+            if source_text[src_idx] == recon_text[recon_idx]:
+                source_to_recon[src_idx] = recon_idx
+                recon_idx += 1
+        return source_to_recon
+
     # ------------------------------------------------------------------
     # Statistics helpers
     # ------------------------------------------------------------------
@@ -222,7 +245,7 @@ class BaseMetrics(ABC):
                     'value_2': val2,
                     'difference': val1 - val2,
                     'ratio': self.safe_divide(val1, val2, 1.0),
-                    'percent_difference': self.safe_divide(abs(val1 - val2), (val1 + val2) / 2, 0.0) * Statistics.PERCENTAGE_MULTIPLIER
+                    'percent_difference': self.safe_divide(abs(val1 - val2), (val1 + val2) / 2, 0.0) * PERCENTAGE_MULTIPLIER
                 }
         
         return comparisons

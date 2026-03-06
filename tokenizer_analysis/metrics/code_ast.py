@@ -14,6 +14,12 @@ Five AST node categories are tracked independently:
 5. **Delimiters** -- ``(``, ``)``, ``{``, ``}``, ``[``, ``]``, ``;``, ``,``.
 """
 
+import math
+import os
+import pickle
+import subprocess
+import sys
+import tempfile
 from collections import Counter, defaultdict
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -52,6 +58,9 @@ class ASTBoundaryMetrics(BaseMetrics):
     """
 
     _CATEGORIES = _CATEGORIES_TUPLE
+
+    # Timeout (seconds) for each per-language tree-sitter subprocess.
+    _PER_LANG_TIMEOUT = 120
 
     def __init__(
         self,
@@ -132,39 +141,6 @@ class ASTBoundaryMetrics(BaseMetrics):
     # ------------------------------------------------------------------
     # Source → reconstructed-text coordinate mapping
     # ------------------------------------------------------------------
-
-    @staticmethod
-    def _build_source_to_recon_map(
-        source_code: str, recon_text: str
-    ) -> List[Optional[int]]:
-        """Map each source-code character position to the corresponding
-        position in the reconstructed text.
-
-        Uses a greedy forward scan.  Prefers exact (case-sensitive) matches;
-        falls back to case-insensitive only when no exact match is available.
-        Characters dropped during reconstruction (whitespace consumed by
-        subword prefixes) get ``None``.
-
-        **Assumption:** The reconstructed text preserves the identity and
-        order of non-whitespace characters from the source.  If a tokenizer
-        performs case-folding or character-dropping (e.g. ``"aAa"`` →
-        ``"aaa"``), the greedy scan may pair source characters with
-        incorrect reconstructed positions, producing a positive (non-None)
-        but wrong mapping rather than failing gracefully.  All major code
-        tokenizers preserve character identity, so this is acceptable.
-        """
-        source_to_recon: List[Optional[int]] = [None] * len(source_code)
-        recon_idx = 0
-        for src_idx in range(len(source_code)):
-            if recon_idx >= len(recon_text):
-                break
-            if source_code[src_idx] == recon_text[recon_idx]:
-                source_to_recon[src_idx] = recon_idx
-                recon_idx += 1
-            elif source_code[src_idx].lower() == recon_text[recon_idx].lower():
-                source_to_recon[src_idx] = recon_idx
-                recon_idx += 1
-        return source_to_recon
 
     # ------------------------------------------------------------------
     # Identifier token counting
@@ -521,14 +497,6 @@ class ASTBoundaryMetrics(BaseMetrics):
         # Structure: parsed_spans[code_lang] = [categorized_spans_dict, ...]
 
         from ..loaders.code_data import CodeDataLoader
-        import os
-        import pickle
-        import subprocess
-        import sys
-        import tempfile
-
-        # Per-language subprocess timeout in seconds.
-        _PER_LANG_TIMEOUT = 120
 
         code_snippets = {
             lang: self.code_loader.get_code_snippets(lang)
@@ -540,7 +508,7 @@ class ASTBoundaryMetrics(BaseMetrics):
         logger.info(
             "Phase 1: parsing %d snippet(s) across %d language(s) via "
             "per-language subprocesses (timeout=%ds each).",
-            total_input, len(code_snippets), _PER_LANG_TIMEOUT,
+            total_input, len(code_snippets), self._PER_LANG_TIMEOUT,
         )
 
         worker_path = os.path.join(os.path.dirname(__file__), "_treesitter_worker.py")
@@ -571,7 +539,7 @@ class ASTBoundaryMetrics(BaseMetrics):
                 proc = subprocess.run(
                     [sys.executable, worker_path, tmp_in, tmp_out],
                     capture_output=True,
-                    timeout=_PER_LANG_TIMEOUT,
+                    timeout=self._PER_LANG_TIMEOUT,
                 )
                 if proc.returncode != 0:
                     raise RuntimeError(proc.stderr.decode(errors="replace"))
@@ -591,7 +559,7 @@ class ASTBoundaryMetrics(BaseMetrics):
                 logger.warning(
                     "  %s: subprocess timed out after %ds for %d snippet(s); "
                     "skipping language.",
-                    lang, _PER_LANG_TIMEOUT, len(snippets),
+                    lang, self._PER_LANG_TIMEOUT, len(snippets),
                 )
             except Exception as e:
                 logger.warning(
@@ -966,7 +934,7 @@ class ASTBoundaryMetrics(BaseMetrics):
         try:
             from scipy.stats import spearmanr
             rho, _ = spearmanr(x, y)
-            if rho != rho:  # NaN check
+            if math.isnan(rho):
                 return 0.0
             return float(rho)
         except ImportError:
@@ -1047,13 +1015,13 @@ class ASTBoundaryMetrics(BaseMetrics):
                 stability = dominant_total / total_indented_lines if total_indented_lines else 0.0
 
                 tok_data["by_language"][code_lang] = {
-                    "depth_proportionality_correlation": float(corr) if corr == corr else None,
+                    "depth_proportionality_correlation": float(corr) if not math.isnan(corr) else None,
                     "pattern_stability_rate": float(stability),
                     "num_depth_levels": distinct_depths,
                     "total_indented_lines": total_indented_lines,
                 }
 
-                if corr == corr:  # not NaN
+                if not math.isnan(corr):
                     lang_correlations.append(corr)
                 lang_stabilities.append(stability)
                 languages_seen.add(code_lang)

@@ -212,7 +212,18 @@ class HuggingFaceTokenizer(TokenizerWrapper):
             return [self._tokenizer.id_to_token(tid) or f"<UNK_{tid}>" for tid in token_ids]
         if hasattr(self._tokenizer, 'convert_ids_to_tokens'):
             tokens = self._tokenizer.convert_ids_to_tokens(token_ids)
-            return [t if isinstance(t, str) else f"<UNK_{tid}>" for t, tid in zip(tokens, token_ids)]
+            result = []
+            for t, tid in zip(tokens, token_ids):
+                if isinstance(t, str):
+                    result.append(t)
+                elif isinstance(t, bytes):
+                    try:
+                        result.append(t.decode('utf-8'))
+                    except UnicodeDecodeError:
+                        result.append(t.decode('utf-8', errors='replace'))
+                else:
+                    result.append(f"<UNK_{tid}>")
+            return result
         return super().convert_ids_to_tokens(token_ids)
 
     def get_unk_token_id(self) -> Optional[int]:

@@ -12,9 +12,6 @@ from ..core.input_types import TokenizedData
 from ..core.input_providers import InputProvider
 from ..config import TextMeasurementConfig, TextMeasurer, DEFAULT_TEXT_MEASUREMENT_CONFIG
 from ..config.language_metadata import LanguageMetadata
-from ..constants import (
-    FALLBACK_WORDS_PER_TOKEN
-)
 
 logger = logging.getLogger(__name__)
 
@@ -139,15 +136,11 @@ class BasicTokenizationMetrics(BaseMetrics):
         fertilities = []
         
         for data in tokenized_data:
+            if not data.text or not data.text.strip():
+                continue  # Skip if no text available
+
             num_tokens = len(data.tokens)
-            
-            if data.text:
-                num_units = self.text_measurer.get_unit_count(data.text)
-            else:
-                if normalization_unit == 'words':
-                    num_units = max(1, int(num_tokens * FALLBACK_WORDS_PER_TOKEN))  # Rough estimate
-                else:
-                    continue  # Skip if no text
+            num_units = self.text_measurer.get_unit_count(data.text)
             
             if num_units > 0:
                 fertility = num_tokens / num_units
@@ -172,38 +165,42 @@ class BasicTokenizationMetrics(BaseMetrics):
             'token_length': {
                 'per_tokenizer': {},
                 'metadata': {
-                    'primary_unit': 'characters',
-                    'description': 'Average character length per token'
+                    'units': ['characters', 'bytes'],
+                    'description': 'Average character and byte length per token'
                 }
             }
         }
-        
+
         for tok_name in self.tokenizer_names:
             if tok_name not in tokenized_data:
                 continue
-            
+
             tok_data = tokenized_data[tok_name]
-            
-            # Calculate character lengths where text is available
+
             char_lengths = []
+            byte_lengths = []
             for data in tok_data:
-                if data.text and data.tokens:
-                    avg_char_length = len(data.text) / len(data.tokens)
-                    char_lengths.append(avg_char_length)
-            
+                if data.text and data.text.strip() and data.tokens:
+                    n_tokens = len(data.tokens)
+                    char_lengths.append(len(data.text) / n_tokens)
+                    byte_lengths.append(len(data.text.encode('utf-8')) / n_tokens)
+
             if char_lengths:
                 char_stats = self.compute_basic_stats(char_lengths)
+                byte_stats = self.compute_basic_stats(byte_lengths)
                 results['token_length']['per_tokenizer'][tok_name] = {
                     'character_length': char_stats,
+                    'byte_length': byte_stats,
                     'primary_length': char_stats
                 }
             else:
                 empty_stats = self.empty_stats()
                 results['token_length']['per_tokenizer'][tok_name] = {
                     'character_length': empty_stats,
+                    'byte_length': empty_stats,
                     'primary_length': empty_stats
                 }
-        
+
         return results
     
     def compute_vocabulary_utilization_analysis(self, tokenized_data: Dict[str, List[TokenizedData]]) -> Dict[str, Any]:
@@ -371,11 +368,12 @@ class BasicTokenizationMetrics(BaseMetrics):
             total_lines = 0
             
             for data in tok_data:
-                if data.text and data.tokens:
-                    lines = data.text.split('\n')
+                if data.text and data.text.strip() and data.tokens:
+                    # Exclude blank lines from the count
+                    lines = [l for l in data.text.split('\n') if l.strip()]
                     num_lines = len(lines)
                     total_lines += num_lines
-                    
+
                     if num_lines > 0:
                         tpl = len(data.tokens) / num_lines
                         tokens_per_line.append(tpl)

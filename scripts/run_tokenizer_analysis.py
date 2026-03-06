@@ -22,9 +22,10 @@ from tokenizer_analysis.config.language_metadata import LanguageMetadata
 from tokenizer_analysis.loaders.multilingual_data import load_multilingual_data
 from tokenizer_analysis.core.input_utils import InputLoader
 from tokenizer_analysis.constants import (
-    TextProcessing,
-    DataProcessing,
-    MIN_TOKENIZERS_FOR_PLOTS
+    LARGE_ARRAY_THRESHOLD,
+    ARRAY_SAMPLING_POINTS,
+    DEFAULT_MAX_SAMPLES,
+    MIN_TOKENIZERS_FOR_PLOTS,
 )
 from tokenizer_analysis.visualization.visualization_config import LaTeXFormatting
 
@@ -187,10 +188,10 @@ def slim_results_for_json(results: Dict) -> Dict:
                             elif key in ['sorted_languages', 'sorted_costs', 'total_cost', 'n_languages', 
                                         'x_values', 'y_values', 'equality_line']:
                                 # Keep Lorenz curve data but limit array sizes if needed
-                                if isinstance(value, list) and len(value) > TextProcessing.LARGE_ARRAY_THRESHOLD:
+                                if isinstance(value, list) and len(value) > LARGE_ARRAY_THRESHOLD:
                                     # For very large arrays, keep only key points
-                                    step = len(value) // TextProcessing.ARRAY_SAMPLING_POINTS  # Keep ~50 points
-                                    tok_summary[key] = value[::step] if step > 1 else value[:TextProcessing.ARRAY_SAMPLING_POINTS]
+                                    step = len(value) // ARRAY_SAMPLING_POINTS  # Keep ~50 points
+                                    tok_summary[key] = value[::step] if step > 1 else value[:ARRAY_SAMPLING_POINTS]
                                 else:
                                     tok_summary[key] = value
                         slimmed_metric['per_tokenizer'][tok_name] = tok_summary
@@ -405,8 +406,8 @@ Examples:
     parser.add_argument(
         "--samples-per-lang",
         type=int,
-        default=DataProcessing.DEFAULT_MAX_SAMPLES,
-        help=f"Number of text samples per language (default: {DataProcessing.DEFAULT_MAX_SAMPLES})"
+        default=DEFAULT_MAX_SAMPLES,
+        help=f"Number of text samples per language (default: {DEFAULT_MAX_SAMPLES})"
     )
     
     # Output options

@@ -73,11 +73,12 @@ class TestSourceToReconMap:
         result = ASTBoundaryMetrics._build_source_to_recon_map(source, recon)
         assert result == [0, None, 1]
 
-    def test_case_insensitive_matching(self):
+    def test_case_mismatch_produces_none(self):
+        """Case-mismatched characters are not mapped (exact match only)."""
         source = "ABC"
         recon = "abc"
         result = ASTBoundaryMetrics._build_source_to_recon_map(source, recon)
-        assert result == [0, 1, 2]
+        assert result == [None, None, None]
 
     def test_identical_source_and_recon(self):
         source = "def fibonacci(n):"
@@ -90,8 +91,8 @@ class TestSourceToReconMap:
         assert result[3] is None  # ' '
         assert result[4] == 3  # 'f' (of fibonacci)
 
-    def test_case_sensitive_preferred(self):
-        """Exact match should bind before case-insensitive fallback."""
+    def test_case_sensitive_matching(self):
+        """Exact match pairs characters correctly."""
         source = "aA"
         recon = "aA"
         result = ASTBoundaryMetrics._build_source_to_recon_map(source, recon)

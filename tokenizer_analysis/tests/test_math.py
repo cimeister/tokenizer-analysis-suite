@@ -342,7 +342,7 @@ class TestComputePatternEntropy:
     def test_empty_list(self):
         result = DigitBoundaryMetrics._compute_pattern_entropy([])
         assert result["entropy"] == 0.0
-        assert result["normalized_entropy"] == 0.0
+        assert "normalized_entropy" not in result
         assert result["num_patterns"] == 0
         assert result["count"] == 0
 
@@ -350,27 +350,27 @@ class TestComputePatternEntropy:
         # All identical -> H = 0
         result = DigitBoundaryMetrics._compute_pattern_entropy([(1,)] * 10)
         assert result["entropy"] == 0.0
-        assert result["normalized_entropy"] == 0.0
+        assert "normalized_entropy" not in result
         assert result["num_patterns"] == 1
         assert result["dominant_pattern"] == (1,)
         assert result["dominant_pattern_freq"] == 1.0
         assert result["count"] == 10
 
     def test_two_patterns_equal_frequency(self):
-        # 50/50 split of 2 patterns -> H = 1.0 bit, normalized = 1.0
+        # 50/50 split of 2 patterns -> H = 1.0 bit
         pats = [(1,)] * 5 + [(2,)] * 5
         result = DigitBoundaryMetrics._compute_pattern_entropy(pats)
         assert result["entropy"] == pytest.approx(1.0)
-        assert result["normalized_entropy"] == pytest.approx(1.0)
+        assert "normalized_entropy" not in result
         assert result["num_patterns"] == 2
         assert result["count"] == 10
 
     def test_three_patterns_uniform(self):
-        # Uniform distribution over 3 patterns -> H = log2(3) ≈ 1.585
+        # Uniform distribution over 3 patterns -> H = log2(3) ≈ 1.585 bits
         pats = [(1,)] * 4 + [(2,)] * 4 + [(3,)] * 4
         result = DigitBoundaryMetrics._compute_pattern_entropy(pats)
         assert result["entropy"] == pytest.approx(math.log2(3))
-        assert result["normalized_entropy"] == pytest.approx(1.0)
+        assert "normalized_entropy" not in result
         assert result["num_patterns"] == 3
         assert result["count"] == 12
 
@@ -380,9 +380,7 @@ class TestComputePatternEntropy:
         result = DigitBoundaryMetrics._compute_pattern_entropy(pats)
         expected_h = -(0.8 * math.log2(0.8) + 0.2 * math.log2(0.2))
         assert result["entropy"] == pytest.approx(expected_h)
-        assert result["normalized_entropy"] == pytest.approx(
-            expected_h / math.log2(2)
-        )
+        assert "normalized_entropy" not in result
         assert result["dominant_pattern"] == (1,)
         assert result["dominant_pattern_freq"] == pytest.approx(0.8)
 
@@ -398,11 +396,13 @@ class TestComputePatternEntropy:
         assert result["entropy"] == 0.0
         assert result["dominant_pattern"] == ()
 
-    def test_normalized_entropy_bounded(self):
-        # Normalized entropy must be in [0, 1] for any distribution.
-        pats = [(1,)] * 7 + [(2,)] * 2 + [(1, 3)] * 1
+    def test_raw_entropy_not_normalized(self):
+        # Verify entropy is raw Shannon entropy (bits), not normalized.
+        # 4 equiprobable patterns -> H = log2(4) = 2.0 bits (not 1.0).
+        pats = [(1,)] * 3 + [(2,)] * 3 + [(3,)] * 3 + [(4,)] * 3
         result = DigitBoundaryMetrics._compute_pattern_entropy(pats)
-        assert 0.0 <= result["normalized_entropy"] <= 1.0
+        assert result["entropy"] == pytest.approx(2.0)
+        assert "normalized_entropy" not in result
 
 
 # ======================================================================
@@ -1150,3 +1150,68 @@ class TestGoodVsBadTokenizer:
             "per_tokenizer"]["tenplus"]["by_digit_length"]
         assert "10+" in by_dl
         assert by_dl["10+"]["en"]["mean_f1"] == pytest.approx(1.0)
+
+
+# ======================================================================
+# T1: Regression test for C1 bug — adjacent numbers must not merge
+# ======================================================================
+
+class TestAdjacentNumbersNotMerged:
+    """Verify that numbers separated by whitespace are treated as separate spans.
+
+    Before the C1 fix, _find_number_spans was called on the whitespace-stripped
+    reconstructed text, which merged "1234 5678" into "12345678".
+    """
+
+    @staticmethod
+    def _build(tok_name, samples):
+        token_to_id = {}
+        next_id = 0
+        for _text, toks in samples:
+            for t in toks:
+                if t not in token_to_id:
+                    token_to_id[t] = next_id
+                    next_id += 1
+        id_to_token = {v: k for k, v in token_to_id.items()}
+        provider = _MockProvider(tok_name, _MockTokenizer(id_to_token))
+        metrics = DigitBoundaryMetrics(provider)
+        data_list = [
+            TokenizedData(
+                tokenizer_name=tok_name,
+                language="en",
+                tokens=[token_to_id[t] for t in toks],
+                text=text,
+            )
+            for text, toks in samples
+        ]
+        return metrics, {tok_name: data_list}
+
+    def test_adjacent_four_digit_numbers(self):
+        """'1234 5678' must produce two 4-digit spans, not one 8-digit span."""
+        data = [
+            # Two 4-digit numbers separated by space, each a single token
+            ("1234 5678", ["1234", "Ġ5678"]),
+        ]
+        m, td = self._build("adj_tok", data)
+        results = m.compute(td)
+        by_dl = results["three_digit_boundary_alignment"][
+            "per_tokenizer"]["adj_tok"]["by_digit_length"]
+        # Both numbers are 4 digits -> bucket "4"
+        assert "4" in by_dl
+        assert by_dl["4"]["en"]["count"] == 2
+        # No 8-digit bucket should exist
+        assert "8" not in by_dl
+
+    def test_three_adjacent_numbers(self):
+        """'12 345 6789' must produce three separate spans."""
+        data = [
+            ("12 345 6789", ["12", "Ġ345", "Ġ6789"]),
+        ]
+        m, td = self._build("adj3_tok", data)
+        results = m.compute(td)
+        by_dl = results["three_digit_boundary_alignment"][
+            "per_tokenizer"]["adj3_tok"]["by_digit_length"]
+        # 2-digit, 3-digit, and 4-digit spans
+        assert "2" in by_dl
+        assert "3" in by_dl
+        assert "4" in by_dl

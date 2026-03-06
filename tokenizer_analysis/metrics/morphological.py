@@ -11,7 +11,7 @@ from .base import BaseMetrics, TokenizedDataProcessor
 from ..core.input_types import TokenizedData
 from ..core.input_providers import InputProvider
 from ..loaders import MorphologicalDataLoader
-from ..constants import Validation
+from ..constants import MIN_WORD_LENGTH
 
 logger = logging.getLogger(__name__)
 
@@ -458,7 +458,7 @@ class MorphologicalMetrics(BaseMetrics):
                     
                     # Process words in batches to reduce function call overhead
                     for word, word_tokens in word_token_alignments:
-                        if len(word) < Validation.MIN_WORD_LENGTH:  # Skip very short words
+                        if len(word) < MIN_WORD_LENGTH:  # Skip very short words
                             continue
                         
                         # Compute alignment metrics

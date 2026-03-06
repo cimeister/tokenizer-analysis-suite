@@ -18,100 +18,39 @@ from ..constants import (
 )
 
 
-def clean_text(text: str) -> str:
+def _split_and_filter(text: str, split_pattern: Optional[str], min_length: int) -> List[str]:
+    """Split *text* by *split_pattern* and keep fragments >= *min_length*.
+
+    When *split_pattern* is ``None``, splits on single newlines (``'\\n'``).
+    When it is a plain string (no regex metacharacters intended), it is used
+    with ``str.split``.  Otherwise it is compiled as a regex via ``re.split``.
     """
-    Clean and normalize text by removing extra whitespace.
-    
-    Args:
-        text: Input text to clean
-        
-    Returns:
-        Cleaned text with normalized whitespace
-    """
-    if not text:
-        return ""
-    
-    # Remove extra whitespace and normalize
-    return " ".join(text.split())
+    if not text or not text.strip():
+        return []
+    if split_pattern is None:
+        raw = text.split('\n')
+    elif split_pattern == '\n\n':
+        if '\n\n' not in text:
+            return []
+        raw = text.split('\n\n')
+    else:
+        raw = re.split(split_pattern, text)
+    return [s.strip() for s in raw if s.strip() and len(s.strip()) >= min_length]
 
 
 def split_into_paragraphs(text: str, min_length: int = MIN_PARAGRAPH_LENGTH) -> List[str]:
-    """
-    Split text into paragraphs with minimum length filtering.
-    
-    Args:
-        text: Input text to split
-        min_length: Minimum paragraph length to include
-        
-    Returns:
-        List of paragraph strings meeting minimum length requirement
-    """
-    if not text or not text.strip():
-        return []
-    
-    paragraphs = []
-    
-    # Split by double newlines (paragraph-like)
-    if '\n\n' in text:
-        raw_paragraphs = text.split('\n\n')
-        for para in raw_paragraphs:
-            para = para.strip()
-            if para and len(para) >= min_length:
-                paragraphs.append(para)
-    
-    return paragraphs
+    """Split text into paragraphs with minimum length filtering."""
+    return _split_and_filter(text, '\n\n', min_length)
 
 
 def split_into_lines(text: str, min_length: int = MIN_LINE_LENGTH) -> List[str]:
-    """
-    Split text into lines with minimum length filtering.
-    
-    Args:
-        text: Input text to split
-        min_length: Minimum line length to include
-        
-    Returns:
-        List of line strings meeting minimum length requirement
-    """
-    if not text or not text.strip():
-        return []
-    
-    lines = []
-    raw_lines = text.split('\n')
-    
-    for line in raw_lines:
-        line = line.strip()
-        if line and len(line) >= min_length:
-            lines.append(line)
-    
-    return lines
+    """Split text into lines with minimum length filtering."""
+    return _split_and_filter(text, None, min_length)
 
 
 def split_into_sentences(text: str, min_length: int = MIN_SENTENCE_LENGTH) -> List[str]:
-    """
-    Split text into sentences with minimum length filtering.
-    
-    Args:
-        text: Input text to split
-        min_length: Minimum sentence length to include
-        
-    Returns:
-        List of sentence strings meeting minimum length requirement
-    """
-    if not text or not text.strip():
-        return []
-    
-    sentences = []
-    
-    # Use simple sentence splitting based on punctuation
-    raw_sentences = re.split(r'[.!?]+\s+', text)
-    
-    for sentence in raw_sentences:
-        sentence = sentence.strip()
-        if sentence and len(sentence) >= min_length:
-            sentences.append(sentence)
-    
-    return sentences
+    """Split text into sentences with minimum length filtering."""
+    return _split_and_filter(text, r'[.!?]+\s+', min_length)
 
 
 def chunk_text(text: str, chunk_size: int = DEFAULT_CHUNK_SIZE, max_chunks: int = 100) -> List[str]:

@@ -142,11 +142,11 @@ class LaTeXTableGenerator:
                 'lower_is_better': False
             },
             'compression_rate': {
-                'title': 'Compression Ratio',
-                'key_path': ['compression_ratio', 'per_tokenizer'],
+                'title': 'Compression Rate',
+                'key_path': ['compression_rate', 'per_tokenizer'],
                 'value_key': 'global',
-                'stat_key': 'mean',
-                'err_key': 'std_err',
+                'stat_key': 'compression_rate',
+                'err_key': None,
                 'format': '{:.4f}',
                 'lower_is_better': False
             }

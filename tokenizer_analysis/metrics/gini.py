@@ -36,27 +36,64 @@ class TokenizerGiniMetrics(BaseMetrics):
         self.text_measurer = TextMeasurer(self.measurement_config)
         self.language_metadata = language_metadata
     
+    def _compute_language_costs(self, tok_data: List[TokenizedData],
+                                languages: Optional[List[str]] = None) -> Dict[str, float]:
+        """Compute per-language token costs (tokens / normalization units).
+
+        Args:
+            tok_data: Tokenized data for a single tokenizer.
+            languages: Optional list of languages to consider.  If ``None``,
+                all languages present in *tok_data* are used.
+
+        Returns:
+            Dict mapping language code to token cost.
+        """
+        lang_groups = TokenizedDataProcessor.group_by_language(tok_data)
+        if languages is None:
+            languages = list(lang_groups.keys())
+
+        language_costs: Dict[str, float] = {}
+        for lang in languages:
+            if lang not in lang_groups:
+                continue
+            lang_data = lang_groups[lang]
+            total_tokens = 0
+            total_normalization_units = 0
+            for data in lang_data:
+                if data.text and data.text.strip():
+                    total_tokens += len(data.tokens)
+                    total_normalization_units += self.text_measurer.get_unit_count(data.text)
+            if total_normalization_units > 0:
+                language_costs[lang] = total_tokens / total_normalization_units
+                logger.debug(
+                    "  %s: %d tokens / %d %s = %.4f",
+                    lang, total_tokens, total_normalization_units,
+                    self.measurement_config.method.value,
+                    language_costs[lang],
+                )
+        return language_costs
+
     def compute_tokenizer_fairness_gini(self, tokenized_data: Dict[str, List[TokenizedData]]) -> Dict[str, Any]:
         """
         Compute Tokenizer Fairness Gini (TFG) coefficient.
-        
+
         The TFG is defined as:
-        
+
         1. For each language ℓ, compute token cost on parallel corpus:
            c_ℓ = (number of tokens) / (number of raw bytes, characters or lines)
-           
+
         2. Compute mean cost: μ = (1/n) * Σ c_ℓ
-        
+
         3. Compute TFG:
            TFG = Σᵢ Σⱼ |c_i - c_j| / (2 * n² * μ)
-        
+
         Args:
             tokenized_data: Dict mapping tokenizer names to TokenizedData lists
-            
+
         Returns:
             Dict containing TFG coefficients and related metrics for each tokenizer
         """
-        
+
         results = {
             'per_tokenizer': {},
             'metadata': {
@@ -66,54 +103,25 @@ class TokenizerGiniMetrics(BaseMetrics):
                 'normalization_method': self.measurement_config.method.value,
             }
         }
-        
+
         # Extract all languages from the tokenized data
         all_languages = set()
         for tok_data in tokenized_data.values():
             for data in tok_data:
                 all_languages.add(data.language)
-        
+
         languages = list(all_languages)
-        n_languages = len(languages)
-        
+
         for tok_name in self.tokenizer_names:
             if tok_name not in tokenized_data:
                 continue
-                
+
             logger.info(f"Computing TFG for tokenizer: {tok_name}")
-            
+
             tok_data = tokenized_data[tok_name]
-            
-            # Step 1: Compute token costs per language
-            language_costs = {}
-            total_costs = []
-            
-            # Group data by language
-            lang_groups = TokenizedDataProcessor.group_by_language(tok_data)
-            
-            for lang in languages:
-                if lang not in lang_groups:
-                    continue
-                    
-                lang_data = lang_groups[lang]
-                
-                # Aggregate tokens and normalization units for this language
-                total_tokens = 0
-                total_normalization_units = 0
-                
-                for data in lang_data:
-                    if data.text and data.text.strip():  # Skip empty texts
-                        total_tokens += len(data.tokens)
-                        total_normalization_units += self.text_measurer.get_unit_count(data.text)
-                
-                if total_normalization_units > 0:
-                    # Token cost: tokens per normalization unit
-                    cost = total_tokens / total_normalization_units
-                    language_costs[lang] = cost
-                    total_costs.append(cost)
-                    
-                    logger.debug(f"  {lang}: {total_tokens} tokens / {total_normalization_units} {self.measurement_config.method.value} = {cost:.4f}")
-            
+            language_costs = self._compute_language_costs(tok_data, languages)
+            total_costs = list(language_costs.values())
+
             if len(language_costs) < MIN_LANGUAGES_FOR_GINI:
                 logger.warning(f"Insufficient language data for TFG calculation for {tok_name}")
                 results['per_tokenizer'][tok_name] = {
@@ -199,28 +207,10 @@ class TokenizerGiniMetrics(BaseMetrics):
         for tok_name in self.tokenizer_names:
             if tok_name not in tokenized_data:
                 continue
-                
+
             tok_data = tokenized_data[tok_name]
-            
-            # Get token costs per language
-            language_costs = {}
-            
-            # Group data by language
-            lang_groups = TokenizedDataProcessor.group_by_language(tok_data)
-            
-            for lang, lang_data in lang_groups.items():
-                total_tokens = 0
-                total_normalization_units = 0
-                
-                for data in lang_data:
-                    if data.text and data.text.strip():
-                        total_tokens += len(data.tokens)
-                        total_normalization_units += self.text_measurer.get_unit_count(data.text)
-                
-                if total_normalization_units > 0:
-                    cost = total_tokens / total_normalization_units
-                    language_costs[lang] = cost
-            
+            language_costs = self._compute_language_costs(tok_data)
+
             if len(language_costs) < MIN_LANGUAGES_FOR_GINI:
                 results['per_tokenizer'][tok_name] = {
                     'warning': 'Insufficient data for Lorenz curve'
@@ -287,14 +277,3 @@ class TokenizerGiniMetrics(BaseMetrics):
         results['lorenz_curve_data'] = lorenz_results
         
         return results
-    
-    # Convenience methods for common groupings
-    def compute_by_script_family(self, language_texts: Dict[str, List[str]], 
-                                all_encodings: Optional[Dict[str, Dict[str, List[List[int]]]]] = None) -> Dict[str, Any]:
-        """Compute TFG metrics grouped by script family."""
-        return self.compute_by_groups(language_texts, all_encodings, 'script_families', self.compute)
-    
-    def compute_by_resource_level(self, language_texts: Dict[str, List[str]], 
-                                 all_encodings: Optional[Dict[str, Dict[str, List[List[int]]]]] = None) -> Dict[str, Any]:
-        """Compute TFG metrics grouped by resource level."""
-        return self.compute_by_groups(language_texts, all_encodings, 'resource_levels', self.compute)

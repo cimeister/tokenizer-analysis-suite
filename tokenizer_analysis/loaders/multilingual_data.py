@@ -14,7 +14,10 @@ from ..constants import (
     DEFAULT_MAX_TEXTS_PER_LANGUAGE,
     TEXT_COLUMN_NAMES,
     DEFAULT_ENCODING,
-    FileFormats
+    ERROR_HANDLING,
+    JSON_EXTENSIONS,
+    PARQUET_EXTENSIONS,
+    TEXT_EXTENSIONS,
 )
 from ..utils.text_utils import (
     extract_texts_with_fallback_strategies,
@@ -279,11 +282,11 @@ def load_single_file(file_path: str, max_texts: int) -> List[str]:
     """
     file_ext = os.path.splitext(file_path)[1].lower()
     
-    if file_ext in FileFormats.JSON_EXTENSIONS:
+    if file_ext in JSON_EXTENSIONS:
         return load_from_json(file_path, max_texts)
-    elif file_ext in FileFormats.PARQUET_EXTENSIONS:
+    elif file_ext in PARQUET_EXTENSIONS:
         return load_from_parquet(file_path, max_texts)
-    elif file_ext in FileFormats.TEXT_EXTENSIONS:
+    elif file_ext in TEXT_EXTENSIONS:
         return load_from_text(file_path, max_texts)
     else:
         # Try to detect format by attempting to load
@@ -328,7 +331,7 @@ def load_from_text(text_file: str, max_texts: int) -> List[str]:
     texts = []
     
     try:
-        with open(text_file, 'r', encoding=DEFAULT_ENCODING, errors=FileFormats.ERROR_HANDLING) as f:
+        with open(text_file, 'r', encoding=DEFAULT_ENCODING, errors=ERROR_HANDLING) as f:
             content = f.read().strip()
             
             if not content:

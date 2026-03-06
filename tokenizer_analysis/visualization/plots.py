@@ -60,7 +60,7 @@ def get_metric_display_name(metric_key: str) -> str:
     """Get display name for a metric."""
     metric_names = {
         'fertility': 'Fertility',
-        'compression_ratio': 'Compression Rate',
+        'compression_rate': 'Compression Rate',
         'vocabulary_utilization': 'Vocabulary Utilization',
         'tokenizer_fairness_gini': 'Gini Coefficient',
         'morphscore': 'MorphScore',
@@ -77,7 +77,7 @@ def get_ylabel(metric_key: str, metadata: Optional[Dict] = None) -> str:
     
     labels = {
         'fertility': f'Fertility (tokens/{norm_method.rstrip("s")})',
-        'compression_ratio': f'Per {norm_method.rstrip("s").title()} Compression Rate',
+        'compression_rate': f'Per {norm_method.rstrip("s").title()} Compression Rate',
         'vocabulary_utilization': 'Vocabulary Utilization (%)',
         'tokenizer_fairness_gini': 'Gini Coefficient',
         'morphscore_recall': 'MorphScore Recall',
@@ -119,207 +119,102 @@ def save_plot(fig, filepath: str):
     plt.close(fig)
 
 
+def plot_metric_bar_chart(results: Dict[str, Any], save_path: str, tokenizer_names: List[str],
+                          metric_key: str, value_extractor, show_global_lines: bool = True,
+                          ylim: Optional[tuple] = None, global_avg_fmt: str = '.2f'):
+    """Plot a bar chart for any metric.
+
+    Args:
+        results: Full results dict.
+        save_path: File path to save the plot.
+        tokenizer_names: Ordered list of tokenizer names.
+        metric_key: Top-level key in *results* (e.g. ``'fertility'``).
+        value_extractor: Callable ``(tok_data_dict) -> (value, optional_std)``
+            or ``(tok_data_dict) -> value``.  When the return is a scalar,
+            no error bars are drawn.
+        show_global_lines: Whether to draw a global average line.
+        ylim: Optional (ymin, ymax) tuple for the y-axis.
+        global_avg_fmt: Format string for the global average label.
+    """
+    if metric_key not in results:
+        return
+
+    fig, ax = plt.subplots()
+    per_tok = results[metric_key]['per_tokenizer']
+
+    values = []
+    stds = []
+    labels = []
+
+    for tok_name in tokenizer_names:
+        if tok_name not in per_tok:
+            continue
+        extracted = value_extractor(per_tok[tok_name])
+        if isinstance(extracted, tuple):
+            val, std = extracted
+            stds.append(std)
+        else:
+            val = extracted
+            stds.append(None)
+        values.append(val)
+        labels.append(tok_name)
+
+    if values:
+        colors = get_colors(len(values))
+        yerr = stds if any(s is not None for s in stds) else None
+        ax.bar(labels, values, yerr=yerr, capsize=5 if yerr else 0,
+               color=colors, alpha=0.8)
+
+        if show_global_lines:
+            global_mean = np.mean(values)
+            ax.axhline(y=global_mean, color='red', linestyle='--', alpha=0.7,
+                       label=f'Global Average: {global_mean:{global_avg_fmt}}')
+            ax.legend()
+
+        metadata = results[metric_key].get('metadata', {})
+        ax.set_ylabel(get_ylabel(metric_key, metadata))
+        ax.set_title(get_plot_title('individual', metric_key))
+        if ylim is not None:
+            ax.set_ylim(*ylim)
+        plt.xticks(rotation=45)
+
+    save_plot(fig, save_path)
+
+
 def plot_fertility(results: Dict[str, Any], save_path: str, tokenizer_names: List[str], show_global_lines: bool = True):
     """Plot fertility metric comparison."""
-    if 'fertility' not in results:
-        return
-    
-    fig, ax = plt.subplots()
-    fertility_data = results['fertility']['per_tokenizer']
-    
-    values = []
-    labels = []
-    
-    for tok_name in tokenizer_names:
-        if tok_name in fertility_data:
-            mean_val = fertility_data[tok_name]['global']['mean']
-            std_val = fertility_data[tok_name]['global']['std']
-            values.append((mean_val, std_val))
-            labels.append(tok_name)
-    
-    if values:
-        means, stds = zip(*values)
-        colors = get_colors(len(values))
-        bars = ax.bar(labels, means, yerr=stds, capsize=5, color=colors, alpha=0.8)
-        
-        # Add global reference line if requested
-        if show_global_lines:
-            global_mean = np.mean(means)
-            ax.axhline(y=global_mean, color='red', linestyle='--', alpha=0.7, label=f'Global Average: {global_mean:.2f}')
-            ax.legend()
-        
-        # Get labels using centralized functions
-        metadata = results['fertility'].get('metadata', {})
-        ylabel = get_ylabel('fertility', metadata)
-        title = get_plot_title('individual', 'fertility')
-        ax.set_ylabel(ylabel)
-        ax.set_title(title)
-        plt.xticks(rotation=45)
-        
-    save_plot(fig, save_path)
+    plot_metric_bar_chart(
+        results, save_path, tokenizer_names, 'fertility',
+        lambda td: (td['global']['mean'], td['global']['std']),
+        show_global_lines=show_global_lines,
+    )
 
 
 def plot_vocabulary_utilization(results: Dict[str, Any], save_path: str, tokenizer_names: List[str], show_global_lines: bool = True):
     """Plot vocabulary utilization comparison."""
-    if 'vocabulary_utilization' not in results:
-        return
-        
-    fig, ax = plt.subplots()
-    util_data = results['vocabulary_utilization']['per_tokenizer']
-    
-    values = []
-    labels = []
-    
-    for tok_name in tokenizer_names:
-        if tok_name in util_data:
-            util = util_data[tok_name]['global_utilization']
-            values.append(util * 100)
-            labels.append(tok_name)
-    
-    if values:
-        colors = get_colors(len(values))
-        bars = ax.bar(labels, values, color=colors, alpha=0.8)
-        
-        # Add global reference line if requested
-        if show_global_lines:
-            global_mean = np.mean(values)
-            ax.axhline(y=global_mean, color='red', linestyle='--', alpha=0.7, label=f'Global Average: {global_mean:.1f}%')
-            ax.legend()
-        
-        ylabel = get_ylabel('vocabulary_utilization')
-        title = get_plot_title('individual', 'vocabulary_utilization')
-        ax.set_ylabel(ylabel)
-        ax.set_title(title)
-        plt.xticks(rotation=45)
-        
-    save_plot(fig, save_path)
-
-
-def plot_unk_percentage(results: Dict[str, Any], save_path: str, tokenizer_names: List[str], show_global_lines: bool = True):
-    """Plot UNK percentage comparison."""
-    if 'unk_percentage' not in results:
-        return
-
-    fig, ax = plt.subplots()
-    unk_data = results['unk_percentage']['per_tokenizer']
-
-    values = []
-    labels = []
-
-    for tok_name in tokenizer_names:
-        if tok_name in unk_data and unk_data[tok_name]['global'].get('has_unk_token', False):
-            mean_val = unk_data[tok_name]['global']['mean']
-            std_val = unk_data[tok_name]['global']['std']
-            values.append((mean_val, std_val))
-            labels.append(tok_name)
-
-    if values:
-        means, stds = zip(*values)
-        colors = get_colors(len(values))
-        bars = ax.bar(labels, means, yerr=stds, capsize=5, color=colors, alpha=0.8)
-
-        # Add global reference line if requested
-        if show_global_lines:
-            global_mean = np.mean(means)
-            ax.axhline(y=global_mean, color='red', linestyle='--', alpha=0.7,
-                      label=f'Global Average: {global_mean:.2f}%')
-            ax.legend()
-
-        # Get labels using centralized functions
-        metadata = results['unk_percentage'].get('metadata', {})
-        ylabel = get_ylabel('unk_percentage', metadata)
-        title = get_plot_title('individual', 'unk_percentage')
-        ax.set_ylabel(ylabel)
-        ax.set_title(title)
-
-        # Set y-axis to show percentage range appropriately
-        max_val = max(means) + max(stds)
-        ax.set_ylim(0, max(max_val * 1.1, 1.0))  # At least 1% range
-
-        # Add percentage labels on bars
-        for bar, (mean_val, std_val) in zip(bars, values):
-            height = bar.get_height()
-            ax.text(bar.get_x() + bar.get_width()/2., height + std_val + max_val * 0.01,
-                   f'{mean_val:.1f}%', ha='center', va='bottom', fontsize=9)
-
-        plt.xticks(rotation=45)
-
-    save_plot(fig, save_path)
+    plot_metric_bar_chart(
+        results, save_path, tokenizer_names, 'vocabulary_utilization',
+        lambda td: td['global_utilization'] * 100,
+        show_global_lines=show_global_lines, global_avg_fmt='.1f',
+    )
 
 
 def plot_compression_rate(results: Dict[str, Any], save_path: str, tokenizer_names: List[str], show_global_lines: bool = True):
     """Plot compression rate comparison."""
-    if 'compression_ratio' not in results:
-        return
-        
-    fig, ax = plt.subplots()
-    comp_data = results['compression_ratio']['per_tokenizer']
-    
-    values = []
-    labels = []
-    
-    for tok_name in tokenizer_names:
-        if tok_name in comp_data:
-            ratio = comp_data[tok_name]['global']['mean']
-            values.append(ratio)
-            labels.append(tok_name)
-    
-    if values:
-        colors = get_colors(len(values))
-        bars = ax.bar(labels, values, color=colors, alpha=0.8)
-        
-        # Add global reference line if requested
-        if show_global_lines:
-            global_mean = np.mean(values)
-            ax.axhline(y=global_mean, color='red', linestyle='--', alpha=0.7, label=f'Global Average: {global_mean:.2f}')
-            ax.legend()
-        
-        # Get labels using centralized functions
-        metadata = results['compression_ratio'].get('metadata', {})
-        ylabel = get_ylabel('compression_ratio', metadata)
-        title = get_plot_title('individual', 'compression_ratio')
-        ax.set_ylabel(ylabel)
-        ax.set_title(title)
-        plt.xticks(rotation=45)
-        
-    save_plot(fig, save_path)
+    plot_metric_bar_chart(
+        results, save_path, tokenizer_names, 'compression_rate',
+        lambda td: td['global']['compression_rate'],
+        show_global_lines=show_global_lines,
+    )
 
 
 def plot_gini_coefficient(results: Dict[str, Any], save_path: str, tokenizer_names: List[str], show_global_lines: bool = True):
     """Plot Gini coefficient comparison for fairness."""
-    if 'tokenizer_fairness_gini' not in results:
-        return
-        
-    fig, ax = plt.subplots()
-    gini_data = results['tokenizer_fairness_gini']['per_tokenizer']
-    
-    values = []
-    labels = []
-    
-    for tok_name in tokenizer_names:
-        if tok_name in gini_data:
-            gini = gini_data[tok_name]['gini_coefficient']
-            values.append(gini)
-            labels.append(tok_name)
-    
-    if values:
-        colors = get_colors(len(values))
-        bars = ax.bar(labels, values, color=colors, alpha=0.8)
-        
-        # Add global reference line if requested
-        if show_global_lines:
-            global_mean = np.mean(values)
-            ax.axhline(y=global_mean, color='red', linestyle='--', alpha=0.7, label=f'Global Average: {global_mean:.3f}')
-            ax.legend()
-        
-        ylabel = get_ylabel('tokenizer_fairness_gini')
-        title = get_plot_title('individual', 'tokenizer_fairness_gini')
-        ax.set_ylabel(ylabel)
-        ax.set_title(title)
-        ax.set_ylim(0, 1)
-        plt.xticks(rotation=45)
-        
-    save_plot(fig, save_path)
+    plot_metric_bar_chart(
+        results, save_path, tokenizer_names, 'tokenizer_fairness_gini',
+        lambda td: td['gini_coefficient'],
+        show_global_lines=show_global_lines, ylim=(0, 1), global_avg_fmt='.3f',
+    )
 
 
 def plot_lorenz_curves(results: Dict[str, Any], save_path: str, tokenizer_names: List[str]):
@@ -445,47 +340,6 @@ def plot_utf8_integrity(results: Dict[str, Any], save_path: str, tokenizer_names
     save_plot(fig, save_path)
 
 
-def plot_indentation_metrics(results: Dict[str, Any], save_path: str, tokenizer_names: List[str]):
-    """Plot indentation consistency metrics: depth proportionality correlation and pattern stability."""
-    if 'indentation_consistency' not in results or 'summary' not in results['indentation_consistency']:
-        return
-
-    summary = results['indentation_consistency']['summary']
-
-    corr_values = []
-    stab_values = []
-    labels = []
-
-    for tok_name in tokenizer_names:
-        if tok_name in summary:
-            tok_summary = summary[tok_name]
-            corr = tok_summary.get('avg_depth_proportionality_correlation')
-            stab = tok_summary.get('avg_pattern_stability_rate')
-            if corr is not None or stab is not None:
-                corr_values.append(corr if corr is not None else 0)
-                stab_values.append(stab if stab is not None else 0)
-                labels.append(tok_name)
-
-    if not labels:
-        return
-
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
-    colors = get_colors(len(labels))
-
-    ax1.bar(labels, corr_values, color=colors, alpha=0.8)
-    ax1.set_ylabel('Spearman Correlation')
-    ax1.set_title('Depth Proportionality Correlation')
-    ax1.tick_params(axis='x', rotation=45)
-
-    ax2.bar(labels, stab_values, color=colors, alpha=0.8)
-    ax2.set_ylabel('Stability Rate')
-    ax2.set_title('Pattern Stability Rate')
-    ax2.tick_params(axis='x', rotation=45)
-
-    plt.tight_layout()
-    save_plot(fig, save_path)
-
-
 def plot_grouped_analysis(grouped_results: Dict[str, Dict[str, Any]], save_dir: str,
                          metric_name: str, group_type: str):
     """Plot grouped analysis results."""
@@ -523,7 +377,8 @@ def plot_grouped_analysis(grouped_results: Dict[str, Dict[str, Any]], save_dir: 
                 
                 tok_data = group_data[group_name][metric_name]['per_tokenizer'][tok_name]
                 if 'global' in tok_data:
-                    values.append(tok_data['global']['mean'])
+                    g = tok_data['global']
+                    values.append(g.get('mean', g.get('compression_rate', 0)))
                 else:
                     values.append(0)
             else:
@@ -555,23 +410,19 @@ def generate_all_plots(results: Dict[str, Any], save_dir: str, tokenizer_names: 
     # Basic metrics
     plot_fertility(results, os.path.join(save_dir, 'fertility_individual.svg'), tokenizer_names, show_global_lines)
     plot_vocabulary_utilization(results, os.path.join(save_dir, 'vocabulary_utilization_individual.svg'), tokenizer_names, show_global_lines)
-    plot_unk_percentage(results, os.path.join(save_dir, 'unk_percentage_individual.svg'), tokenizer_names, show_global_lines)
-    
+
     # Information theory
     plot_compression_rate(results, os.path.join(save_dir, 'compression_rate_individual.svg'), tokenizer_names, show_global_lines)
-    
+
     # Fairness
     plot_gini_coefficient(results, os.path.join(save_dir, 'tokenizer_fairness_gini_individual.svg'), tokenizer_names, show_global_lines)
     plot_lorenz_curves(results, os.path.join(save_dir, 'lorenz_curves_individual.svg'), tokenizer_names)
-    
+
     # Morphological
     plot_morphscore(results, os.path.join(save_dir, 'morphscore_individual.svg'), tokenizer_names)
 
     # UTF-8 integrity
     plot_utf8_integrity(results, os.path.join(save_dir, 'utf8_integrity.svg'), tokenizer_names)
-
-    # Indentation consistency
-    plot_indentation_metrics(results, os.path.join(save_dir, 'indentation_metrics.svg'), tokenizer_names)
     
     # Per-language plots
     if per_language_plots:
@@ -589,7 +440,7 @@ def generate_all_plots(results: Dict[str, Any], save_dir: str, tokenizer_names: 
         for group_type, group_data in grouped_results.items():
             if not group_data:  # Skip empty group data
                 continue
-            for metric in ['fertility', 'vocabulary_utilization', 'compression_ratio', 'unk_percentage', 'morphscore']:
+            for metric in ['fertility', 'vocabulary_utilization', 'compression_rate', 'morphscore']:
                 try:
                     plot_grouped_analysis(grouped_results, grouped_dir, metric, group_type)
                 except Exception as e:
@@ -611,7 +462,6 @@ def _generate_per_language_plots(results: Dict[str, Any], save_dir: str,
     _plot_per_language_compression_rate(results, per_lang_dir, tokenizer_names, show_global_lines)
     _plot_per_language_vocabulary_utilization(results, per_lang_dir, tokenizer_names, show_global_lines)
     _plot_per_language_gini_coefficient(results, per_lang_dir, tokenizer_names, show_global_lines)
-    _plot_per_language_unk_percentage(results, per_lang_dir, tokenizer_names, show_global_lines)
 
 
 def _generate_faceted_plots(results: Dict[str, Any], save_dir: str,
@@ -619,9 +469,9 @@ def _generate_faceted_plots(results: Dict[str, Any], save_dir: str,
     """Generate faceted plots with subplots for each tokenizer."""
     facet_dir = os.path.join(save_dir, 'faceted_plots')
     os.makedirs(facet_dir, exist_ok=True)
-    
+
     # Generate faceted plots for key metrics
-    for metric_name in ['fertility', 'compression_ratio', 'vocabulary_utilization', 'unk_percentage']:
+    for metric_name in ['fertility', 'compression_rate', 'vocabulary_utilization']:
         if metric_name in results:
             _plot_faceted_metric(results, facet_dir, tokenizer_names, metric_name, show_global_lines)
 
@@ -632,7 +482,7 @@ def _plot_per_language_combined_subplots(results: Dict[str, Any], save_dir: str,
     # Collect metrics that have per-language data
     metrics_info = [
         ('fertility', get_metric_display_name('fertility')),
-        ('compression_ratio', get_metric_display_name('compression_ratio')), 
+        ('compression_rate', get_metric_display_name('compression_rate')), 
         ('vocabulary_utilization', get_metric_display_name('vocabulary_utilization')),
         ('tokenizer_fairness_gini', get_metric_display_name('tokenizer_fairness_gini'))
     ]
@@ -654,7 +504,7 @@ def _plot_per_language_combined_subplots(results: Dict[str, Any], save_dir: str,
                         # Handle different data structures based on your changes
                         if metric_key == 'vocabulary_utilization':
                             value = lang_stats.get('utilization', 0.0) * 100
-                        elif metric_key == 'compression_ratio':
+                        elif metric_key == 'compression_rate':
                             # Use your scalar value structure
                             value = lang_stats if isinstance(lang_stats, (int, float)) else lang_stats.get('mean', 0.0)
                         elif metric_key == 'tokenizer_fairness_gini':
@@ -707,7 +557,7 @@ def _plot_per_language_combined_subplots(results: Dict[str, Any], save_dir: str,
         
         for j, tok_name in enumerate(tokenizer_names):
             values = [lang_data.get(lang, {}).get(tok_name, 0) for lang in languages]
-            bars = ax.bar(x_pos + j * width, values, width, label=tok_name, color=colors[j], alpha=0.8)
+            ax.bar(x_pos + j * width, values, width, label=tok_name, color=colors[j], alpha=0.8)
 
             # Add global reference line if requested
             if show_global_lines and values and any(v > 0 for v in values):
@@ -755,7 +605,7 @@ def _plot_per_language_grouped_bars(lang_data: Dict[str, Dict[str, float]],
 
     for i, tok_name in enumerate(tokenizer_names):
         values = [lang_data[lang].get(tok_name, 0) for lang in languages]
-        bars = ax.bar(x_pos + i * width, values, width, label=tok_name, color=colors[i], alpha=0.8)
+        ax.bar(x_pos + i * width, values, width, label=tok_name, color=colors[i], alpha=0.8)
 
         # Add global reference line if requested
         if show_global_lines and values:
@@ -775,143 +625,78 @@ def _plot_per_language_grouped_bars(lang_data: Dict[str, Dict[str, float]],
     save_plot(fig, save_path)
 
 
-def _plot_per_language_fertility(results: Dict[str, Any], save_dir: str,
-                               tokenizer_names: List[str], show_global_lines: bool):
+def _plot_per_language_metric(results: Dict[str, Any], save_dir: str,
+                              tokenizer_names: List[str], metric_key: str,
+                              value_extractor, filename: str, show_global_lines: bool):
+    """Plot per-language comparison with grouped bars for any metric.
+
+    Args:
+        results: Full results dict.
+        save_dir: Directory to save the plot.
+        tokenizer_names: Ordered list of tokenizer names.
+        metric_key: Top-level key in *results*.
+        value_extractor: Callable ``(lang_stats) -> float`` to extract the
+            per-language value from the metric's per-language data structure.
+        filename: Output filename (e.g. ``'fertility_per_language.svg'``).
+        show_global_lines: Whether to draw global average lines.
+    """
+    if metric_key not in results:
+        return
+
+    lang_data = {}
+    for tok_name in tokenizer_names:
+        if tok_name in results[metric_key].get('per_tokenizer', {}):
+            tok_data = results[metric_key]['per_tokenizer'][tok_name]
+            if 'per_language' in tok_data:
+                for lang, lang_stats in tok_data['per_language'].items():
+                    if lang not in lang_data:
+                        lang_data[lang] = {}
+                    lang_data[lang][tok_name] = value_extractor(lang_stats)
+
+    if lang_data:
+        metadata = results[metric_key].get('metadata', {})
+        ylabel = get_ylabel(metric_key, metadata)
+        title = get_plot_title('per_language', metric_key)
+        _plot_per_language_grouped_bars(
+            lang_data, os.path.join(save_dir, filename),
+            tokenizer_names, title, ylabel, show_global_lines
+        )
+
+
+def _plot_per_language_fertility(results, save_dir, tokenizer_names, show_global_lines):
     """Plot per-language fertility comparison with grouped bars."""
-    if 'fertility' not in results:
-        return
-    
-    # Extract per-language data
-    lang_data = {}
-    for tok_name in tokenizer_names:
-        if tok_name in results['fertility'].get('per_tokenizer', {}):
-            tok_data = results['fertility']['per_tokenizer'][tok_name]
-            if 'per_language' in tok_data:
-                for lang, lang_stats in tok_data['per_language'].items():
-                    if lang not in lang_data:
-                        lang_data[lang] = {}
-                    fertility_value = lang_stats.get('mean', 0.0)
-                    lang_data[lang][tok_name] = fertility_value
-    
-    if lang_data:
-        # Get labels using centralized functions
-        metadata = results['fertility'].get('metadata', {})
-        ylabel = get_ylabel('fertility', metadata)
-        title = get_plot_title('per_language', 'fertility')
-        
-        _plot_per_language_grouped_bars(
-            lang_data, os.path.join(save_dir, 'fertility_per_language.svg'),
-            tokenizer_names, title, ylabel, show_global_lines
-        )
+    _plot_per_language_metric(
+        results, save_dir, tokenizer_names, 'fertility',
+        lambda s: s.get('mean', 0.0) if isinstance(s, dict) else s,
+        'fertility_per_language.svg', show_global_lines,
+    )
 
 
-def _plot_per_language_compression_rate(results: Dict[str, Any], save_dir: str,
-                                       tokenizer_names: List[str], show_global_lines: bool):
-    """Plot per-language compression ratio comparison with grouped bars."""
-    if 'compression_ratio' not in results:
-        return
-    
-    # Extract per-language data
-    lang_data = {}
-    for tok_name in tokenizer_names:
-        if tok_name in results['compression_ratio'].get('per_tokenizer', {}):
-            tok_data = results['compression_ratio']['per_tokenizer'][tok_name]
-            if 'per_language' in tok_data:
-                for lang, ratio_value in tok_data['per_language'].items():
-                    if lang not in lang_data:
-                        lang_data[lang] = {}
-                    lang_data[lang][tok_name] = ratio_value
-    
-    if lang_data:
-        # Get labels using centralized functions
-        metadata = results['compression_ratio'].get('metadata', {})
-        ylabel = get_ylabel('compression_ratio', metadata)
-        title = get_plot_title('per_language', 'compression_ratio')
-        
-        _plot_per_language_grouped_bars(
-            lang_data, os.path.join(save_dir, 'compression_rate_per_language.svg'),
-            tokenizer_names, title, ylabel, show_global_lines
-        )
+def _plot_per_language_compression_rate(results, save_dir, tokenizer_names, show_global_lines):
+    """Plot per-language compression rate comparison with grouped bars."""
+    _plot_per_language_metric(
+        results, save_dir, tokenizer_names, 'compression_rate',
+        lambda s: s if isinstance(s, (int, float)) else s.get('mean', 0.0),
+        'compression_rate_per_language.svg', show_global_lines,
+    )
 
 
-def _plot_per_language_vocabulary_utilization(results: Dict[str, Any], save_dir: str,
-                                            tokenizer_names: List[str], show_global_lines: bool):
+def _plot_per_language_vocabulary_utilization(results, save_dir, tokenizer_names, show_global_lines):
     """Plot per-language vocabulary utilization comparison with grouped bars."""
-    if 'vocabulary_utilization' not in results:
-        return
-    
-    # Extract per-language data
-    lang_data = {}
-    for tok_name in tokenizer_names:
-        if tok_name in results['vocabulary_utilization'].get('per_tokenizer', {}):
-            tok_data = results['vocabulary_utilization']['per_tokenizer'][tok_name]
-            if 'per_language' in tok_data:
-                for lang, lang_stats in tok_data['per_language'].items():
-                    if lang not in lang_data:
-                        lang_data[lang] = {}
-                    util_value = lang_stats.get('utilization', 0.0) * 100
-                    lang_data[lang][tok_name] = util_value
-    
-    if lang_data:
-        ylabel = get_ylabel('vocabulary_utilization')
-        title = get_plot_title('per_language', 'vocabulary_utilization')
-        _plot_per_language_grouped_bars(
-            lang_data, os.path.join(save_dir, 'vocabulary_utilization_per_language.svg'),
-            tokenizer_names, title, ylabel, show_global_lines
-        )
+    _plot_per_language_metric(
+        results, save_dir, tokenizer_names, 'vocabulary_utilization',
+        lambda s: s.get('utilization', 0.0) * 100 if isinstance(s, dict) else s,
+        'vocabulary_utilization_per_language.svg', show_global_lines,
+    )
 
 
-def _plot_per_language_gini_coefficient(results: Dict[str, Any], save_dir: str,
-                                      tokenizer_names: List[str], show_global_lines: bool):
+def _plot_per_language_gini_coefficient(results, save_dir, tokenizer_names, show_global_lines):
     """Plot per-language Gini coefficient comparison with grouped bars."""
-    if 'tokenizer_fairness_gini' not in results:
-        return
-    
-    # Extract per-language data
-    lang_data = {}
-    for tok_name in tokenizer_names:
-        if tok_name in results['tokenizer_fairness_gini'].get('per_tokenizer', {}):
-            tok_data = results['tokenizer_fairness_gini']['per_tokenizer'][tok_name]
-            if 'per_language' in tok_data:
-                for lang, gini_value in tok_data['per_language'].items():
-                    if lang not in lang_data:
-                        lang_data[lang] = {}
-                    lang_data[lang][tok_name] = gini_value
-    
-    if lang_data:
-        ylabel = get_ylabel('tokenizer_fairness_gini')
-        title = get_plot_title('per_language', 'tokenizer_fairness_gini')
-        _plot_per_language_grouped_bars(
-            lang_data, os.path.join(save_dir, 'tokenizer_fairness_gini_per_language.svg'),
-            tokenizer_names, title, ylabel, show_global_lines
-        )
-
-
-def _plot_per_language_unk_percentage(results: Dict[str, Any], save_dir: str,
-                                    tokenizer_names: List[str], show_global_lines: bool):
-    """Plot per-language UNK percentage comparison with grouped bars."""
-    if 'unk_percentage' not in results:
-        return
-
-    # Extract per-language data
-    lang_data = {}
-    for tok_name in tokenizer_names:
-        if tok_name in results['unk_percentage'].get('per_tokenizer', {}):
-            tok_data = results['unk_percentage']['per_tokenizer'][tok_name]
-            if 'per_language' in tok_data and tok_data['global'].get('has_unk_token', False):
-                for lang, lang_stats in tok_data['per_language'].items():
-                    if lang not in lang_data:
-                        lang_data[lang] = {}
-                    unk_value = lang_stats.get('mean', 0.0)
-                    lang_data[lang][tok_name] = unk_value
-
-    if lang_data:
-        ylabel = get_ylabel('unk_percentage')
-        title = get_plot_title('per_language', 'unk_percentage')
-        _plot_per_language_grouped_bars(
-            lang_data, os.path.join(save_dir, 'unk_percentage_per_language.svg'),
-            tokenizer_names, title, ylabel, show_global_lines
-        )
+    _plot_per_language_metric(
+        results, save_dir, tokenizer_names, 'tokenizer_fairness_gini',
+        lambda s: s if isinstance(s, (int, float)) else s.get('mean', 0.0),
+        'tokenizer_fairness_gini_per_language.svg', show_global_lines,
+    )
 
 
 def _plot_faceted_metric(results: Dict[str, Any], save_dir: str,
@@ -964,7 +749,7 @@ def _plot_faceted_metric(results: Dict[str, Any], save_dir: str,
             
             if values:
                 # Use single consistent color for all bars
-                bars = ax.bar(range(len(languages)), values, color=single_color, alpha=0.8)
+                ax.bar(range(len(languages)), values, color=single_color, alpha=0.8)
                 if show_global_lines:
                     global_mean = np.mean(values)
                     ax.axhline(y=global_mean, color='red', linestyle='--', alpha=0.7)

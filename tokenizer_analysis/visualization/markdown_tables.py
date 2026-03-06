@@ -101,9 +101,9 @@ class MarkdownTableGenerator:
             {
                 'key': 'compression_rate',
                 'title': 'Compression Rate',
-                'key_path': ['compression_ratio', 'per_tokenizer'],
+                'key_path': ['compression_rate', 'per_tokenizer'],
                 'value_key': 'global',
-                'stat_key': 'mean',
+                'stat_key': 'compression_rate',
                 'format': '{:.3f}',
                 'lower_is_better': False,
             },

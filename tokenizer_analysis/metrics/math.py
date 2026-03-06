@@ -70,6 +70,10 @@ class DigitBoundaryMetrics(BaseMetrics):
     """
 
     _DIGIT_SPAN = re.compile(r'\d+')
+    # NOTE: The hyphen-minus ``-`` is always treated as an operator, even when
+    # it appears as a unary negative sign (e.g. ``-42``).  Disambiguating
+    # unary minus from subtraction requires expression parsing, and for
+    # tokenizer evaluation the simpler rule is sufficient.
     _OPERATOR_SPAN = re.compile(r'(?:\*\*|<<|>>|<=|>=|==|!=|&&|\|\||[+\-*/=<>!&|^~%])')
 
     _OPERATOR_CATEGORIES: Dict[str, List[str]] = {
@@ -140,7 +144,7 @@ class DigitBoundaryMetrics(BaseMetrics):
                 )
         else:
             with open(path, "r", encoding="utf-8") as f:
-                texts = [line.strip() for line in f if line.strip()]
+                texts = [line.rstrip() for line in f if line.strip()]
         return texts
 
     # ------------------------------------------------------------------
@@ -258,16 +262,14 @@ class DigitBoundaryMetrics(BaseMetrics):
     def _compute_pattern_entropy(
         patterns: List[tuple],
     ) -> Dict[str, Any]:
-        """Shannon entropy of the boundary-pattern distribution.
+        """Shannon entropy (bits) of the boundary-pattern distribution.
 
-        Returns a dict with *entropy*, *normalized_entropy*,
-        *num_patterns*, *dominant_pattern*, *dominant_pattern_freq*,
-        and *count*.
+        Returns a dict with *entropy* (in bits), *num_patterns*,
+        *dominant_pattern*, *dominant_pattern_freq*, and *count*.
         """
         if not patterns:
             return {
                 "entropy": 0.0,
-                "normalized_entropy": 0.0,
                 "num_patterns": 0,
                 "dominant_pattern": (),
                 "dominant_pattern_freq": 0.0,
@@ -281,16 +283,14 @@ class DigitBoundaryMetrics(BaseMetrics):
         total = len(patterns)
         k = len(counts)
 
-        # Dominant pattern
-        dominant = max(counts, key=counts.get)  # type: ignore[arg-type]
-        dominant_freq = counts[dominant] / total
+        dominant_pattern = max(counts, key=counts.get)  # type: ignore[arg-type]
+        dominant_freq = counts[dominant_pattern] / total
 
         if k <= 1:
             return {
                 "entropy": 0.0,
-                "normalized_entropy": 0.0,
                 "num_patterns": k,
-                "dominant_pattern": dominant,
+                "dominant_pattern": dominant_pattern,
                 "dominant_pattern_freq": dominant_freq,
                 "count": total,
             }
@@ -301,14 +301,10 @@ class DigitBoundaryMetrics(BaseMetrics):
             if p > 0:
                 entropy -= p * math.log2(p)
 
-        max_entropy = math.log2(k)
-        normalized = entropy / max_entropy if max_entropy > 0 else 0.0
-
         return {
             "entropy": entropy,
-            "normalized_entropy": normalized,
             "num_patterns": k,
-            "dominant_pattern": dominant,
+            "dominant_pattern": dominant_pattern,
             "dominant_pattern_freq": dominant_freq,
             "count": total,
         }
@@ -405,7 +401,7 @@ class DigitBoundaryMetrics(BaseMetrics):
 
             for lang, data_list in lang_groups.items():
                 for item in data_list:
-                    if item.text is None:
+                    if item.text is None or not item.text.strip():
                         continue
 
                     # Quick check: any digits or operators at all?
@@ -421,16 +417,34 @@ class DigitBoundaryMetrics(BaseMetrics):
                         token_strings
                     )
 
-                    if has_digits:
-                        # Find digit spans in the *reconstructed* text so that
-                        # the returned offsets are directly usable with
-                        # char_to_token — no fragile cross-text mapping needed.
-                        spans = self._find_number_spans(recon_text)
+                    # Map original source positions → reconstructed-text positions
+                    # so we can find spans on the original (whitespace-preserving)
+                    # text and still look up token indices via char_to_token.
+                    source_to_recon = self._build_source_to_recon_map(
+                        item.text, recon_text
+                    )
 
-                        for span_start, span_end, digit_str in spans:
+                    if has_digits:
+                        # Find digit spans on the *original* text to avoid
+                        # merging adjacent numbers separated by whitespace.
+                        spans = self._find_number_spans(item.text)
+
+                        for src_start, src_end, digit_str in spans:
                             num_digits = len(digit_str)
                             if num_digits == 0:
                                 continue
+
+                            # Map source span to reconstructed-text positions
+                            recon_positions = [
+                                source_to_recon[i]
+                                for i in range(src_start, src_end)
+                                if source_to_recon[i] is not None
+                            ]
+                            if len(recon_positions) != num_digits:
+                                # Not all digits mapped — skip this span
+                                continue
+                            span_start = recon_positions[0]
+                            span_end = recon_positions[-1] + 1
 
                             bucket = self._digit_length_bucket(num_digits)
 
@@ -714,7 +728,6 @@ class DigitBoundaryMetrics(BaseMetrics):
                 short_stats = self._compute_pattern_entropy(pooled_short_patterns)
                 results["summary"][tok_name] = {
                     "entropy_long": long_stats["entropy"],
-                    "normalized_entropy_long": long_stats["normalized_entropy"],
                     "entropy_short": short_stats["entropy"],
                     "numbers_analyzed": total_numbers,
                     "languages_analyzed": len(languages_seen),
@@ -1054,7 +1067,6 @@ class DigitBoundaryMetrics(BaseMetrics):
                         s = ent["summary"][tok_name]
                         print(f"{tok_name}:")
                         print(f"  {'Entropy (long)':25}: {s['entropy_long']:.3f} bits")
-                        print(f"  {'Norm Entropy (long)':25}: {s['normalized_entropy_long']:.3f}")
                         print(f"  {'Entropy (short)':25}: {s['entropy_short']:.3f} bits")
                         print(f"  {'Numbers Analyzed':25}: {s['numbers_analyzed']:,}")
                         print(f"  {'Languages':25}: {s['languages_analyzed']}")
@@ -1075,7 +1087,6 @@ class DigitBoundaryMetrics(BaseMetrics):
                             print(
                                 f"  L={dl:>3} {lang:12}: "
                                 f"H={d['entropy']:.3f} bits  "
-                                f"norm={d['normalized_entropy']:.3f}  "
                                 f"K={d['num_patterns']}  "
                                 f"dom={dom} ({d['dominant_pattern_freq']:.0%})  "
                                 f"n={d['count']}"

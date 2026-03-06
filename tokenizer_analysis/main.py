@@ -320,7 +320,7 @@ class UnifiedTokenizerAnalyzer:
                 basic_results = self.basic_metrics.compute(filtered_data)
                 group_result.update(basic_results)
                 
-                # Information-theoretic metrics (includes compression_ratio)
+                # Information-theoretic metrics (includes compression_rate)
                 info_results = self.info_metrics.compute(filtered_data)
                 group_result.update(info_results)
                 
