@@ -227,9 +227,6 @@ class ASTBoundaryMetrics(BaseMetrics):
                 if source_code[src_idx] == ch:
                     result[src_idx] = tok_idx
                     src_idx += 1
-                elif source_code[src_idx].lower() == ch.lower():
-                    result[src_idx] = tok_idx
-                    src_idx += 1
                 elif ch.isspace() and source_code[src_idx].isspace():
                     result[src_idx] = tok_idx
                     src_idx += 1
@@ -513,6 +510,12 @@ class ASTBoundaryMetrics(BaseMetrics):
 
         worker_path = os.path.join(os.path.dirname(__file__), "_treesitter_worker.py")
 
+        # Log diagnostic info so subprocess failures can be debugged remotely.
+        logger.info(
+            "Subprocess config: python=%s, worker=%s, worker_exists=%s",
+            sys.executable, worker_path, os.path.isfile(worker_path),
+        )
+
         parsed_spans: Dict[str, list] = {}
 
         for lang, snippets in code_snippets.items():
@@ -536,24 +539,64 @@ class ASTBoundaryMetrics(BaseMetrics):
                 ) as f_out:
                     tmp_out = f_out.name
 
+                logger.debug(
+                    "  %s: launching subprocess: %s %s %s %s",
+                    lang, sys.executable, worker_path, tmp_in, tmp_out,
+                )
+
                 proc = subprocess.run(
                     [sys.executable, worker_path, tmp_in, tmp_out],
                     capture_output=True,
                     timeout=self._PER_LANG_TIMEOUT,
                 )
-                if proc.returncode != 0:
-                    raise RuntimeError(proc.stderr.decode(errors="replace"))
 
                 stderr_msg = proc.stderr.decode(errors="replace").strip()
+
+                if proc.returncode != 0:
+                    # Log full stderr and the signal number for crash diagnosis.
+                    rc = proc.returncode
+                    if rc < 0:
+                        import signal as _signal
+                        try:
+                            sig_name = _signal.Signals(-rc).name
+                        except (ValueError, AttributeError):
+                            sig_name = f"signal {-rc}"
+                        logger.error(
+                            "  %s: subprocess killed by %s (return code %d). "
+                            "This typically indicates a malloc/heap corruption "
+                            "crash (SIGSEGV/SIGABRT) in tree-sitter's C backend. "
+                            "stderr:\n%s",
+                            lang, sig_name, rc, stderr_msg or "(empty)",
+                        )
+                    else:
+                        logger.error(
+                            "  %s: subprocess exited with code %d. stderr:\n%s",
+                            lang, rc, stderr_msg or "(empty)",
+                        )
+                    logger.error(
+                        "  %s: NOT falling back to in-process parsing to "
+                        "avoid heap corruption in the main process.",
+                        lang,
+                    )
+                    continue
+
                 if stderr_msg:
                     logger.info("Tree-sitter worker [%s]: %s", lang, stderr_msg)
+
+                if not os.path.exists(tmp_out) or os.path.getsize(tmp_out) == 0:
+                    logger.error(
+                        "  %s: subprocess exited successfully but output "
+                        "file is missing or empty (%s); skipping language.",
+                        lang, tmp_out,
+                    )
+                    continue
 
                 with open(tmp_out, "rb") as f:
                     lang_result = pickle.load(f)
                 parsed_spans.update(lang_result)
                 logger.info(
-                    "  %s: parsed %d snippet(s) in subprocess.",
-                    lang, len(snippets),
+                    "  %s: parsed %d snippet(s) in subprocess (pid=%d).",
+                    lang, len(snippets), proc.pid,
                 )
             except subprocess.TimeoutExpired:
                 logger.warning(
@@ -562,18 +605,12 @@ class ASTBoundaryMetrics(BaseMetrics):
                     lang, self._PER_LANG_TIMEOUT, len(snippets),
                 )
             except Exception as e:
-                logger.warning(
-                    "  %s: subprocess failed (%s); attempting in-process fallback.",
-                    lang, e,
+                logger.error(
+                    "  %s: subprocess failed with %s: %s.  "
+                    "NOT falling back to in-process parsing to avoid "
+                    "heap corruption.  Skipping language.",
+                    lang, type(e).__name__, e,
                 )
-                try:
-                    fallback = _parse_snippets({lang: snippets}, lang_to_treesitter)
-                    parsed_spans.update(fallback)
-                except Exception as e2:
-                    logger.warning(
-                        "  %s: in-process fallback also failed (%s); skipping.",
-                        lang, e2,
-                    )
             finally:
                 for tmp_path in (tmp_in, tmp_out):
                     if tmp_path and os.path.exists(tmp_path):

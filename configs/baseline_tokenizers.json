@@ -62,29 +62,5 @@
 },
 "DeepSeek V3":{"class": "hf",
 	"path": "deepseek-ai/DeepSeek-V3"
-},
-"SuperBPE Apertus regex": {
-        "class": "hf",
-      "path": "test_tokenizers/superbpe_new_reg.json"
-},
-"SuperBPE qwen regex": {
-        "class": "hf",
-      "path": "test_tokenizers/superbpe_qwen_reg.json"
-},
-"SuperBPE math": {
-        "class": "hf",
-      "path": "test_tokenizers/superbpe_math.json"
-},
-"SuperBPE math new reg": {
-        "class": "hf",
-      "path": "test_tokenizers/superbpe_math_new_reg.json"
-},
-"PA BPE grouped": {
-        "class": "hf",
-      "path": "test_tokenizers/pabpe_grouped.json"
-},
-"PA BPE grouped math": {
-        "class": "hf",
-      "path": "test_tokenizers/pabpe_grouped_math.json"
 }
 }

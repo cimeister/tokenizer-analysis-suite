@@ -276,10 +276,27 @@ if __name__ == "__main__":
     # math.py which shadows the stdlib ``math`` module and causes a
     # circular-import crash in tree-sitter-language-pack → tempfile →
     # random → math.  Strip it so only the stdlib math is found.
+    #
+    # Use both abspath and realpath to handle symlinks / bind-mounts.
     import os as _os
 
-    _script_dir = _os.path.dirname(_os.path.abspath(__file__))
-    sys.path = [p for p in sys.path if _os.path.abspath(p) != _script_dir]
+    _script_dir_abs = _os.path.abspath(_os.path.dirname(__file__))
+    _script_dir_real = _os.path.realpath(_os.path.dirname(__file__))
+    _blocked = {_script_dir_abs, _script_dir_real}
+    _original_path = list(sys.path)
+    sys.path = [
+        p for p in sys.path
+        if _os.path.abspath(p) not in _blocked
+        and _os.path.realpath(p) not in _blocked
+    ]
+
+    _removed = set(_original_path) - set(sys.path)
+    if _removed:
+        print(
+            f"tree-sitter worker: stripped sys.path entries to avoid "
+            f"math.py shadow: {_removed}",
+            file=sys.stderr,
+        )
 
     # Protocol: two CLI arguments — input pickle path, output pickle path.
     # The input file contains (code_snippets, lang_to_treesitter).
@@ -292,10 +309,25 @@ if __name__ == "__main__":
     input_path = sys.argv[1]
     output_path = sys.argv[2]
 
-    with open(input_path, "rb") as f:
-        code_snippets, lang_to_treesitter = pickle.load(f)
+    try:
+        with open(input_path, "rb") as f:
+            code_snippets, lang_to_treesitter = pickle.load(f)
+    except Exception as exc:
+        print(f"tree-sitter worker: failed to load input pickle: {exc}",
+              file=sys.stderr)
+        sys.exit(2)
 
-    result = parse_snippets(code_snippets, lang_to_treesitter)
+    try:
+        result = parse_snippets(code_snippets, lang_to_treesitter)
+    except Exception as exc:
+        print(f"tree-sitter worker: parse_snippets failed: {exc}",
+              file=sys.stderr)
+        sys.exit(3)
 
-    with open(output_path, "wb") as f:
-        pickle.dump(result, f)
+    try:
+        with open(output_path, "wb") as f:
+            pickle.dump(result, f)
+    except Exception as exc:
+        print(f"tree-sitter worker: failed to write output pickle: {exc}",
+              file=sys.stderr)
+        sys.exit(4)
