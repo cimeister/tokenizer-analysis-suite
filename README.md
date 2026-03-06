@@ -61,25 +61,13 @@ python scripts/visualize_tokenization.py \
     --tokenizer-config configs/baseline_tokenizers.json \
     --tokenizers "GPT-4o" "Qwen 3"
 
-# Visualize your own file
-python scripts/visualize_tokenization.py \
-    --tokenizer-config configs/baseline_tokenizers.json \
-    --input my_script.py
-
-# Visualize all files in a directory (1 sample per file)
-python scripts/visualize_tokenization.py \
-    --tokenizer-config configs/baseline_tokenizers.json \
-    --input data/samples/
-
+# Visualize all files in a directory
 # Files can contain multiple samples separated by a line with only "---".
 # Use --samples-per-file to control how many are read (default: 1).
 python scripts/visualize_tokenization.py \
     --tokenizer-config configs/baseline_tokenizers.json \
     --input data/samples/ --samples-per-file 3
 
-# Plain text output (no ANSI colours) for saving to a file
-python scripts/visualize_tokenization.py \
-    --tokenizer-config configs/baseline_tokenizers.json --no-color > out.txt
 ```
 
 Each sample is shown with line-numbered source text followed by a colour-coded token-boundary view for every tokenizer, plus whitespace and indentation statistics.
