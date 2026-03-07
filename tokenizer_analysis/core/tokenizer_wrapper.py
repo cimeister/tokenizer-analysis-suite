@@ -7,6 +7,7 @@ making it easy for users to integrate custom tokenizers into the framework.
 
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Union, Any, Tuple
+import gzip
 import logging
 import os
 import glob
@@ -676,6 +677,91 @@ class PreTokenizedDataTokenizer(TokenizerWrapper):
         return cls(name, vocab_size, vocab_dict)
 
 
+class ScriptBPETokenizer(TokenizerWrapper):
+    """Wrapper for native `script_bpe` saved tokenizer files."""
+
+    def __init__(self, name: str, tokenizer, config: Dict[str, Any]):
+        self._name = name
+        self._tokenizer = tokenizer
+        self._config = config
+        self._token_cache: Dict[int, str] = {}
+
+    def get_name(self) -> str:
+        return self._name
+
+    def get_vocab_size(self) -> int:
+        return len(self._tokenizer.tokens)
+
+    def _decode_token(self, token_id: int) -> str:
+        if token_id not in self._token_cache:
+            self._token_cache[token_id] = self._tokenizer.decode([token_id])
+        return self._token_cache[token_id]
+
+    def get_vocab(self) -> Optional[Dict[str, int]]:
+        return {self._decode_token(token_id): token_id for token_id in self._tokenizer.tokens}
+
+    def can_encode(self) -> bool:
+        return True
+
+    def encode(self, text: str) -> List[int]:
+        return list(self._tokenizer.encode(text))
+
+    def can_pretokenize(self) -> bool:
+        return True
+
+    def pretokenize(self, text: str) -> List[str]:
+        return [self._tokenizer.pretokenizer.decode(chunk) for chunk in self._tokenizer.pretokenizer.pretokenize(text)]
+
+    def get_underlying_tokenizer(self):
+        return self._tokenizer
+
+    def convert_ids_to_tokens(self, token_ids: List[int]) -> List[str]:
+        return [self._decode_token(token_id) for token_id in token_ids]
+
+    @staticmethod
+    def _detect_model_class(path: str):
+        from script_bpe.tokenizers.bpe.tokenizer import BPETokenizer
+        from script_bpe.tokenizers.mingram.model import MinGramModel
+        from script_bpe.tokenizers.unigram.model import UnigramModel
+
+        open_func = gzip.open if path.endswith(".gz") else open
+        with open_func(path, "rt") as f:
+            data = json.load(f)
+
+        version = data["info"]["version"]
+        if version.startswith("sebpe"):
+            return BPETokenizer
+        if version.startswith("seunigram"):
+            return UnigramModel
+        if version.startswith("semingram"):
+            return MinGramModel
+        raise ValueError(f"Unsupported script_bpe tokenizer version: {version}")
+
+    @classmethod
+    def from_config(cls, name: str, config: Dict[str, Any]) -> 'ScriptBPETokenizer':
+        path = config["path"]
+        model_type = config.get("model")
+
+        if model_type is not None:
+            from script_bpe.tokenizers.bpe.tokenizer import BPETokenizer
+            from script_bpe.tokenizers.mingram.model import MinGramModel
+            from script_bpe.tokenizers.unigram.model import UnigramModel
+
+            model_classes = {
+                "bpe": BPETokenizer,
+                "unigram": UnigramModel,
+                "mingram": MinGramModel,
+            }
+            if model_type not in model_classes:
+                raise ValueError(f"Unknown script_bpe model type: {model_type}")
+            model_class = model_classes[model_type]
+        else:
+            model_class = cls._detect_model_class(path)
+
+        tokenizer = model_class.load(path)
+        return cls(name, tokenizer, config)
+
+
 # Registry for custom tokenizer classes
 _TOKENIZER_REGISTRY: Dict[str, type] = {
     'huggingface': HuggingFaceTokenizer,
@@ -685,6 +771,7 @@ _TOKENIZER_REGISTRY: Dict[str, type] = {
     'pretokenized': PreTokenizedDataTokenizer,
     'unimixlm': UniMixLMTokenizer,
     'custom_bpe': CustomBPETokenizer,
+    'script_bpe': ScriptBPETokenizer,
     'sentencepiece': SentencePieceTokenizer
 }
 
