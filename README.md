@@ -32,7 +32,7 @@ python scripts/run_tokenizer_analysis.py \
     --measurement-config configs/text_measurement_config_lines.json \
     --code-ast-config configs/starcoder_ast_config.json \
     --verbose --run-grouped-analysis --per-language-plots --no-global-lines \
-    --update-results-md --dataset flores_core
+    --update-results-md --dataset flores_core --use-builtin-math-data
 
 # Push results to GitHub
 python scripts/update_remote.py
@@ -504,21 +504,53 @@ scripts/
 
 ### Adding New Tokenizers
 
-Subclass `TokenizerWrapper` from `tokenizer_analysis.core.tokenizer_wrapper`:
+Subclass `TokenizerWrapper` from `tokenizer_analysis.core.tokenizer_wrapper` and implement the required abstract methods. Then register it so the config system can instantiate it by name.
+
+#### Required methods (abstract)
+
+| Method | Purpose |
+|--------|---------|
+| `get_name() -> str` | Return the tokenizer's display name. |
+| `get_vocab_size() -> int` | Return the total vocabulary size. |
+| `get_vocab() -> Dict[str, int]` | Return `{token_string: id}` mapping. Used for vocabulary utilization metrics and as a fallback for `convert_ids_to_tokens`. Return `None` if unavailable (disables vocab-dependent metrics). |
+| `can_encode() -> bool` | Return `True` if `encode()` works. Return `False` for pre-tokenized-only wrappers — this skips all encoding-dependent metrics (AST, math, UTF-8, indentation). |
+| `encode(text: str) -> List[int]` | Encode text to token IDs. Only called when `can_encode()` is `True`. |
+| `can_pretokenize() -> bool` | Whether `pretokenize()` is available. Return `False` if not applicable. |
+| `pretokenize(text: str) -> List[str]` | Split text into subword pieces (strings). Only called when `can_pretokenize()` is `True`. |
+| `from_config(cls, name, config) -> TokenizerWrapper` | Class method factory. Receives the tokenizer name and the config dict from the JSON file. |
+
+#### Optional overrides
+
+These have working defaults but can be overridden for better results:
+
+| Method | Default behaviour | Why override |
+|--------|------------------|--------------|
+| `convert_ids_to_tokens(ids) -> List[str]` | Reverses `get_vocab()`. | Faster or more accurate when the underlying library has a direct lookup (e.g., `id_to_token`). |
+| `encode_with_offsets(text) -> (List[int], Optional[List[Tuple[int,int]]])` | Returns `(self.encode(text), None)`. | Provide `(start_char, end_char)` offsets per token for exact source-to-token mapping. Without this, code metrics fall back to greedy character alignment, which can fail for tokenizers that strip whitespace from tokens (e.g., custom BPE with a `Whitespace` pre-tokenizer). HuggingFace `tokenizers` and SentencePiece both expose offsets natively. |
+| `get_underlying_tokenizer()` | Returns `None`. | Expose the raw HuggingFace tokenizer object (if one exists) for specialized consumers like MorphScore (only compatible with HF tokenizers). |
+| `get_unk_token_id() -> Optional[int]` | Returns `None`. | Enables UNK-related analysis. |
+
+#### Minimal example
 
 ```python
 from tokenizer_analysis.core.tokenizer_wrapper import TokenizerWrapper, register_tokenizer_class
 
 class MyTokenizer(TokenizerWrapper):
-    def get_name(self) -> str: ...
-    def get_vocab_size(self) -> int: ...
-    def get_vocab(self) -> Dict[str, int]: ...
-    def can_encode(self) -> bool: return True
-    def encode(self, text: str) -> List[int]: ...
+    def __init__(self, name, tok):
+        self._name, self._tok = name, tok
+
+    def get_name(self): return self._name
+    def get_vocab_size(self): return self._tok.vocab_size
+    def get_vocab(self): return self._tok.get_vocab()
+    def can_encode(self): return True
+    def encode(self, text): return self._tok.encode(text)
+    def can_pretokenize(self): return False
+    def pretokenize(self, text): raise NotImplementedError
 
     @classmethod
     def from_config(cls, name, config):
-        return cls(name, config['path'])
+        tok = load_my_tokenizer(config['path'])  # your loading logic
+        return cls(name, tok)
 
 register_tokenizer_class('my_class', MyTokenizer)
 ```

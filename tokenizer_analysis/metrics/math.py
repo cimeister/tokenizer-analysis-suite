@@ -395,6 +395,7 @@ class DigitBoundaryMetrics(BaseMetrics):
                 continue
 
             tokenizer_obj = self.input_provider.get_tokenizer(tok_name)
+            self._char_decode_table = self._build_char_decode_table(tokenizer_obj)
             lang_groups = TokenizedDataProcessor.group_by_language(
                 tokenized_data[tok_name]
             )
@@ -526,6 +527,8 @@ class DigitBoundaryMetrics(BaseMetrics):
                                 cat_acc["compound_total"] += 1
                                 if len(op_token_indices) == 1:
                                     cat_acc["compound_ok"] += 1
+
+        self._char_decode_table = None
 
         # ---- build result structures ----
         alignment_results = self._build_alignment_results(alignment_acc)

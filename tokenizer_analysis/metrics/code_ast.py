@@ -196,23 +196,37 @@ class ASTBoundaryMetrics(BaseMetrics):
     # Source char → token map (whitespace-inclusive)
     # ------------------------------------------------------------------
 
-    def _build_source_char_to_token_map(
+    @staticmethod
+    def _map_from_offsets(
+        source_len: int,
+        offsets: List[Tuple[int, int]],
+    ) -> List[Optional[int]]:
+        """Build a source-char → token-index map from encoding offsets.
+
+        Each entry in *offsets* is ``(start_char, end_char)`` in the
+        original source text for the corresponding token.  Special tokens
+        with ``(0, 0)`` are skipped.
+
+        Returns a list of length *source_len* where entry *i* is the
+        token index covering that position, or ``None``.
+        """
+        result: List[Optional[int]] = [None] * source_len
+        for tok_idx, (start, end) in enumerate(offsets):
+            if start == end:
+                # Special token (e.g. <s>, </s>) — no source coverage
+                continue
+            for pos in range(start, min(end, source_len)):
+                result[pos] = tok_idx
+        return result
+
+    def _map_from_greedy_decode(
         self, source_code: str, token_strings: List[str],
     ) -> List[Optional[int]]:
-        """Map each source character (including whitespace) to a token index.
+        """Fallback: greedy character-by-character alignment.
 
-        This exists alongside the inherited :meth:`_build_char_to_token_map`
-        because the base-class method strips whitespace (via ``_clean_token``)
-        — suitable for identifier/keyword/operator alignment — whereas
-        indentation measurement needs whitespace characters mapped to their
-        producing tokens.
-
-        Walks through *token_strings*, decodes each via
-        :meth:`_decode_raw_token`, and greedily aligns decoded characters
-        against *source_code*.
-
-        Returns a list of length ``len(source_code)`` where entry *i* is the
-        token index covering source char *i*, or ``None``.
+        Decodes each raw token via :meth:`_decode_raw_token` and greedily
+        matches decoded characters against *source_code*.  Allows
+        space ↔ tab equivalence but NOT space ↔ newline.
         """
         result: List[Optional[int]] = [None] * len(source_code)
         src_idx = 0
@@ -227,12 +241,33 @@ class ASTBoundaryMetrics(BaseMetrics):
                 if source_code[src_idx] == ch:
                     result[src_idx] = tok_idx
                     src_idx += 1
-                elif ch.isspace() and source_code[src_idx].isspace():
+                elif (
+                    ch in (' ', '\t') and source_code[src_idx] in (' ', '\t')
+                ):
                     result[src_idx] = tok_idx
                     src_idx += 1
                 # else: skip character in decoded token (mismatch)
 
         return result
+
+    def _build_source_char_to_token_map(
+        self,
+        source_code: str,
+        token_strings: List[str],
+        offsets: Optional[List[Tuple[int, int]]] = None,
+    ) -> List[Optional[int]]:
+        """Map each source character (including whitespace) to a token index.
+
+        When *offsets* are provided (from ``encode_with_offsets``), uses
+        the direct offset-based mapping which is exact and cannot
+        desynchronise.  Otherwise falls back to greedy character decoding.
+
+        Returns a list of length ``len(source_code)`` where entry *i* is
+        the token index covering source char *i*, or ``None``.
+        """
+        if offsets is not None:
+            return self._map_from_offsets(len(source_code), offsets)
+        return self._map_from_greedy_decode(source_code, token_strings)
 
     @staticmethod
     def _infer_indent_unit(
@@ -595,8 +630,8 @@ class ASTBoundaryMetrics(BaseMetrics):
                     lang_result = pickle.load(f)
                 parsed_spans.update(lang_result)
                 logger.info(
-                    "  %s: parsed %d snippet(s) in subprocess (pid=%d).",
-                    lang, len(snippets), proc.pid,
+                    "  %s: parsed %d snippet(s) in subprocess.",
+                    lang, len(snippets),
                 )
             except subprocess.TimeoutExpired:
                 logger.warning(
@@ -663,6 +698,9 @@ class ASTBoundaryMetrics(BaseMetrics):
                     tok_name,
                 )
 
+        # Pre-build character decode tables for byte-level BPE / SP tokenizers.
+        decode_tables = {n: self._build_char_decode_table(t) for n, t in active_tokenizers}
+
         for code_lang, spans_list in parsed_spans.items():
             snippets = code_snippets[code_lang]
             is_ws_significant = code_lang in _WHITESPACE_SIGNIFICANT_LANGS
@@ -711,8 +749,11 @@ class ASTBoundaryMetrics(BaseMetrics):
 
                 # -- Per-tokenizer work --
                 for tok_name, tokenizer in active_tokenizers:
+                    self._char_decode_table = decode_tables[tok_name]
                     try:
-                        token_ids = tokenizer.encode(snippet)
+                        token_ids, enc_offsets = tokenizer.encode_with_offsets(
+                            snippet
+                        )
                     except Exception as e:
                         logger.debug(
                             "Encoding failed for %s on %s snippet: %s",
@@ -769,7 +810,8 @@ class ASTBoundaryMetrics(BaseMetrics):
                     if indentation is not None:
                         source_char_to_token = (
                             self._build_source_char_to_token_map(
-                                snippet, token_strings
+                                snippet, token_strings,
+                                offsets=enc_offsets,
                             )
                         )
                         for ws_string, line_start, ws_end in indentation:
@@ -796,6 +838,8 @@ class ASTBoundaryMetrics(BaseMetrics):
                                 "pattern": pattern,
                                 "ws_width": ws_width,
                             })
+
+        self._char_decode_table = None
 
         # Log Phase 2 summary: how many AST nodes contributed per tokenizer
         for tok_name in self.tokenizer_names:

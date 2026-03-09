@@ -32,6 +32,7 @@ def _make_instance():
     inst = object.__new__(ASTBoundaryMetrics)
     inst._tokenizer_vocab_cache = {}
     inst._warned_tokenizers = set()
+    inst._char_decode_table = None
     return inst
 
 
@@ -608,6 +609,11 @@ class _MockTokenizer(MockTokenizer):
         """Character-level encoding: one token per character."""
         return list(range(len(text)))
 
+    def encode_with_offsets(self, text):
+        ids = self.encode(text)
+        offsets = [(i, i + 1) for i in range(len(text))]
+        return ids, offsets
+
 
 class _CharTokenizer:
     """Simple character-level tokenizer for testing."""
@@ -625,12 +631,20 @@ class _CharTokenizer:
     def encode(self, text):
         return [ord(c) for c in text]
 
+    def encode_with_offsets(self, text):
+        ids = self.encode(text)
+        offsets = [(i, i + 1) for i in range(len(text))]
+        return ids, offsets
+
     def get_vocab(self):
         return {}
 
 
 class _PerfectTokenizer:
     """Tokenizer that returns pre-defined tokens for specific snippets."""
+
+    # Character decode table matching BaseMetrics._DEFAULT_CHAR_DECODE
+    _DECODE = {'Ġ': ' ', '▁': ' ', 'Ċ': '\n', 'ĉ': '\t', 'č': '\r'}
 
     def __init__(self, snippet_to_tokens):
         """
@@ -651,12 +665,46 @@ class _PerfectTokenizer:
                     self._id_to_token[next_id] = t
                     next_id += 1
 
+    def _decode_token(self, raw):
+        """Decode a raw token string to its source characters."""
+        decoded = ''.join(self._DECODE.get(ch, ch) for ch in raw)
+        # Strip ## prefix (continuation marker)
+        if decoded.startswith('##'):
+            return decoded[2:]
+        # Strip </w> suffix
+        if decoded.endswith('</w>'):
+            return decoded[:-4]
+        # Strip @@ suffix
+        if decoded.endswith('@@'):
+            return decoded[:-2]
+        return decoded
+
     def can_encode(self):
         return True
 
     def encode(self, text):
         tokens = self._snippet_map.get(text, [])
         return [self._token_to_id[t] for t in tokens]
+
+    def encode_with_offsets(self, text):
+        """Return (ids, offsets) by greedily matching decoded tokens to source."""
+        token_strs = self._snippet_map.get(text, [])
+        ids = [self._token_to_id[t] for t in token_strs]
+        offsets = []
+        src_idx = 0
+        for raw in token_strs:
+            decoded = self._decode_token(raw)
+            start = src_idx
+            for ch in decoded:
+                if src_idx >= len(text):
+                    break
+                if text[src_idx] == ch:
+                    src_idx += 1
+                elif ch in (' ', '\t') and text[src_idx] in (' ', '\t'):
+                    src_idx += 1
+                # else: skip decoded char
+            offsets.append((start, src_idx))
+        return ids, offsets
 
     def convert_ids_to_tokens(self, ids):
         return [self._id_to_token[i] for i in ids]
@@ -719,6 +767,7 @@ class TestEndToEnd:
         inst = object.__new__(ASTBoundaryMetrics)
         inst._tokenizer_vocab_cache = {}
         inst._warned_tokenizers = set()
+        inst._char_decode_table = None
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -755,6 +804,7 @@ class TestEndToEnd:
         inst = object.__new__(ASTBoundaryMetrics)
         inst._tokenizer_vocab_cache = {}
         inst._warned_tokenizers = set()
+        inst._char_decode_table = None
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -789,6 +839,7 @@ class TestEndToEnd:
         inst = object.__new__(ASTBoundaryMetrics)
         inst._tokenizer_vocab_cache = {}
         inst._warned_tokenizers = set()
+        inst._char_decode_table = None
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -818,6 +869,7 @@ class TestEndToEnd:
         inst = object.__new__(ASTBoundaryMetrics)
         inst._tokenizer_vocab_cache = {}
         inst._warned_tokenizers = set()
+        inst._char_decode_table = None
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -856,6 +908,7 @@ class TestEndToEnd:
         inst = object.__new__(ASTBoundaryMetrics)
         inst._tokenizer_vocab_cache = {}
         inst._warned_tokenizers = set()
+        inst._char_decode_table = None
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -991,6 +1044,23 @@ class TestDecodeRawToken:
     def test_plain_unchanged(self):
         assert self.inst._decode_raw_token("abc") == "abc"
 
+    def test_multi_g_four_spaces(self):
+        """ĠĠĠĠ → 4 spaces (all chars decoded)."""
+        assert self.inst._decode_raw_token("ĠĠĠĠ") == "    "
+
+    def test_newline_char(self):
+        assert self.inst._decode_raw_token("Ċ") == "\n"
+
+    def test_colon_newline(self):
+        assert self.inst._decode_raw_token(":Ċ") == ":\n"
+
+    def test_tab_char(self):
+        assert self.inst._decode_raw_token("ĉ") == "\t"
+
+    def test_g_with_embedded_newline(self):
+        """Ġ followed by text then Ċ."""
+        assert self.inst._decode_raw_token("Ġif:Ċ") == " if:\n"
+
 
 # ======================================================================
 # _process_token (shared helper in BaseMetrics)
@@ -1049,6 +1119,39 @@ class TestProcessToken:
 
     def test_preserve_plain_unchanged(self):
         assert self.inst._process_token("abc", preserve_space=True) == "abc"
+
+    # -- Multi-char decode (byte-level BPE) --
+
+    def test_multi_g_preserve(self):
+        """ĠĠĠĠ should decode to 4 spaces with preserve_space=True."""
+        assert self.inst._process_token("ĠĠĠĠ", preserve_space=True) == "    "
+
+    def test_multi_g_clean(self):
+        """ĠĠĠĠ should decode to 3 spaces with preserve_space=False (leading space stripped)."""
+        assert self.inst._process_token("ĠĠĠĠ", preserve_space=False) == "   "
+
+    def test_newline_alone(self):
+        assert self.inst._process_token("Ċ", preserve_space=True) == "\n"
+
+    def test_newline_alone_clean(self):
+        assert self.inst._process_token("Ċ", preserve_space=False) == "\n"
+
+    def test_colon_newline(self):
+        assert self.inst._process_token(":Ċ", preserve_space=True) == ":\n"
+
+    def test_tab_decode(self):
+        assert self.inst._process_token("ĉ", preserve_space=True) == "\t"
+
+    def test_cr_decode(self):
+        assert self.inst._process_token("č", preserve_space=True) == "\r"
+
+    def test_sentencepiece_multi_preserve(self):
+        """▁▁▁▁ should decode to 4 spaces with preserve_space=True."""
+        assert self.inst._process_token("▁▁▁▁", preserve_space=True) == "    "
+
+    def test_sentencepiece_multi_clean(self):
+        """▁▁▁▁ should decode to 3 spaces with preserve_space=False."""
+        assert self.inst._process_token("▁▁▁▁", preserve_space=False) == "   "
 
     # -- Consistency: _clean_token and _decode_raw_token delegate correctly --
 
@@ -1118,6 +1221,32 @@ class TestSourceCharToTokenMap:
         tokens = ["abc"]
         result = self.inst._build_source_char_to_token_map(source, tokens)
         assert result == [0, 0]
+
+    def test_bpe_multiline_no_none_gaps(self):
+        """Byte-level BPE tokens with ĠĠĠĠ and Ċ should map all chars."""
+        source = "if True:\n    x = 1"
+        # BPE-style encoding: Ċ for newline, ĠĠĠĠ for 4-space indentation
+        tokens = ["if", "ĠTrue", "Ġ:", "Ċ", "ĠĠĠĠ", "x", "Ġ=", "Ġ1"]
+        result = self.inst._build_source_char_to_token_map(source, tokens)
+        assert len(result) == len(source)
+        # No None gaps
+        assert None not in result
+
+    def test_sentencepiece_multiline_no_none_gaps(self):
+        """SentencePiece tokens with ▁▁▁▁ should map all chars."""
+        source = "a b\n    c"
+        tokens = ["a", "▁b", "\n", "▁▁▁▁", "c"]
+        result = self.inst._build_source_char_to_token_map(source, tokens)
+        assert len(result) == len(source)
+        assert None not in result
+
+    def test_bpe_multi_g_whitespace(self):
+        """Multi-Ġ whitespace tokens should correctly map to source spaces."""
+        source = "    x"
+        tokens = ["ĠĠĠĠ", "x"]
+        result = self.inst._build_source_char_to_token_map(source, tokens)
+        # All 4 spaces should map to token 0, 'x' to token 1
+        assert result == [0, 0, 0, 0, 1]
 
 
 # ======================================================================
@@ -1298,6 +1427,7 @@ class TestIdentifierFragmentationE2E:
         inst = object.__new__(ASTBoundaryMetrics)
         inst._tokenizer_vocab_cache = {}
         inst._warned_tokenizers = set()
+        inst._char_decode_table = None
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -1332,6 +1462,7 @@ class TestIdentifierFragmentationE2E:
         inst = object.__new__(ASTBoundaryMetrics)
         inst._tokenizer_vocab_cache = {}
         inst._warned_tokenizers = set()
+        inst._char_decode_table = None
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -1372,6 +1503,7 @@ class TestIndentationConsistencyE2E:
         inst = object.__new__(ASTBoundaryMetrics)
         inst._tokenizer_vocab_cache = {}
         inst._warned_tokenizers = set()
+        inst._char_decode_table = None
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -1402,6 +1534,7 @@ class TestIndentationConsistencyE2E:
         inst = object.__new__(ASTBoundaryMetrics)
         inst._tokenizer_vocab_cache = {}
         inst._warned_tokenizers = set()
+        inst._char_decode_table = None
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -1437,6 +1570,7 @@ class TestIndentationConsistencyE2E:
         inst = object.__new__(ASTBoundaryMetrics)
         inst._tokenizer_vocab_cache = {}
         inst._warned_tokenizers = set()
+        inst._char_decode_table = None
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -1481,6 +1615,7 @@ class TestIndentationConsistencyE2E:
         inst = object.__new__(ASTBoundaryMetrics)
         inst._tokenizer_vocab_cache = {}
         inst._warned_tokenizers = set()
+        inst._char_decode_table = None
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -1524,6 +1659,7 @@ class TestIndentationConsistencyE2E:
         inst = object.__new__(ASTBoundaryMetrics)
         inst._tokenizer_vocab_cache = {}
         inst._warned_tokenizers = set()
+        inst._char_decode_table = None
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -1559,6 +1695,7 @@ class TestIndentationConsistencyE2E:
         inst = object.__new__(ASTBoundaryMetrics)
         inst._tokenizer_vocab_cache = {}
         inst._warned_tokenizers = set()
+        inst._char_decode_table = None
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -1605,6 +1742,7 @@ class TestIndentationConsistencyE2E:
         inst = object.__new__(ASTBoundaryMetrics)
         inst._tokenizer_vocab_cache = {}
         inst._warned_tokenizers = set()
+        inst._char_decode_table = None
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -1619,6 +1757,458 @@ class TestIndentationConsistencyE2E:
         result = inst.compute()
         indent = result["indentation_consistency"]
         py = indent["per_tokenizer"]["prop"]["by_language"]["python"]
+        assert py["depth_proportionality_correlation"] is not None
+        assert py["depth_proportionality_correlation"] > 0.8
+
+
+# ======================================================================
+# _build_char_decode_table
+# ======================================================================
+
+class _MockBPETokenizer:
+    """Mock tokenizer that remaps space→Ġ and newline→Ċ."""
+
+    _REMAP = {' ': 'Ġ', '\n': 'Ċ', '\t': 'ĉ', '\r': 'č'}
+    _REV = {v: k for k, v in _REMAP.items()}
+
+    def encode(self, text):
+        return list(range(len(text)))
+
+    def convert_ids_to_tokens(self, ids):
+        # Not a real tokenizer, but mimics BPE raw token output:
+        # For probing "a a", return ["a", "Ġa"]
+        # We'll just remap each character
+        results = []
+        for i in ids:
+            # We don't have the original text, so return generic tokens
+            results.append(f"tok_{i}")
+        return results
+
+
+class _MockBPETokenizerProbe:
+    """Mock BPE tokenizer that properly responds to probe strings."""
+
+    _REMAP = {' ': 'Ġ', '\n': 'Ċ', '\t': 'ĉ', '\r': 'č'}
+
+    def encode(self, text):
+        # Return one ID per character
+        return list(range(len(text)))
+
+    def convert_ids_to_tokens(self, ids):
+        # For "a a": ids [0,1,2] → ["a", "Ġ", "a"]
+        # For "a\na": ids [0,1,2] → ["a", "Ċ", "a"]
+        # We need to know what text was encoded... simulate it
+        return [f"tok{i}" for i in ids]
+
+
+class _BPEStyleTokenizer:
+    """BPE tokenizer that remaps whitespace in raw tokens."""
+
+    _CHAR_MAP = {' ': 'Ġ', '\n': 'Ċ', '\t': 'ĉ', '\r': 'č'}
+
+    def encode(self, text):
+        return list(range(len(text)))
+
+    def convert_ids_to_tokens(self, ids):
+        # Store last encoded text for token conversion
+        return [self._CHAR_MAP.get(chr(i), chr(i)) if i < 128 else f"<{i}>" for i in ids]
+
+    def _encode_and_convert(self, text):
+        """Helper: encode then convert."""
+        ids = self.encode(text)
+        mapped = []
+        for ch in text:
+            mapped.append(self._CHAR_MAP.get(ch, ch))
+        return mapped
+
+
+class _ProbeableBPETokenizer:
+    """Tokenizer that responds correctly to the probing mechanism."""
+
+    _CHAR_MAP = {' ': 'Ġ', '\n': 'Ċ', '\t': 'ĉ', '\r': 'č'}
+
+    def __init__(self):
+        self._last_text = None
+
+    def encode(self, text):
+        self._last_text = text
+        return list(range(len(text)))
+
+    def convert_ids_to_tokens(self, ids):
+        if self._last_text is None:
+            return [f"<{i}>" for i in ids]
+        tokens = []
+        for i, ch in enumerate(self._last_text):
+            tokens.append(self._CHAR_MAP.get(ch, ch))
+        return tokens
+
+
+class _NoRemapTokenizer:
+    """Tokenizer with no character remapping."""
+
+    def encode(self, text):
+        return list(range(len(text)))
+
+    def convert_ids_to_tokens(self, ids):
+        return [chr(i + 97) for i in ids]  # just 'a', 'b', 'c', ...
+
+
+class TestMapFromOffsets:
+    """Unit tests for _map_from_offsets static method."""
+
+    def test_perfect_coverage(self):
+        """Every character mapped when offsets tile the source exactly."""
+        # 3 tokens: [0,3), [3,5), [5,8) covering 8 chars
+        offsets = [(0, 3), (3, 5), (5, 8)]
+        result = ASTBoundaryMetrics._map_from_offsets(8, offsets)
+        assert result == [0, 0, 0, 1, 1, 2, 2, 2]
+
+    def test_special_tokens_skipped(self):
+        """(0,0) offsets (special tokens like <s>) leave chars as None."""
+        offsets = [(0, 0), (0, 3), (3, 5), (0, 0)]
+        result = ASTBoundaryMetrics._map_from_offsets(5, offsets)
+        # token 0 is special, token 1 → [0..3), token 2 → [3..5), token 3 special
+        assert result == [1, 1, 1, 2, 2]
+
+    def test_gaps_are_none(self):
+        """Characters not covered by any offset remain None."""
+        offsets = [(0, 2), (4, 6)]
+        result = ASTBoundaryMetrics._map_from_offsets(6, offsets)
+        assert result == [0, 0, None, None, 1, 1]
+
+    def test_overlapping_offsets_last_wins(self):
+        """Overlapping offsets: later token overwrites earlier."""
+        offsets = [(0, 5), (3, 7)]
+        result = ASTBoundaryMetrics._map_from_offsets(7, offsets)
+        assert result == [0, 0, 0, 1, 1, 1, 1]
+
+    def test_empty_source(self):
+        """Zero-length source returns empty list."""
+        result = ASTBoundaryMetrics._map_from_offsets(0, [(0, 0)])
+        assert result == []
+
+    def test_offset_beyond_source_clamped(self):
+        """Offsets extending past source_len are safely clamped."""
+        offsets = [(0, 2), (2, 10)]
+        result = ASTBoundaryMetrics._map_from_offsets(4, offsets)
+        assert result == [0, 0, 1, 1]
+
+    def test_multiline_bpe_offsets(self):
+        """Offsets covering multi-line source with BPE-style tokens."""
+        source = "if True:\n    x = 1\n"
+        # Suppose: "if"→[0,2), " True"→[2,7), ":"→[7,8), "\n"→[8,9),
+        #          "    "→[9,13), "x"→[13,14), " ="→[14,16), " 1"→[16,18), "\n"→[18,19)
+        offsets = [
+            (0, 2), (2, 7), (7, 8), (8, 9),
+            (9, 13), (13, 14), (14, 16), (16, 18), (18, 19),
+        ]
+        result = ASTBoundaryMetrics._map_from_offsets(len(source), offsets)
+        assert len(result) == len(source)
+        # No None gaps
+        assert None not in result
+        # Whitespace region [9..13) all maps to token 4
+        assert result[9:13] == [4, 4, 4, 4]
+        # Newline at position 8 maps to token 3
+        assert result[8] == 3
+
+
+class TestWhitespaceStrippingTokenizer:
+    """E2E: tokenizers that strip whitespace from tokens (custom BPE)
+    should produce num_ws_tokens=0 and never-negative correlation."""
+
+    @pytest.fixture(scope="class")
+    def ts_pack(self):
+        try:
+            import tree_sitter_language_pack
+            return tree_sitter_language_pack
+        except ImportError:
+            pytest.skip("tree-sitter-language-pack not installed")
+
+    def test_ws_stripping_no_negative_correlation(self, ts_pack):
+        """Whitespace-stripping tokenizer: offsets skip whitespace → 0 ws tokens,
+        correlation is None (not enough data) rather than negative."""
+        snippet = (
+            'if True:\n'
+            '    a = 1\n'
+            '    if True:\n'
+            '        b = 2\n'
+        )
+        # Whitespace-stripping tokenizer: whitespace not in any token's source coverage
+        # Offsets skip over whitespace positions entirely
+        tokens = ["if", "True", ":", "a", "=", "1", "if", "True", ":", "b", "=", "2"]
+        # Build offsets that skip whitespace
+        offsets = []
+        src = snippet
+        pos = 0
+        for tok in tokens:
+            idx = src.find(tok, pos)
+            offsets.append((idx, idx + len(tok)))
+            pos = idx + len(tok)
+
+        class _WSStrippingTokenizer:
+            def __init__(self, toks, offs):
+                self._toks = toks
+                self._offs = offs
+                self._tok_to_id = {t: i for i, t in enumerate(set(toks))}
+                self._id_to_tok = {v: k for k, v in self._tok_to_id.items()}
+
+            def can_encode(self):
+                return True
+
+            def encode(self, text):
+                return [self._tok_to_id[t] for t in self._toks]
+
+            def encode_with_offsets(self, text):
+                return self.encode(text), list(self._offs)
+
+            def convert_ids_to_tokens(self, ids):
+                return [self._id_to_tok[i] for i in ids]
+
+            def get_vocab(self):
+                return dict(self._tok_to_id)
+
+        tok = _WSStrippingTokenizer(tokens, offsets)
+        provider = _MockProvider("ws_strip", tok)
+
+        inst = object.__new__(ASTBoundaryMetrics)
+        inst._tokenizer_vocab_cache = {}
+        inst._warned_tokenizers = set()
+        inst._char_decode_table = None
+        inst._treesitter_available = True
+        inst._ts_pack = ts_pack
+        inst._parser_cache = {}
+        inst.input_provider = provider
+        inst.tokenizer_names = ["ws_strip"]
+        inst.max_snippets_per_lang = 1
+
+        loader = CodeDataLoader()
+        loader.code_snippets = {"python": [snippet]}
+        inst.code_loader = loader
+
+        result = inst.compute()
+        indent = result["indentation_consistency"]
+        py = indent["per_tokenizer"]["ws_strip"]["by_language"]["python"]
+        # All whitespace positions are None in the map → num_ws_tokens=0
+        # With constant 0 ws tokens, correlation should be None or 0, never negative
+        corr = py["depth_proportionality_correlation"]
+        if corr is not None:
+            assert corr >= 0.0, (
+                f"Whitespace-stripping tokenizer should never have negative "
+                f"correlation, got {corr}"
+            )
+
+
+class TestBuildCharDecodeTable:
+    """Test _build_char_decode_table probing."""
+
+    def test_detects_bpe_remapping(self):
+        """A BPE-style tokenizer with Ġ→space, Ċ→newline should be detected."""
+        tok = _ProbeableBPETokenizer()
+        table = ASTBoundaryMetrics._build_char_decode_table(tok)
+        assert table.get('Ġ') == ' '
+        assert table.get('Ċ') == '\n'
+
+    def test_no_remap_returns_empty(self):
+        """Tokenizer without character remapping → empty table."""
+        tok = _NoRemapTokenizer()
+        table = ASTBoundaryMetrics._build_char_decode_table(tok)
+        assert table == {}
+
+    def test_no_encode_returns_empty(self):
+        """Tokenizer without encode() method → empty table."""
+        table = ASTBoundaryMetrics._build_char_decode_table(object())
+        assert table == {}
+
+
+# ======================================================================
+# End-to-end: Indentation Consistency with BPE-encoded whitespace
+# ======================================================================
+
+class TestIndentationConsistencyBPE:
+    """E2E tests for indentation with ĠĠĠĠ/Ċ encoding (byte-level BPE)."""
+
+    @pytest.fixture(scope="class")
+    def ts_pack(self):
+        try:
+            import tree_sitter_language_pack
+            return tree_sitter_language_pack
+        except ImportError:
+            pytest.skip("tree-sitter-language-pack not installed")
+
+    def test_proportional_bpe_high_correlation(self, ts_pack):
+        """Proportional tokenizer with ĠĠĠĠ/Ċ encoding → ρ > 0.8."""
+        snippet = (
+            'if True:\n'
+            '    a = 1\n'
+            '    if True:\n'
+            '        b = 2\n'
+            '        if True:\n'
+            '            c = 3\n'
+        )
+        # BPE: Ċ for newlines, ĠĠĠĠ for 4-space blocks
+        # depth 1 = 1 ws token, depth 2 = 2 ws tokens, depth 3 = 3 ws tokens
+        tokens = [
+            "if", "ĠTrue", "Ġ:", "Ċ",
+            "ĠĠĠĠ", "a", "Ġ=", "Ġ1", "Ċ",
+            "ĠĠĠĠ", "if", "ĠTrue", "Ġ:", "Ċ",
+            "ĠĠĠĠ", "ĠĠĠĠ", "b", "Ġ=", "Ġ2", "Ċ",
+            "ĠĠĠĠ", "ĠĠĠĠ", "if", "ĠTrue", "Ġ:", "Ċ",
+            "ĠĠĠĠ", "ĠĠĠĠ", "ĠĠĠĠ", "c", "Ġ=", "Ġ3", "Ċ",
+        ]
+        tok = _PerfectTokenizer({snippet: tokens})
+        provider = _MockProvider("bpe", tok)
+
+        inst = object.__new__(ASTBoundaryMetrics)
+        inst._tokenizer_vocab_cache = {}
+        inst._warned_tokenizers = set()
+        inst._char_decode_table = None
+        inst._treesitter_available = True
+        inst._ts_pack = ts_pack
+        inst._parser_cache = {}
+        inst.input_provider = provider
+        inst.tokenizer_names = ["bpe"]
+        inst.max_snippets_per_lang = 1
+
+        loader = CodeDataLoader()
+        loader.code_snippets = {"python": [snippet]}
+        inst.code_loader = loader
+
+        result = inst.compute()
+        indent = result["indentation_consistency"]
+        py = indent["per_tokenizer"]["bpe"]["by_language"]["python"]
+        assert py["depth_proportionality_correlation"] is not None
+        assert py["depth_proportionality_correlation"] > 0.8
+
+    def test_uniform_bpe_stability(self, ts_pack):
+        """Uniform indentation with ĠĠĠĠ/Ċ → stability = 1.0."""
+        snippet = 'if True:\n    a = 1\n    b = 2\n    c = 3\n'
+        tokens = [
+            "if", "ĠTrue", "Ġ:", "Ċ",
+            "ĠĠĠĠ", "a", "Ġ=", "Ġ1", "Ċ",
+            "ĠĠĠĠ", "b", "Ġ=", "Ġ2", "Ċ",
+            "ĠĠĠĠ", "c", "Ġ=", "Ġ3", "Ċ",
+        ]
+        tok = _PerfectTokenizer({snippet: tokens})
+        provider = _MockProvider("bpe_uni", tok)
+
+        inst = object.__new__(ASTBoundaryMetrics)
+        inst._tokenizer_vocab_cache = {}
+        inst._warned_tokenizers = set()
+        inst._char_decode_table = None
+        inst._treesitter_available = True
+        inst._ts_pack = ts_pack
+        inst._parser_cache = {}
+        inst.input_provider = provider
+        inst.tokenizer_names = ["bpe_uni"]
+        inst.max_snippets_per_lang = 1
+
+        loader = CodeDataLoader()
+        loader.code_snippets = {"python": [snippet]}
+        inst.code_loader = loader
+
+        result = inst.compute()
+        indent = result["indentation_consistency"]
+        py = indent["per_tokenizer"]["bpe_uni"]["by_language"]["python"]
+        assert py["pattern_stability_rate"] == pytest.approx(1.0)
+
+    def test_constant_ws_tokens_zero_corr(self, ts_pack):
+        """Constant ws tokens across depths with ĠĠĠĠ/Ċ → ρ = 0.0."""
+        snippet = (
+            'if True:\n'
+            '    a = 1\n'
+            '    if True:\n'
+            '        b = 2\n'
+            '        if True:\n'
+            '            c = 3\n'
+        )
+        # 1 ws token at every depth (each indentation is a single big token)
+        tokens = [
+            "if", "ĠTrue", "Ġ:", "Ċ",
+            "ĠĠĠĠ", "a", "Ġ=", "Ġ1", "Ċ",
+            "ĠĠĠĠ", "if", "ĠTrue", "Ġ:", "Ċ",
+            "ĠĠĠĠĠĠĠĠ", "b", "Ġ=", "Ġ2", "Ċ",
+            "ĠĠĠĠĠĠĠĠ", "if", "ĠTrue", "Ġ:", "Ċ",
+            "ĠĠĠĠĠĠĠĠĠĠĠĠ", "c", "Ġ=", "Ġ3", "Ċ",
+        ]
+        tok = _PerfectTokenizer({snippet: tokens})
+        provider = _MockProvider("bpe_const", tok)
+
+        inst = object.__new__(ASTBoundaryMetrics)
+        inst._tokenizer_vocab_cache = {}
+        inst._warned_tokenizers = set()
+        inst._char_decode_table = None
+        inst._treesitter_available = True
+        inst._ts_pack = ts_pack
+        inst._parser_cache = {}
+        inst.input_provider = provider
+        inst.tokenizer_names = ["bpe_const"]
+        inst.max_snippets_per_lang = 1
+
+        loader = CodeDataLoader()
+        loader.code_snippets = {"python": [snippet]}
+        inst.code_loader = loader
+
+        result = inst.compute()
+        indent = result["indentation_consistency"]
+        py = indent["per_tokenizer"]["bpe_const"]["by_language"]["python"]
+        assert py["depth_proportionality_correlation"] == pytest.approx(0.0)
+
+
+# ======================================================================
+# End-to-end: Indentation Consistency with SentencePiece encoding
+# ======================================================================
+
+class TestIndentationConsistencySP:
+    """E2E tests for indentation with ▁▁▁▁ / newline encoding (SentencePiece)."""
+
+    @pytest.fixture(scope="class")
+    def ts_pack(self):
+        try:
+            import tree_sitter_language_pack
+            return tree_sitter_language_pack
+        except ImportError:
+            pytest.skip("tree-sitter-language-pack not installed")
+
+    def test_proportional_sp_high_correlation(self, ts_pack):
+        """Proportional tokenizer with ▁▁▁▁/newline encoding → ρ > 0.8."""
+        snippet = (
+            'if True:\n'
+            '    a = 1\n'
+            '    if True:\n'
+            '        b = 2\n'
+            '        if True:\n'
+            '            c = 3\n'
+        )
+        # SentencePiece: ▁ for space, literal \n
+        tokens = [
+            "if", "▁True", "▁:", "\n",
+            "▁▁▁▁", "a", "▁=", "▁1", "\n",
+            "▁▁▁▁", "if", "▁True", "▁:", "\n",
+            "▁▁▁▁", "▁▁▁▁", "b", "▁=", "▁2", "\n",
+            "▁▁▁▁", "▁▁▁▁", "if", "▁True", "▁:", "\n",
+            "▁▁▁▁", "▁▁▁▁", "▁▁▁▁", "c", "▁=", "▁3", "\n",
+        ]
+        tok = _PerfectTokenizer({snippet: tokens})
+        provider = _MockProvider("sp", tok)
+
+        inst = object.__new__(ASTBoundaryMetrics)
+        inst._tokenizer_vocab_cache = {}
+        inst._warned_tokenizers = set()
+        inst._char_decode_table = None
+        inst._treesitter_available = True
+        inst._ts_pack = ts_pack
+        inst._parser_cache = {}
+        inst.input_provider = provider
+        inst.tokenizer_names = ["sp"]
+        inst.max_snippets_per_lang = 1
+
+        loader = CodeDataLoader()
+        loader.code_snippets = {"python": [snippet]}
+        inst.code_loader = loader
+
+        result = inst.compute()
+        indent = result["indentation_consistency"]
+        py = indent["per_tokenizer"]["sp"]["by_language"]["python"]
         assert py["depth_proportionality_correlation"] is not None
         assert py["depth_proportionality_correlation"] > 0.8
 
