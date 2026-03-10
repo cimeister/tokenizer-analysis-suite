@@ -13,7 +13,7 @@ cd tokenizer-intrinsic-evals
 uv sync
 
 # Run demo analysis with built-in sample data
-uv run python scripts/run_tokenizer_analysis.py --use-sample-data
+uv run tokenizer-analysis --use-sample-data
 
 # View results
 open results/fertility.png  # Basic metric comparison chart
@@ -26,7 +26,7 @@ Use the following measurement config and language config for adding results to G
 
 ```bash
 # Generate / update a local RESULTS.md
-uv run python scripts/run_tokenizer_analysis.py \
+uv run tokenizer-analysis \
     --tokenizer-config configs/baseline_tokenizers.json \
     --language-config configs/core_lang_config.json \
     --measurement-config configs/text_measurement_config_lines.json \
@@ -49,22 +49,22 @@ Without this data the AST metrics still run but fall back to small built-in synt
 
 ## Visualizing Tokenization
 
-The `scripts/visualize_tokenization.py` script renders token boundaries directly on source text, making it easy to inspect how different tokenizers split code, math, and multilingual content.
+The `tokenizer-visualize` command renders token boundaries directly on source text, making it easy to inspect how different tokenizers split code, math, and multilingual content.
 
 ```bash
 # Show built-in samples (Python code, LaTeX math, multilingual text)
-uv run python scripts/visualize_tokenization.py \
+uv run tokenizer-visualize \
     --tokenizer-config configs/baseline_tokenizers.json
 
 # Show only specific tokenizers
-uv run python scripts/visualize_tokenization.py \
+uv run tokenizer-visualize \
     --tokenizer-config configs/baseline_tokenizers.json \
     --tokenizers "GPT-4o" "Qwen 3"
 
 # Visualize all files in a directory
 # Files can contain multiple samples separated by a line with only "---".
 # Use --samples-per-file to control how many are read (default: 1).
-uv run python scripts/visualize_tokenization.py \
+uv run tokenizer-visualize \
     --tokenizer-config configs/baseline_tokenizers.json \
     --input data/samples/ --samples-per-file 3
 
@@ -133,10 +133,10 @@ Generate a cumulative Markdown leaderboard that grows across successive runs. Ea
 
 ```bash
 # Generate / update a local RESULTS.md
-uv run python scripts/run_tokenizer_analysis.py --use-sample-data --update-results-md --dataset flores
+uv run tokenizer-analysis --use-sample-data --update-results-md --dataset flores
 
 # Custom output path
-uv run python scripts/run_tokenizer_analysis.py --use-sample-data --update-results-md my_results.md
+uv run tokenizer-analysis --use-sample-data --update-results-md my_results.md
 ```
 
 Each row is keyed by `tokenizer_name (user, dataset)` — different users or datasets produce separate rows, while re-running the same combination updates in place.
@@ -278,11 +278,11 @@ Supports 19 languages. Parquet files should have a `content` column; StarCoder m
 
 ```bash
 # Save tokenized data for reuse
-uv run python scripts/run_tokenizer_analysis.py --use-sample-data \
+uv run tokenizer-analysis --use-sample-data \
     --save-tokenized-data --tokenized-data-output-path my_data.pkl
 
 # Reuse cached data (faster — no re-encoding)
-uv run python scripts/run_tokenizer_analysis.py \
+uv run tokenizer-analysis \
     --tokenized-data-file my_data.pkl \
     --tokenized-data-config my_data_config.json
 ```

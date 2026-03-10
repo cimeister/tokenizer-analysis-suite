@@ -7,11 +7,11 @@ making it easy for users to integrate custom tokenizers into the framework.
 
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Union, Any, Tuple
-import gzip
 import logging
 import os
 import glob
-import json
+
+from script_bpe.tokenizers import load_tokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -685,12 +685,15 @@ class ScriptBPETokenizer(TokenizerWrapper):
         self._tokenizer = tokenizer
         self._config = config
         self._token_cache: Dict[int, str] = {}
+        self._token_ids = sorted(tokenizer.tokens)
+        self._dense_to_token_id = dict(enumerate(self._token_ids))
+        self._token_id_to_dense = {token_id: dense_id for dense_id, token_id in self._dense_to_token_id.items()}
 
     def get_name(self) -> str:
         return self._name
 
     def get_vocab_size(self) -> int:
-        return len(self._tokenizer.tokens)
+        return len(self._token_ids)
 
     def _decode_token(self, token_id: int) -> str:
         if token_id not in self._token_cache:
@@ -698,13 +701,16 @@ class ScriptBPETokenizer(TokenizerWrapper):
         return self._token_cache[token_id]
 
     def get_vocab(self) -> Optional[Dict[str, int]]:
-        return {self._decode_token(token_id): token_id for token_id in self._tokenizer.tokens}
+        return {
+            self._decode_token(token_id): self._token_id_to_dense[token_id]
+            for token_id in self._token_ids
+        }
 
     def can_encode(self) -> bool:
         return True
 
     def encode(self, text: str) -> List[int]:
-        return list(self._tokenizer.encode(text))
+        return [self._token_id_to_dense[token_id] for token_id in self._tokenizer.encode(text)]
 
     def can_pretokenize(self) -> bool:
         return True
@@ -716,49 +722,14 @@ class ScriptBPETokenizer(TokenizerWrapper):
         return self._tokenizer
 
     def convert_ids_to_tokens(self, token_ids: List[int]) -> List[str]:
-        return [self._decode_token(token_id) for token_id in token_ids]
-
-    @staticmethod
-    def _detect_model_class(path: str):
-        from script_bpe.tokenizers.bpe.tokenizer import BPETokenizer
-        from script_bpe.tokenizers.mingram.model import MinGramModel
-        from script_bpe.tokenizers.unigram.model import UnigramModel
-
-        open_func = gzip.open if path.endswith(".gz") else open
-        with open_func(path, "rt") as f:
-            data = json.load(f)
-
-        version = data["info"]["version"]
-        if version.startswith("sebpe"):
-            return BPETokenizer
-        if version.startswith("seunigram"):
-            return UnigramModel
-        if version.startswith("semingram"):
-            return MinGramModel
-        raise ValueError(f"Unsupported script_bpe tokenizer version: {version}")
+        return [self._decode_token(self._dense_to_token_id[token_id]) for token_id in token_ids]
 
     @classmethod
     def from_config(cls, name: str, config: Dict[str, Any]) -> 'ScriptBPETokenizer':
         path = config["path"]
         model_type = config.get("model")
-
-        if model_type is not None:
-            from script_bpe.tokenizers.bpe.tokenizer import BPETokenizer
-            from script_bpe.tokenizers.mingram.model import MinGramModel
-            from script_bpe.tokenizers.unigram.model import UnigramModel
-
-            model_classes = {
-                "bpe": BPETokenizer,
-                "unigram": UnigramModel,
-                "mingram": MinGramModel,
-            }
-            if model_type not in model_classes:
-                raise ValueError(f"Unknown script_bpe model type: {model_type}")
-            model_class = model_classes[model_type]
-        else:
-            model_class = cls._detect_model_class(path)
-
-        tokenizer = model_class.load(path)
+        reindex = config.get("reindex", True)
+        tokenizer = load_tokenizer(path, model_type=model_type, reindex=reindex)
         return cls(name, tokenizer, config)
 
 
