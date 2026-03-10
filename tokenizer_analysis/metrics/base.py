@@ -32,6 +32,11 @@ class BaseMetrics(ABC):
     _CONTINUATION_END = re.compile(r'@@$')
     _SPECIAL_TOKEN = re.compile(r'^(<\||\[).*(\|>|\])$')
 
+    # Known byte-level BPE / SentencePiece character remappings.
+    _DEFAULT_CHAR_DECODE: Dict[str, str] = {
+        'Ġ': ' ', '▁': ' ', 'Ċ': '\n', 'ĉ': '\t', 'č': '\r',
+    }
+
     def __init__(self, input_provider: InputProvider):
         """
         Initialize base metrics.
@@ -44,6 +49,7 @@ class BaseMetrics(ABC):
         self.language_metadata = None  # Can be set by subclasses
         self._tokenizer_vocab_cache: Dict[int, Dict[int, str]] = {}
         self._warned_tokenizers: set = set()
+        self._char_decode_table: Optional[Dict[str, str]] = None
     
     def get_tokenized_data(self) -> Dict[str, List[TokenizedData]]:
         """Get tokenized data organized by tokenizer."""
@@ -60,6 +66,58 @@ class BaseMetrics(ABC):
     # ------------------------------------------------------------------
     # Shared token conversion / cleaning helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _build_char_decode_table(tokenizer: Any) -> Dict[str, str]:
+        """Probe *tokenizer* to discover its character remapping table.
+
+        Encodes known whitespace characters (space, newline, tab, carriage
+        return) and inspects the raw token strings for non-matching
+        characters.  Returns a mapping from encoded character to the
+        original character, e.g. ``{'Ġ': ' ', 'Ċ': '\\n'}``.
+
+        Returns an empty dict when the tokenizer does not remap characters
+        (e.g. WordPiece), or when probing fails.
+        """
+        if not hasattr(tokenizer, 'encode'):
+            return {}
+
+        probes = [
+            ('a a', 1, ' '),   # space
+            ('a\na', 1, '\n'), # newline
+            ('a\ta', 1, '\t'), # tab
+            ('a\ra', 1, '\r'), # carriage return
+        ]
+        table: Dict[str, str] = {}
+        for text, target_pos, original_char in probes:
+            try:
+                token_ids = tokenizer.encode(text)
+            except Exception:
+                continue
+            if not token_ids:
+                continue
+            # Convert IDs → raw token strings
+            raw_tokens: Optional[List[str]] = None
+            try:
+                if hasattr(tokenizer, 'convert_ids_to_tokens'):
+                    raw_tokens = tokenizer.convert_ids_to_tokens(token_ids)
+            except Exception:
+                pass
+            if not raw_tokens:
+                continue
+            # Look at the token at target_pos (the one after 'a')
+            # and also search through all tokens for the remapping.
+            for raw_tok in raw_tokens:
+                if not isinstance(raw_tok, str) or len(raw_tok) < 1:
+                    continue
+                for ch in raw_tok:
+                    if ch != original_char and ch not in 'aA' and ord(ch) > 127:
+                        # This high-unicode char might be a remapping.
+                        # Verify: does the token content make sense with this
+                        # substitution?
+                        if ch not in table:
+                            table[ch] = original_char
+        return table
 
     def _convert_ids_to_tokens(self, tokenizer: Any, token_ids: List[int]) -> List[str]:
         """Convert token IDs to strings with multiple fallback strategies.
@@ -131,17 +189,34 @@ class BaseMetrics(ABC):
         """
         if self._SPECIAL_TOKEN.match(raw_token):
             return None
-        if self._SPACE_PREFIX.match(raw_token):
+
+        # Build effective decode table: always start with defaults, overlay
+        # probed table when available.  This is safe because the default
+        # entries (Ġ→' ', Ċ→'\n', etc.) are harmless for tokenizers that
+        # never emit those characters.
+        if self._char_decode_table:
+            table = {**self._DEFAULT_CHAR_DECODE, **self._char_decode_table}
+        else:
+            table = self._DEFAULT_CHAR_DECODE
+
+        # Apply character decode table to ALL characters
+        decoded = ''.join(table.get(ch, ch) for ch in raw_token)
+
+        # Check subword markers on the decoded result
+        if self._CONTINUATION.match(decoded):
+            return decoded[2:]
+        if self._END_WORD.search(decoded):
+            return decoded[:-4]
+        if self._CONTINUATION_END.search(decoded):
+            return decoded[:-2]
+
+        # Handle leading space
+        if decoded and decoded[0] == ' ':
             if preserve_space:
-                return " " + raw_token[1:]
-            return raw_token[1:]
-        if self._CONTINUATION.match(raw_token):
-            return raw_token[2:]
-        if self._END_WORD.search(raw_token):
-            return raw_token[:-4]
-        if self._CONTINUATION_END.search(raw_token):
-            return raw_token[:-2]
-        return raw_token
+                return decoded
+            return decoded[1:]
+
+        return decoded
 
     def _clean_token(self, token: str) -> Optional[str]:
         """Strip subword markers from *token*, returning ``None`` for special tokens."""

@@ -24,6 +24,7 @@ def _make_instance():
     """
     inst = object.__new__(DigitBoundaryMetrics)
     inst._tokenizer_vocab_cache = {}
+    inst._char_decode_table = None
     return inst
 
 

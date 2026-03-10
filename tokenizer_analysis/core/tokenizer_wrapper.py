@@ -96,6 +96,19 @@ class TokenizerWrapper(ABC):
         """
         pass
     
+    def encode_with_offsets(self, text: str) -> Tuple[List[int], Optional[List[Tuple[int, int]]]]:
+        """Encode text and return ``(token_ids, offsets)``.
+
+        ``offsets[i]`` is ``(start_char, end_char)`` in the original *text*
+        for token *i*.  Tokens that do not map to source characters (e.g.
+        ``<s>``, ``</s>``) should have offset ``(0, 0)``.
+
+        The default implementation returns ``(self.encode(text), None)``
+        (offsets not supported).  Subclasses should override when the
+        underlying tokenizer library provides character-offset information.
+        """
+        return self.encode(text), None
+
     def get_underlying_tokenizer(self):
         """
         Get the underlying raw tokenizer object if available.
@@ -193,14 +206,22 @@ class HuggingFaceTokenizer(TokenizerWrapper):
         else:
             raise ValueError(f"Unexpected encoding result type: {type(result)}")
     
+    def encode_with_offsets(self, text: str) -> Tuple[List[int], Optional[List[Tuple[int, int]]]]:
+        """Encode text using HuggingFace tokenizer and return offsets."""
+        result = self._tokenizer.encode(text)
+        if hasattr(result, 'ids') and hasattr(result, 'offsets'):
+            return result.ids, result.offsets
+        # Fallback for transformers AutoTokenizer (no offsets available)
+        return self.encode(text), None
+
     def can_pretokenize(self) -> bool:
         return hasattr(self._tokenizer, 'pre_tokenizer') and self._tokenizer.pre_tokenizer is not None
-    
+
     def pretokenize(self, text: str) -> List[str]:
         if not self.can_pretokenize():
             raise NotImplementedError(f"Tokenizer {self._name} does not support pretokenization")
         return [token for token, _ in self._tokenizer.pre_tokenizer.pre_tokenize_str(text)]
-    
+
     def get_underlying_tokenizer(self):
         """Return the underlying HuggingFace tokenizer object."""
         return self._tokenizer
@@ -347,14 +368,32 @@ class UniMixLMTokenizer(TokenizerWrapper):
                 raise ValueError(f"Unexpected encoding result type: {type(result)}")
         
     
+    def encode_with_offsets(self, text: str) -> Tuple[List[int], Optional[List[Tuple[int, int]]]]:
+        """Encode text using UniMixLM tokenizer and return offsets."""
+        if self.tokenizer_class == 'langspec':
+            best_lang, best_enc, best_logp = None, None, float("-inf")
+            for lang_code, info in self.per_lang_tok.items():
+                enc = info["tokenizer"].encode(text)
+                logp = sum(info["scores"][t] for t in enc.ids)
+                if logp > best_logp:
+                    best_lang, best_enc, best_logp = lang_code, enc, logp
+            if best_enc is not None and hasattr(best_enc, 'offsets'):
+                return best_enc.ids, best_enc.offsets
+            return (best_enc.ids if best_enc else []), None
+        else:
+            result = self._tokenizer.encode(text)
+            if hasattr(result, 'ids') and hasattr(result, 'offsets'):
+                return result.ids, result.offsets
+            return self.encode(text), None
+
     def can_pretokenize(self) -> bool:
         return hasattr(self._tokenizer.base_tokenizer, 'pre_tokenizer') and self._tokenizer.base_tokenizer.pre_tokenizer is not None
-    
+
     def pretokenize(self, text: str) -> List[str]:
         if not self.can_pretokenize():
             raise NotImplementedError(f"Tokenizer {self._name} does not support pretokenization")
         return [token for token, _ in self._tokenizer.base_tokenizer.pre_tokenizer.pre_tokenize_str(text)]
-    
+
     def get_underlying_tokenizer(self):
         """Return the underlying HuggingFace tokenizer object."""
         return self._tokenizer
@@ -431,6 +470,55 @@ class SentencePieceTokenizer(TokenizerWrapper):
                 ids = ids + [eos]
 
         return ids
+
+    def encode_with_offsets(self, text: str) -> Tuple[List[int], Optional[List[Tuple[int, int]]]]:
+        """Encode text using SentencePiece and return character offsets.
+
+        Uses ``encode_as_immutable_proto`` which provides ``begin`` / ``end``
+        byte offsets on each piece.  Converts byte offsets to character
+        offsets so they index into the original Python string.
+        """
+        try:
+            proto = self._sp.encode_as_immutable_proto(text)
+        except Exception:
+            return self.encode(text), None
+
+        ids: List[int] = []
+        offsets: List[Tuple[int, int]] = []
+
+        # Build byte→char offset map for the UTF-8 encoding of *text*.
+        text_bytes = text.encode("utf-8")
+        byte_to_char: List[int] = []
+        for char_idx, ch in enumerate(text):
+            byte_to_char.extend([char_idx] * len(ch.encode("utf-8")))
+        # Sentinel for end-of-string
+        byte_to_char.append(len(text))
+
+        for piece in proto.pieces:
+            ids.append(piece.id)
+            b_start = piece.begin
+            b_end = piece.end
+            if b_start == b_end:
+                # Special token or unknown — no source coverage
+                offsets.append((0, 0))
+            else:
+                c_start = byte_to_char[b_start] if b_start < len(byte_to_char) else len(text)
+                c_end = byte_to_char[b_end] if b_end < len(byte_to_char) else len(text)
+                offsets.append((c_start, c_end))
+
+        # Prepend/append BOS/EOS with (0,0) offsets if configured
+        if self._add_bos:
+            bos = self._sp.bos_id()
+            if bos is not None and bos >= 0:
+                ids = [bos] + ids
+                offsets = [(0, 0)] + offsets
+        if self._add_eos:
+            eos = self._sp.eos_id()
+            if eos is not None and eos >= 0:
+                ids = ids + [eos]
+                offsets = offsets + [(0, 0)]
+
+        return ids, offsets
 
     def can_pretokenize(self) -> bool:
         return True
@@ -605,15 +693,20 @@ class CustomBPETokenizer(TokenizerWrapper):
     
     def encode(self, text: str) -> List[int]:
         return self._tokenizer.encode(text).ids
-    
+
+    def encode_with_offsets(self, text: str) -> Tuple[List[int], Optional[List[Tuple[int, int]]]]:
+        """Encode text using custom BPE tokenizer and return offsets."""
+        encoding = self._tokenizer.encode(text)
+        return encoding.ids, encoding.offsets
+
     def can_pretokenize(self) -> bool:
         return hasattr(self._tokenizer, 'pre_tokenizer') and self._tokenizer.pre_tokenizer is not None
-    
+
     def pretokenize(self, text: str) -> List[str]:
         if not self.can_pretokenize():
             raise NotImplementedError(f"Tokenizer {self._name} does not support pretokenization")
         return [token for token, _ in self._tokenizer.pre_tokenizer.pre_tokenize_str(text)]
-    
+
     def get_underlying_tokenizer(self):
         """Return the underlying HuggingFace tokenizer object."""
         return self._tokenizer
