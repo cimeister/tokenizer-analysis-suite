@@ -177,20 +177,7 @@ Specify tokenizers via `--tokenizer-config`:
 }
 ```
 
-Available classes: `"huggingface"`, `"custom_bpe"` (requires `vocab.json` + `merges.txt`), `"script_bpe"` (loads native `script_bpe` `.json` / `.json.gz` models), `"pretokenized"` (for pre-tokenized data).
-
-To evaluate native `script_bpe` models directly, point the config at the saved tokenizer file:
-
-```json
-{
-  "my_script_bpe": {
-    "class": "script_bpe",
-    "path": "../results/bpe_tokenizers/my_corpus/n32000/scriptenc_cb.json.gz"
-  }
-}
-```
-
-This works for saved `script_bpe` BPE, Unigram, and MinGram models. The loader auto-detects the model family from the saved file metadata. See `configs/script_bpe_tokenizers.example.json` for a multi-tokenizer example.
+Available classes: `"huggingface"`, `"custom_bpe"` (requires `vocab.json` + `merges.txt`), and `"pretokenized"` (for pre-tokenized data).
 
 ### Data Configuration
 
@@ -507,7 +494,7 @@ scripts/
 
 **`No module named 'morphscore'`** — Initialize submodules, then install MorphScore into the project environment: `git submodule update --init --recursive && uv pip install -e ./morphscore`
 
-**`Unknown tokenizer class`** — Available classes: `"huggingface"`, `"custom_bpe"`, `"script_bpe"`, `"pretokenized"`. Register custom classes with `register_tokenizer_class()` (see Contributing).
+**`Unknown tokenizer class`** — Available classes: `"huggingface"`, `"custom_bpe"`, `"pretokenized"`, plus any custom classes you register at runtime with `register_tokenizer_class()` (see Contributing).
 
 **`FileNotFoundError`** — Check that paths in config files are absolute or relative to the working directory.
 

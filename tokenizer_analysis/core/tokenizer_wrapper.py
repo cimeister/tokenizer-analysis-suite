@@ -11,8 +11,6 @@ import logging
 import os
 import glob
 
-from script_bpe.tokenizers import load_tokenizer
-
 logger = logging.getLogger(__name__)
 
 
@@ -770,62 +768,6 @@ class PreTokenizedDataTokenizer(TokenizerWrapper):
         return cls(name, vocab_size, vocab_dict)
 
 
-class ScriptBPETokenizer(TokenizerWrapper):
-    """Wrapper for native `script_bpe` saved tokenizer files."""
-
-    def __init__(self, name: str, tokenizer, config: Dict[str, Any]):
-        self._name = name
-        self._tokenizer = tokenizer
-        self._config = config
-        self._token_cache: Dict[int, str] = {}
-        self._token_ids = sorted(tokenizer.tokens)
-        self._dense_to_token_id = dict(enumerate(self._token_ids))
-        self._token_id_to_dense = {token_id: dense_id for dense_id, token_id in self._dense_to_token_id.items()}
-
-    def get_name(self) -> str:
-        return self._name
-
-    def get_vocab_size(self) -> int:
-        return len(self._token_ids)
-
-    def _decode_token(self, token_id: int) -> str:
-        if token_id not in self._token_cache:
-            self._token_cache[token_id] = self._tokenizer.decode([token_id])
-        return self._token_cache[token_id]
-
-    def get_vocab(self) -> Optional[Dict[str, int]]:
-        return {
-            self._decode_token(token_id): self._token_id_to_dense[token_id]
-            for token_id in self._token_ids
-        }
-
-    def can_encode(self) -> bool:
-        return True
-
-    def encode(self, text: str) -> List[int]:
-        return [self._token_id_to_dense[token_id] for token_id in self._tokenizer.encode(text)]
-
-    def can_pretokenize(self) -> bool:
-        return True
-
-    def pretokenize(self, text: str) -> List[str]:
-        return [self._tokenizer.pretokenizer.decode(chunk) for chunk in self._tokenizer.pretokenizer.pretokenize(text)]
-
-    def get_underlying_tokenizer(self):
-        return self._tokenizer
-
-    def convert_ids_to_tokens(self, token_ids: List[int]) -> List[str]:
-        return [self._decode_token(self._dense_to_token_id[token_id]) for token_id in token_ids]
-
-    @classmethod
-    def from_config(cls, name: str, config: Dict[str, Any]) -> 'ScriptBPETokenizer':
-        path = config["path"]
-        model_type = config.get("model")
-        reindex = config.get("reindex", True)
-        tokenizer = load_tokenizer(path, model_type=model_type, reindex=reindex)
-        return cls(name, tokenizer, config)
-
-
 # Registry for custom tokenizer classes
 _TOKENIZER_REGISTRY: Dict[str, type] = {
     'huggingface': HuggingFaceTokenizer,
@@ -835,7 +777,6 @@ _TOKENIZER_REGISTRY: Dict[str, type] = {
     'pretokenized': PreTokenizedDataTokenizer,
     'unimixlm': UniMixLMTokenizer,
     'custom_bpe': CustomBPETokenizer,
-    'script_bpe': ScriptBPETokenizer,
     'sentencepiece': SentencePieceTokenizer
 }
 
