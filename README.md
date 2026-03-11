@@ -10,10 +10,10 @@ Get up and running in 30 seconds:
 # Clone and install
 git clone https://github.com/swiss-ai/tokenizer-intrinsic-evals.git
 cd tokenizer-intrinsic-evals
-pip install -e .
+uv sync
 
 # Run demo analysis with built-in sample data
-python scripts/run_tokenizer_analysis.py --use-sample-data
+uv run tokenizer-analysis --use-sample-data
 
 # View results
 open results/fertility.png  # Basic metric comparison chart
@@ -26,7 +26,7 @@ Use the following measurement config and language config for adding results to G
 
 ```bash
 # Generate / update a local RESULTS.md
-python scripts/run_tokenizer_analysis.py \
+uv run tokenizer-analysis \
     --tokenizer-config configs/baseline_tokenizers.json \
     --language-config configs/core_lang_config.json \
     --measurement-config configs/text_measurement_config_lines.json \
@@ -35,7 +35,7 @@ python scripts/run_tokenizer_analysis.py \
     --update-results-md --dataset flores_core --use-builtin-math-data
 
 # Push results to GitHub
-python scripts/update_remote.py
+uv run python scripts/update_remote.py
 ```
 
 Specify the path to your tokenizer file in the JSON given to `--tokenizer-config` (see [Configuration Files](#configuration-files)).
@@ -49,22 +49,22 @@ Without this data the AST metrics still run but fall back to small built-in synt
 
 ## Visualizing Tokenization
 
-The `scripts/visualize_tokenization.py` script renders token boundaries directly on source text, making it easy to inspect how different tokenizers split code, math, and multilingual content.
+The `tokenizer-visualize` command renders token boundaries directly on source text, making it easy to inspect how different tokenizers split code, math, and multilingual content.
 
 ```bash
 # Show built-in samples (Python code, LaTeX math, multilingual text)
-python scripts/visualize_tokenization.py \
+uv run tokenizer-visualize \
     --tokenizer-config configs/baseline_tokenizers.json
 
 # Show only specific tokenizers
-python scripts/visualize_tokenization.py \
+uv run tokenizer-visualize \
     --tokenizer-config configs/baseline_tokenizers.json \
     --tokenizers "GPT-4o" "Qwen 3"
 
 # Visualize all files in a directory
 # Files can contain multiple samples separated by a line with only "---".
 # Use --samples-per-file to control how many are read (default: 1).
-python scripts/visualize_tokenization.py \
+uv run tokenizer-visualize \
     --tokenizer-config configs/baseline_tokenizers.json \
     --input data/samples/ --samples-per-file 3
 
@@ -82,14 +82,14 @@ Each sample is shown with line-numbered source text followed by a colour-coded t
 ```bash
 git clone https://github.com/swiss-ai/tokenizer-intrinsic-evals.git
 cd tokenizer-intrinsic-evals
-pip install -e .
+uv sync
 
 # Optional: MorphScore morphological analysis
 git submodule update --init --recursive
-cd morphscore && pip install -e . && cd ..
+uv pip install -e ./morphscore
 
 # Optional: AST boundary analysis for code
-pip install tree-sitter-language-pack
+uv sync --extra code-ast
 ```
 
 **MorphScore note**: Only `<ISO 639-3>_<script>` language codes are automatically mapped. Data files must be downloaded separately (see [MorphScore README](morphscore/README.md)) and placed in `morphscore_data/`.
@@ -134,10 +134,10 @@ Generate a cumulative Markdown leaderboard that grows across successive runs. Ea
 
 ```bash
 # Generate / update a local RESULTS.md
-python scripts/run_tokenizer_analysis.py --use-sample-data --update-results-md --dataset flores
+uv run tokenizer-analysis --use-sample-data --update-results-md --dataset flores
 
 # Custom output path
-python scripts/run_tokenizer_analysis.py --use-sample-data --update-results-md my_results.md
+uv run tokenizer-analysis --use-sample-data --update-results-md my_results.md
 ```
 
 Each row is keyed by `tokenizer_name (user, dataset)` — different users or datasets produce separate rows, while re-running the same combination updates in place.
@@ -147,10 +147,10 @@ Each row is keyed by `tokenizer_name (user, dataset)` — different users or dat
 Use `scripts/update_remote.py` to push results to a dedicated branch (default: `results`) without switching your branch or touching the working tree.
 
 ```bash
-python scripts/update_remote.py                                # Push to origin/results
-python scripts/update_remote.py --validate-local-results       # Validate format only
-python scripts/update_remote.py --remove-my-results            # Remove your rows from remote
-python scripts/update_remote.py --remove-my-results --all      # Remove from all RESULTS files
+uv run python scripts/update_remote.py                                # Push to origin/results
+uv run python scripts/update_remote.py --validate-local-results       # Validate format only
+uv run python scripts/update_remote.py --remove-my-results            # Remove your rows from remote
+uv run python scripts/update_remote.py --remove-my-results --all      # Remove from all RESULTS files
 ```
 
 When multiple team members push, the remote file is fetched and merged first — rows from others are preserved.
@@ -178,7 +178,7 @@ Specify tokenizers via `--tokenizer-config`:
 }
 ```
 
-Available classes: `"huggingface"`, `"custom_bpe"` (requires `vocab.json` + `merges.txt`), `"pretokenized"` (for pre-tokenized data).
+Available classes: `"huggingface"`, `"custom_bpe"` (requires `vocab.json` + `merges.txt`), and `"pretokenized"` (for pre-tokenized data).
 
 ### Data Configuration
 
@@ -266,11 +266,11 @@ Supports 19 languages. Parquet files should have a `content` column; StarCoder m
 
 ```bash
 # Save tokenized data for reuse
-python scripts/run_tokenizer_analysis.py --use-sample-data \
+uv run tokenizer-analysis --use-sample-data \
     --save-tokenized-data --tokenized-data-output-path my_data.pkl
 
 # Reuse cached data (faster — no re-encoding)
-python scripts/run_tokenizer_analysis.py \
+uv run tokenizer-analysis \
     --tokenized-data-file my_data.pkl \
     --tokenized-data-config my_data_config.json
 ```
@@ -416,7 +416,7 @@ Counts how many multi-byte characters in the source text have their constituent 
 
 ### Code Tokenization Metrics
 
-Evaluates tokenizer handling of source code by parsing it with tree-sitter and measuring alignment between AST node boundaries and token boundaries. Requires `pip install tree-sitter-language-pack`. Supports 19 languages (Python, JavaScript, Java, C, C++, Go, Rust, TypeScript, PHP, Ruby, C#, Scala, Swift, Kotlin, Lua, R, Perl, Haskell, Bash). Configure with `--code-ast-config`; disable with `--no-code-ast`.
+Evaluates tokenizer handling of source code by parsing it with tree-sitter and measuring alignment between AST node boundaries and token boundaries. Install the optional support with `uv sync --extra code-ast`. Supports 19 languages (Python, JavaScript, Java, C, C++, Go, Rust, TypeScript, PHP, Ruby, C#, Scala, Swift, Kotlin, Lua, R, Perl, Haskell, Bash). Configure with `--code-ast-config`; disable with `--no-code-ast`.
 
 #### AST Leaf-Node Boundary Alignment (`ast_full_alignment`)
 
@@ -587,9 +587,9 @@ python scripts/run_tokenizer_analysis.py \
 
 ## Troubleshooting
 
-**`No module named 'morphscore'`** — Initialize submodules: `git submodule update --init --recursive && cd morphscore && pip install -e . && cd ..`
+**`No module named 'morphscore'`** — Initialize submodules, then install MorphScore into the project environment: `git submodule update --init --recursive && uv pip install -e ./morphscore`
 
-**`Unknown tokenizer class`** — Available classes: `"huggingface"`, `"custom_bpe"`, `"pretokenized"`. Register custom classes with `register_tokenizer_class()` (see Contributing).
+**`Unknown tokenizer class`** — Available classes: `"huggingface"`, `"custom_bpe"`, `"pretokenized"`, plus any custom classes you register at runtime with `register_tokenizer_class()` (see Contributing).
 
 **`FileNotFoundError`** — Check that paths in config files are absolute or relative to the working directory.
 
