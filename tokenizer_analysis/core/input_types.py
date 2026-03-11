@@ -3,7 +3,7 @@ Input data types and abstractions for tokenizer analysis.
 """
 
 from dataclasses import dataclass
-from typing import Dict, List, Any, Optional, Union, Protocol, TYPE_CHECKING
+from typing import Dict, List, Any, Optional, Tuple, Union, Protocol, TYPE_CHECKING
 from abc import ABC, abstractmethod
 import logging
 
@@ -21,6 +21,7 @@ class TokenizedData:
     language: str
     tokens: List[int]
     text: Optional[str] = None  # Original text if available
+    offsets: Optional[List[Tuple[int, int]]] = None  # Token-to-char offsets from encoding
     metadata: Optional[Dict[str, Any]] = None
     
     def __post_init__(self):
@@ -54,6 +55,7 @@ class TokenizedData:
             'language': self.language,
             'tokens': self.tokens,
             'text': self.text,
+            'offsets': self.offsets,
             'metadata': self.metadata or {}
         }
     
@@ -65,6 +67,7 @@ class TokenizedData:
             language=data['language'],
             tokens=data['tokens'],
             text=data.get('text'),
+            offsets=[tuple(o) for o in data['offsets']] if data.get('offsets') else None,
             metadata=data.get('metadata')
         )
 

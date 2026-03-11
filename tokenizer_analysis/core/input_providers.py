@@ -72,19 +72,20 @@ class RawTokenizationProvider(InputProvider):
                             continue
                         
                         # Tokenize the text using TokenizerWrapper interface
-                        tokens = spec.tokenizer.encode(text)
-                        
+                        tokens, offsets = spec.tokenizer.encode_with_offsets(text)
+
                         # Validate tokens are integers
                         if not isinstance(tokens, list) or not all(isinstance(t, int) for t in tokens):
                             logger.error(f"Tokens for {language} are not a list of integers: {type(tokens)} - {tokens}")
                             raise ValueError(f"Tokens for {language} must be a list of integers, got {type(tokens)}")
-                        
+
                         # Create TokenizedData object
                         data = TokenizedData(
                             tokenizer_name=tok_name,
                             language=language,
                             tokens=tokens,
                             text=text,
+                            offsets=offsets,
                             metadata={
                                 'source': 'raw_tokenization',
                                 'tokenizer_metadata': spec.metadata,
@@ -184,6 +185,7 @@ class PreTokenizedProvider(InputProvider):
                         language=data.language,
                         tokens=data.tokens,
                         text=data.text,
+                        offsets=data.offsets,
                         metadata=data.metadata
                     )
                     validated_data.append(corrected_data)

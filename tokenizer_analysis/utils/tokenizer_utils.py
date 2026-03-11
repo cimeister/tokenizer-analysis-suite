@@ -16,6 +16,7 @@ from tokenizers import Tokenizer
 from tokenizers.models import Unigram, BPE
 from tokenizers.pre_tokenizers import Whitespace, ByteLevel, Sequence
 from tokenizers.processors import TemplateProcessing
+from tokenizers.decoders import ByteLevel as ByteLevelDecoder
 from transformers import AutoTokenizer
 
 
@@ -152,8 +153,9 @@ def _load_custom_bpe_from_directory(config):
     # Initialize tokenizer
     tokenizer = Tokenizer(BPE(vocab=vocab, merges=merges))
 
-    # Set pre-tokenizer
+    # Set pre-tokenizer and matching decoder
     tokenizer.pre_tokenizer = Sequence([Whitespace(), ByteLevel(use_regex=False)])
+    tokenizer.decoder = ByteLevelDecoder()
 
     # Set special tokens
     tokenizer.add_special_tokens(["<s>", "</s>", "<unk>", "<pad>"])

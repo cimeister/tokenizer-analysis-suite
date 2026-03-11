@@ -4,7 +4,7 @@ import pytest
 
 from tokenizer_analysis.metrics.basic import BasicTokenizationMetrics
 from tokenizer_analysis.core.input_types import TokenizedData
-from typing import List
+from typing import Dict, List, Optional, Tuple
 
 from .conftest import SimpleProvider as _SimpleProvider
 
@@ -131,3 +131,268 @@ class TestBytesPerToken:
         byte_mean = tok_data["byte_length"]["mean"]
         assert char_mean == pytest.approx(1.0)   # 2 chars / 2 tokens
         assert byte_mean == pytest.approx(2.0)   # 4 bytes / 2 tokens
+
+
+# ======================================================================
+# Mock decodable tokenizer and provider
+# ======================================================================
+
+class _MockDecodableTokenizer:
+    """Minimal tokenizer wrapper with configurable encode/decode for tests."""
+
+    def __init__(self, encode_fn=None, decode_fn=None, unk_id=None):
+        self._encode_fn = encode_fn or (lambda t: list(range(len(t.split()))))
+        self._decode_fn = decode_fn  # None means decode not supported
+        self._unk_id = unk_id
+
+    def get_name(self) -> str:
+        return "mock_tok"
+
+    def get_vocab_size(self) -> int:
+        return 100
+
+    def get_vocab(self) -> Optional[Dict[str, int]]:
+        return None
+
+    def can_encode(self) -> bool:
+        return True
+
+    def encode(self, text: str) -> List[int]:
+        return self._encode_fn(text)
+
+    def can_pretokenize(self) -> bool:
+        return False
+
+    def pretokenize(self, text: str) -> List[str]:
+        raise NotImplementedError
+
+    def can_decode(self) -> bool:
+        return self._decode_fn is not None
+
+    def decode(self, token_ids: List[int], skip_special_tokens: bool = True) -> Optional[str]:
+        if self._decode_fn is None:
+            return None
+        try:
+            return self._decode_fn(token_ids)
+        except Exception:
+            return None
+
+    def encode_with_offsets(self, text: str) -> Tuple[List[int], Optional[List[Tuple[int, int]]]]:
+        return self.encode(text), None
+
+    def get_unk_token_id(self) -> Optional[int]:
+        return self._unk_id
+
+    def has_unk_token(self) -> bool:
+        return self._unk_id is not None
+
+    @classmethod
+    def from_config(cls, name, config):
+        return cls()
+
+
+class _MockDecodableProvider(_SimpleProvider):
+    """Provider that wraps a _MockDecodableTokenizer."""
+
+    def __init__(self, tok_name: str, tokenizer: _MockDecodableTokenizer):
+        super().__init__(tok_name)
+        self._tokenizer = tokenizer
+
+    def get_tokenizer(self, name: str):
+        return self._tokenizer
+
+
+# ======================================================================
+# T8: Reconstruction fidelity
+# ======================================================================
+
+class TestReconstructionFidelity:
+
+    def test_perfect_roundtrip(self):
+        """Perfect round-trip -> exact_match=1.0, CER=0.0."""
+        tok_name = "mock_tok"
+        tok = _MockDecodableTokenizer(
+            encode_fn=lambda t: [1, 2, 3],
+            decode_fn=lambda ids: "hello world",
+        )
+        provider = _MockDecodableProvider(tok_name, tok)
+        metrics = BasicTokenizationMetrics(provider)
+
+        td = {tok_name: [_make_td(tok_name, "hello world", [1, 2, 3])]}
+        results = metrics.compute_reconstruction_fidelity_analysis(td)
+
+        summary = results["reconstruction_fidelity"]["summary"][tok_name]
+        assert summary["exact_match_rate"] == pytest.approx(1.0)
+        assert summary["mean_cer"] == pytest.approx(0.0)
+
+    def test_lossy_roundtrip(self):
+        """Lossy round-trip -> exact_match=0.0, CER>0."""
+        tok_name = "mock_tok"
+        tok = _MockDecodableTokenizer(
+            encode_fn=lambda t: [1, 2],
+            decode_fn=lambda ids: "helo world",  # missing 'l'
+        )
+        provider = _MockDecodableProvider(tok_name, tok)
+        metrics = BasicTokenizationMetrics(provider)
+
+        td = {tok_name: [_make_td(tok_name, "hello world", [1, 2])]}
+        results = metrics.compute_reconstruction_fidelity_analysis(td)
+
+        summary = results["reconstruction_fidelity"]["summary"][tok_name]
+        assert summary["exact_match_rate"] == pytest.approx(0.0)
+        assert summary["mean_cer"] > 0.0
+
+    def test_unk_counting(self):
+        """UNK tokens should be counted correctly."""
+        tok_name = "mock_tok"
+        unk_id = 99
+        tok = _MockDecodableTokenizer(
+            encode_fn=lambda t: [1, unk_id, 2, unk_id],  # 2 UNKs out of 4
+            decode_fn=lambda ids: "test text",
+            unk_id=unk_id,
+        )
+        provider = _MockDecodableProvider(tok_name, tok)
+        metrics = BasicTokenizationMetrics(provider)
+
+        td = {tok_name: [_make_td(tok_name, "test text", [1, unk_id, 2, unk_id])]}
+        results = metrics.compute_reconstruction_fidelity_analysis(td)
+
+        summary = results["reconstruction_fidelity"]["summary"][tok_name]
+        assert summary["unk_token_rate"] == pytest.approx(0.5)
+
+    def test_no_unk_id_defined(self):
+        """When no UNK ID is defined, UNK rate should be 0.0."""
+        tok_name = "mock_tok"
+        tok = _MockDecodableTokenizer(
+            encode_fn=lambda t: [1, 2, 3],
+            decode_fn=lambda ids: "hello",
+            unk_id=None,
+        )
+        provider = _MockDecodableProvider(tok_name, tok)
+        metrics = BasicTokenizationMetrics(provider)
+
+        td = {tok_name: [_make_td(tok_name, "hello", [1, 2, 3])]}
+        results = metrics.compute_reconstruction_fidelity_analysis(td)
+
+        summary = results["reconstruction_fidelity"]["summary"][tok_name]
+        assert summary["unk_token_rate"] == pytest.approx(0.0)
+
+    def test_whitespace_preserved(self):
+        """All whitespace preserved -> fidelity=1.0."""
+        tok_name = "mock_tok"
+        text = "a b\tc"
+        tok = _MockDecodableTokenizer(
+            encode_fn=lambda t: [1, 2, 3],
+            decode_fn=lambda ids: text,  # perfect decode
+        )
+        provider = _MockDecodableProvider(tok_name, tok)
+        metrics = BasicTokenizationMetrics(provider)
+
+        td = {tok_name: [_make_td(tok_name, text, [1, 2, 3])]}
+        results = metrics.compute_reconstruction_fidelity_analysis(td)
+
+        summary = results["reconstruction_fidelity"]["summary"][tok_name]
+        assert summary["whitespace_fidelity"] == pytest.approx(1.0)
+
+    def test_non_decodable_tokenizer_skipped(self):
+        """Non-decodable tokenizer should be silently skipped."""
+        tok_name = "mock_tok"
+        tok = _MockDecodableTokenizer(
+            encode_fn=lambda t: [1, 2],
+            decode_fn=None,  # can't decode
+        )
+        provider = _MockDecodableProvider(tok_name, tok)
+        metrics = BasicTokenizationMetrics(provider)
+
+        td = {tok_name: [_make_td(tok_name, "hello", [1, 2])]}
+        results = metrics.compute_reconstruction_fidelity_analysis(td)
+
+        assert tok_name not in results["reconstruction_fidelity"]["summary"]
+
+
+# ======================================================================
+# T9: _character_error_rate edge cases
+# ======================================================================
+
+class TestCharacterErrorRate:
+
+    def test_identical_strings(self):
+        assert BasicTokenizationMetrics._character_error_rate("abc", "abc") == pytest.approx(0.0)
+
+    def test_single_char_missing(self):
+        # "abc" vs "ac": Levenshtein distance 1 (1 deletion), CER = 1/3
+        assert BasicTokenizationMetrics._character_error_rate("abc", "ac") == pytest.approx(1.0 / 3.0)
+
+    def test_empty_reference(self):
+        # Empty reference -> 0.0 (nothing to measure against)
+        assert BasicTokenizationMetrics._character_error_rate("", "abc") == pytest.approx(0.0)
+
+    def test_both_empty(self):
+        assert BasicTokenizationMetrics._character_error_rate("", "") == pytest.approx(0.0)
+
+    def test_empty_hypothesis(self):
+        # "abc" -> "": 3 deletions / 3 chars -> 1.0
+        assert BasicTokenizationMetrics._character_error_rate("abc", "") == pytest.approx(1.0)
+
+    def test_hypothesis_longer_than_reference(self):
+        # "ab" vs "aXbY": Levenshtein distance 2 (2 insertions), CER = 2/2 = 1.0
+        assert BasicTokenizationMetrics._character_error_rate("ab", "aXbY") == pytest.approx(1.0)
+
+    def test_always_non_negative(self):
+        # CER is always >= 0.0 but can exceed 1.0
+        assert BasicTokenizationMetrics._character_error_rate("a", "bcdefg") >= 0.0
+        assert BasicTokenizationMetrics._character_error_rate("abcdef", "x") >= 0.0
+
+    def test_cer_can_exceed_one(self):
+        # "a" vs "abcde": Levenshtein distance 4 (4 insertions), CER = 4/1 = 4.0
+        assert BasicTokenizationMetrics._character_error_rate("a", "abcde") == pytest.approx(4.0)
+
+    def test_common_prefix_suffix(self):
+        # Shared prefix "hello world, goodby" and suffix "!"; differ by 1 char
+        # "hello world, goodbye!" vs "hello world, goodby!" -> distance 1, len 21
+        assert BasicTokenizationMetrics._character_error_rate(
+            "hello world, goodbye!", "hello world, goodby!"
+        ) == pytest.approx(1.0 / 21.0)
+
+    def test_differ_only_in_middle(self):
+        # 100 A's + "XYZ" + 100 B's vs same with "X_Z" -> 1 substitution, len 203
+        ref = "A" * 100 + "XYZ" + "B" * 100
+        hyp = "A" * 100 + "X_Z" + "B" * 100
+        assert BasicTokenizationMetrics._character_error_rate(ref, hyp) == pytest.approx(1.0 / 203.0)
+
+
+# ======================================================================
+# T10: Whitespace fidelity
+# ======================================================================
+
+class TestWhitespaceFidelity:
+
+    def test_whitespace_stripped(self):
+        """All whitespace stripped -> 0 preserved."""
+        original = "a b c"
+        decoded = "abc"
+        preserved, total = BasicTokenizationMetrics._whitespace_fidelity(
+            original, decoded
+        )
+        assert total == 2
+        assert preserved == 0
+
+    def test_partial_whitespace_loss(self):
+        """One of two spaces lost -> 1/2 preserved."""
+        original = "a b c"
+        decoded = "ab c"  # first space lost
+        preserved, total = BasicTokenizationMetrics._whitespace_fidelity(
+            original, decoded
+        )
+        assert total == 2
+        assert preserved == 1
+
+    def test_no_whitespace(self):
+        """Text with no whitespace -> (0, 0)."""
+        original = "abc"
+        decoded = "abc"
+        preserved, total = BasicTokenizationMetrics._whitespace_fidelity(
+            original, decoded
+        )
+        assert total == 0
+        assert preserved == 0

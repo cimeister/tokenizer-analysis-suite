@@ -95,9 +95,23 @@ class UnifiedTokenizerAnalyzer:
         else:
             self.plot_tokenizers = self.tokenizer_names
         
+        # Pre-load code data once for BasicTokenizationMetrics
+        code_texts: Dict[str, List[str]] = {}
+        if code_ast_config:
+            try:
+                from .loaders.code_data import CodeDataLoader
+                _loader = CodeDataLoader(code_ast_config)
+                _loader.load_all()
+                code_texts = _loader.code_snippets
+            except Exception as e:
+                logger.warning(f"Could not load code data: {e}")
+
         # Initialize metrics classes
         self.basic_metrics = BasicTokenizationMetrics(
-            input_provider, measurement_config, language_metadata
+            input_provider, measurement_config, language_metadata,
+            code_texts=code_texts,
+            math_data_path=math_data_path,
+            use_builtin_math_data=use_builtin_math_data,
         )
         
         # Initialize information-theoretic metrics
@@ -165,20 +179,24 @@ class UnifiedTokenizerAnalyzer:
                     include_digit_boundary: bool = True,
                     include_code_ast: bool = True,
                     include_utf8_integrity: bool = True,
+                    include_reconstruction: bool = True,
                     verbose: bool = True,
                     save_tokenized_data: bool = False,
-                    tokenized_data_path: str = None) -> Dict[str, Any]:
+                    tokenized_data_path: str = None,
+                    cer_time_budget_s: float = 10.0) -> Dict[str, Any]:
         """
         Run comprehensive tokenizer analysis.
-        
+
         Args:
             save_plots: Whether to generate and save plots
             include_morphological: Whether to include morphological analysis (not yet implemented)
             include_morphscore: Whether to include MorphScore analysis (requires access to tokenizers)
+            include_reconstruction: Whether to include reconstruction fidelity analysis
             verbose: Whether to print detailed results
             save_tokenized_data: Whether to save tokenized data to file
             tokenized_data_path: Path to save tokenized data (defaults to plot_save_dir/tokenized_data.pkl)
-            
+            cer_time_budget_s: Max seconds for CER per tokenizer (0 disables budget)
+
         Returns:
             Analysis results dictionary
         """
@@ -194,12 +212,14 @@ class UnifiedTokenizerAnalyzer:
         
         # Run basic tokenization metrics
         logger.info("Computing basic tokenization metrics...")
-        basic_results = self.basic_metrics.compute(tokenized_data)
+        basic_results = self.basic_metrics.compute(
+            tokenized_data, include_reconstruction=include_reconstruction,
+            cer_time_budget_s=cer_time_budget_s)
         results.update(basic_results)
-        
+
         if verbose:
             self._print_basic_results(basic_results)
-        
+
         # Run information-theoretic metrics
         logger.info("Computing information-theoretic metrics...")
         info_results = self.info_metrics.compute(tokenized_data)
@@ -273,7 +293,8 @@ class UnifiedTokenizerAnalyzer:
                            group_by: Union[str, List[str]] = ['script_families', 'resource_levels'],
                            save_plots: bool = True,
                            base_results: Optional[Dict[str, Any]] = None,
-                           reference_line_method: str = 'macro') -> Dict[str, Dict[str, Any]]:
+                           reference_line_method: str = 'macro',
+                           include_reconstruction: bool = True) -> Dict[str, Dict[str, Any]]:
         """
         Run analysis grouped by language categories.
         
@@ -317,7 +338,8 @@ class UnifiedTokenizerAnalyzer:
                 group_result = {}
                 
                 # Basic metrics
-                basic_results = self.basic_metrics.compute(filtered_data)
+                basic_results = self.basic_metrics.compute(
+                    filtered_data, include_reconstruction=include_reconstruction)
                 group_result.update(basic_results)
                 
                 # Information-theoretic metrics (includes compression_rate)
@@ -647,7 +669,7 @@ class UnifiedTokenizerAnalyzer:
             metadata = fertility_data.get('metadata', {})
             measurement_method = metadata.get('normalization_method', 'units')
             
-            print(f"\n📊 FERTILITY ANALYSIS ({measurement_method})")
+            print(f"\nFERTILITY ANALYSIS ({measurement_method})")
             print("-" * 40)
             
             for tok_name in self.tokenizer_names:
@@ -659,7 +681,7 @@ class UnifiedTokenizerAnalyzer:
         
         # Print token length results
         if 'token_length' in results:
-            print(f"\n📏 TOKEN LENGTH ANALYSIS")
+            print(f"\nTOKEN LENGTH ANALYSIS")
             print("-" * 40)
             
             for tok_name in self.tokenizer_names:
@@ -671,7 +693,7 @@ class UnifiedTokenizerAnalyzer:
         
         # Print vocabulary utilization
         if 'vocabulary_utilization' in results:
-            print(f"\n📚 VOCABULARY UTILIZATION")
+            print(f"\nVOCABULARY UTILIZATION")
             print("-" * 40)
             
             for tok_name in self.tokenizer_names:
@@ -684,7 +706,7 @@ class UnifiedTokenizerAnalyzer:
         
         # Print type-token ratio
         if 'type_token_ratio' in results:
-            print(f"\n🔤 TYPE-TOKEN RATIO")
+            print(f"\nTYPE-TOKEN RATIO")
             print("-" * 40)
             
             for tok_name in self.tokenizer_names:
@@ -694,7 +716,24 @@ class UnifiedTokenizerAnalyzer:
                     types = ttr_data.get('global_types', 0)
                     tokens = ttr_data.get('global_tokens', 0)
                     print(f"{tok_name:20}: {ttr:.4f} ({types:,} types / {tokens:,} tokens)")
-        
+
+        # Print reconstruction fidelity
+        if 'reconstruction_fidelity' in results:
+            summary = results['reconstruction_fidelity'].get('summary', {})
+            if summary:
+                print(f"\nRECONSTRUCTION FIDELITY")
+                print("-" * 40)
+
+                for tok_name in self.tokenizer_names:
+                    if tok_name in summary:
+                        s = summary[tok_name]
+                        em = s.get('exact_match_rate', 0.0)
+                        cer = s.get('mean_cer', 0.0)
+                        unk = s.get('unk_token_rate', 0.0)
+                        ws = s.get('whitespace_fidelity', 0.0)
+                        n = s.get('texts_analyzed', 0)
+                        print(f"{tok_name:20}: EM={em:.3f}  CER={cer:.4f}  UNK={unk:.4f}  WS={ws:.3f}  ({n} texts)")
+
         print("\n" + "="*60)
     
     def get_analysis_summary(self) -> Dict[str, Any]:

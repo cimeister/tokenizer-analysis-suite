@@ -14,6 +14,39 @@ import glob
 logger = logging.getLogger(__name__)
 
 
+def _setup_fast_decode(tok):
+    """Detect and return a fast decode callable for skip_special_tokens=True, or None."""
+    # Path A: transformers Fast tokenizer with Rust backend
+    backend = getattr(tok, 'backend_tokenizer', None)
+    if backend is not None and hasattr(backend, 'decode'):
+        return lambda ids: backend.decode(ids, skip_special_tokens=True)
+
+    # Path B: tiktoken-backed tokenizer
+    try:
+        import tiktoken
+    except ImportError:
+        return None
+
+    enc = None
+    for attr_name in ('tokenizer', 'model', 'encoder'):
+        obj = getattr(tok, attr_name, None)
+        if isinstance(obj, tiktoken.Encoding):
+            enc = obj
+            break
+    if enc is None:
+        for obj in vars(tok).values():
+            if isinstance(obj, tiktoken.Encoding):
+                enc = obj
+                break
+    if enc is None:
+        return None
+
+    special_ids = frozenset(tok.all_special_ids) if hasattr(tok, 'all_special_ids') else frozenset()
+    if special_ids:
+        return lambda ids: enc.decode([i for i in ids if i not in special_ids])
+    return enc.decode
+
+
 class TokenizerWrapper(ABC):
     """
     Abstract base class for tokenizer wrappers.
@@ -94,6 +127,14 @@ class TokenizerWrapper(ABC):
         """
         pass
     
+    def can_decode(self) -> bool:
+        """Whether this tokenizer can decode token IDs back to text."""
+        return False
+
+    def decode(self, token_ids: List[int], skip_special_tokens: bool = True) -> Optional[str]:
+        """Decode token IDs to text. Returns None if not supported."""
+        return None
+
     def encode_with_offsets(self, text: str) -> Tuple[List[int], Optional[List[Tuple[int, int]]]]:
         """Encode text and return ``(token_ids, offsets)``.
 
@@ -178,6 +219,7 @@ class HuggingFaceTokenizer(TokenizerWrapper):
         self._name = name
         self._tokenizer = tokenizer
         self._config = config
+        self._fast_decode = _setup_fast_decode(tokenizer)
         logger.info("Creating HF tokenizer")
     
     def get_name(self) -> str:
@@ -209,8 +251,26 @@ class HuggingFaceTokenizer(TokenizerWrapper):
         result = self._tokenizer.encode(text)
         if hasattr(result, 'ids') and hasattr(result, 'offsets'):
             return result.ids, result.offsets
-        # Fallback for transformers AutoTokenizer (no offsets available)
-        return self.encode(text), None
+        # Reuse result — don't call encode() again
+        if hasattr(result, 'ids'):
+            return result.ids, None
+        elif isinstance(result, list):
+            return result, None
+        elif isinstance(result, dict) and 'input_ids' in result:
+            return result['input_ids'], None
+        else:
+            raise ValueError(f"Unexpected encoding result type: {type(result)}")
+
+    def can_decode(self) -> bool:
+        return True
+
+    def decode(self, token_ids: List[int], skip_special_tokens: bool = True) -> Optional[str]:
+        try:
+            if skip_special_tokens and self._fast_decode is not None:
+                return self._fast_decode(token_ids)
+            return self._tokenizer.decode(token_ids, skip_special_tokens=skip_special_tokens)
+        except Exception:
+            return None
 
     def can_pretokenize(self) -> bool:
         return hasattr(self._tokenizer, 'pre_tokenizer') and self._tokenizer.pre_tokenizer is not None
@@ -305,7 +365,8 @@ class UniMixLMTokenizer(TokenizerWrapper):
                     "tokenizer": tok,
                     "scores": self._extract_log_scores(tok),
                     "path": lang_tok_path,
-                } 
+                }
+        self._fast_decode = _setup_fast_decode(tokenizer)
         logger.info("Creating UnimixLM tokenizer")
     
     @staticmethod
@@ -382,7 +443,26 @@ class UniMixLMTokenizer(TokenizerWrapper):
             result = self._tokenizer.encode(text)
             if hasattr(result, 'ids') and hasattr(result, 'offsets'):
                 return result.ids, result.offsets
-            return self.encode(text), None
+            # Reuse result — don't call encode() again
+            if hasattr(result, 'ids'):
+                return result.ids, None
+            elif isinstance(result, list):
+                return result, None
+            elif isinstance(result, dict) and 'input_ids' in result:
+                return result['input_ids'], None
+            else:
+                raise ValueError(f"Unexpected encoding result type: {type(result)}")
+
+    def can_decode(self) -> bool:
+        return True
+
+    def decode(self, token_ids: List[int], skip_special_tokens: bool = True) -> Optional[str]:
+        try:
+            if skip_special_tokens and self._fast_decode is not None:
+                return self._fast_decode(token_ids)
+            return self._tokenizer.decode(token_ids, skip_special_tokens=skip_special_tokens)
+        except Exception:
+            return None
 
     def can_pretokenize(self) -> bool:
         return hasattr(self._tokenizer.base_tokenizer, 'pre_tokenizer') and self._tokenizer.base_tokenizer.pre_tokenizer is not None
@@ -391,6 +471,17 @@ class UniMixLMTokenizer(TokenizerWrapper):
         if not self.can_pretokenize():
             raise NotImplementedError(f"Tokenizer {self._name} does not support pretokenization")
         return [token for token, _ in self._tokenizer.base_tokenizer.pre_tokenizer.pre_tokenize_str(text)]
+
+    def get_unk_token_id(self) -> Optional[int]:
+        """Get the UNK token ID from UniMixLM tokenizer."""
+        try:
+            if hasattr(self._tokenizer, 'unk_token_id'):
+                return self._tokenizer.unk_token_id
+            if hasattr(self._tokenizer, 'token_to_id'):
+                return self._tokenizer.token_to_id('<unk>')
+        except Exception:
+            pass
+        return None
 
     def get_underlying_tokenizer(self):
         """Return the underlying HuggingFace tokenizer object."""
@@ -517,6 +608,23 @@ class SentencePieceTokenizer(TokenizerWrapper):
                 offsets = offsets + [(0, 0)]
 
         return ids, offsets
+
+    def can_decode(self) -> bool:
+        return True
+
+    def decode(self, token_ids: List[int], skip_special_tokens: bool = True) -> Optional[str]:
+        try:
+            ids_to_decode = list(token_ids)
+            if skip_special_tokens:
+                bos = self._sp.bos_id() if self._add_bos else -1
+                eos = self._sp.eos_id() if self._add_eos else -1
+                ids_to_decode = [
+                    tid for tid in ids_to_decode
+                    if tid != bos and tid != eos
+                ]
+            return self._sp.decode(ids_to_decode)
+        except Exception:
+            return None
 
     def can_pretokenize(self) -> bool:
         return True
@@ -697,6 +805,15 @@ class CustomBPETokenizer(TokenizerWrapper):
         encoding = self._tokenizer.encode(text)
         return encoding.ids, encoding.offsets
 
+    def can_decode(self) -> bool:
+        return True
+
+    def decode(self, token_ids: List[int], skip_special_tokens: bool = True) -> Optional[str]:
+        try:
+            return self._tokenizer.decode(token_ids, skip_special_tokens=skip_special_tokens)
+        except Exception:
+            return None
+
     def can_pretokenize(self) -> bool:
         return hasattr(self._tokenizer, 'pre_tokenizer') and self._tokenizer.pre_tokenizer is not None
 
@@ -704,6 +821,17 @@ class CustomBPETokenizer(TokenizerWrapper):
         if not self.can_pretokenize():
             raise NotImplementedError(f"Tokenizer {self._name} does not support pretokenization")
         return [token for token, _ in self._tokenizer.pre_tokenizer.pre_tokenize_str(text)]
+
+    def get_unk_token_id(self) -> Optional[int]:
+        """Get the UNK token ID from custom BPE tokenizer."""
+        try:
+            if hasattr(self._tokenizer, 'unk_token_id'):
+                return self._tokenizer.unk_token_id
+            if hasattr(self._tokenizer, 'token_to_id'):
+                return self._tokenizer.token_to_id('<unk>')
+        except Exception:
+            pass
+        return None
 
     def get_underlying_tokenizer(self):
         """Return the underlying HuggingFace tokenizer object."""
