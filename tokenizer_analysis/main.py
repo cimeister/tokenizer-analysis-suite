@@ -294,7 +294,8 @@ class UnifiedTokenizerAnalyzer:
                            save_plots: bool = True,
                            base_results: Optional[Dict[str, Any]] = None,
                            reference_line_method: str = 'macro',
-                           include_reconstruction: bool = True) -> Dict[str, Dict[str, Any]]:
+                           include_reconstruction: bool = True,
+                           cer_time_budget_s: float = 10.0) -> Dict[str, Dict[str, Any]]:
         """
         Run analysis grouped by language categories.
         
@@ -303,7 +304,9 @@ class UnifiedTokenizerAnalyzer:
             save_plots: Whether to generate grouped plots
             base_results: Optional pre-computed results to filter instead of recomputing
             reference_line_method: Method for reference lines ('macro' for average across groups, 'micro' for overall global)
-            
+            include_reconstruction: Whether to include reconstruction fidelity analysis
+            cer_time_budget_s: Max seconds for CER computation per tokenizer (0 disables budget)
+
         Returns:
             Dictionary mapping group types to group analysis results
         """
@@ -339,7 +342,8 @@ class UnifiedTokenizerAnalyzer:
                 
                 # Basic metrics
                 basic_results = self.basic_metrics.compute(
-                    filtered_data, include_reconstruction=include_reconstruction)
+                    filtered_data, include_reconstruction=include_reconstruction,
+                    cer_time_budget_s=cer_time_budget_s)
                 group_result.update(basic_results)
                 
                 # Information-theoretic metrics (includes compression_rate)

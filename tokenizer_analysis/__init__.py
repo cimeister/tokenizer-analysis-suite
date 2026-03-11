@@ -7,7 +7,7 @@ including morphological alignment, information-theoretic measures, and
 segmentation analysis.
 """
 
-__version__ = "1.0.0"
+__version__ = "0.1.0"
 __author__ = "Tokenizer Analysis Project"
 
 from .metrics.base import BaseMetrics

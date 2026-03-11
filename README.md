@@ -523,7 +523,7 @@ tokenizer_analysis/
     └── visualization_config.py   # Visualization configuration
 
 scripts/
-├── run_tokenizer_analysis.py     # Main CLI for analysis
+├── run_tokenizer_analysis.py     # Legacy CLI wrapper (use `uv run tokenizer-analysis` instead)
 ├── visualize_tokenization.py     # Token boundary visualization
 └── update_remote.py              # Push RESULTS.md to a remote git branch
 ```
@@ -562,12 +562,12 @@ A two-step workflow lets you encode once and iterate on metrics/visualization wi
 
 ```bash
 # Step 1 — encode and save (slow, once)
-python scripts/run_tokenizer_analysis.py \
+uv run tokenizer-analysis \
   --tokenizer-config tokenizers.json --language-config languages.json \
   --save-tokenized-data --tokenized-data-output-path results/tokenized_data.pkl
 
 # Step 2 — reuse cached data (fast, repeat as needed)
-python scripts/run_tokenizer_analysis.py \
+uv run tokenizer-analysis \
   --tokenized-data-file results/tokenized_data.pkl \
   --language-config languages.json
 ```
@@ -579,7 +579,7 @@ python scripts/run_tokenizer_analysis.py \
 For fast development iterations (~10–20 s), minimize samples and disable expensive extras:
 
 ```bash
-python scripts/run_tokenizer_analysis.py \
+uv run tokenizer-analysis \
   --tokenizer-config tokenizers.json --language-config languages.json \
   --samples-per-lang 100 \
   --no-reconstruction --no-plots --no-code-ast --no-utf8-integrity --no-digit-boundary
