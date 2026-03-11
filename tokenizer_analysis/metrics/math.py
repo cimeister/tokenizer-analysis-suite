@@ -21,9 +21,7 @@ Four failure modes are measured here:
    isolated units?
 """
 
-import json
 import math
-import os
 import re
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -35,6 +33,7 @@ import logging
 from .base import BaseMetrics, TokenizedDataProcessor
 from ..core.input_types import TokenizedData
 from ..core.input_providers import InputProvider
+from ..utils.text_utils import load_math_data, BUILTIN_MATH_SAMPLES_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -92,12 +91,6 @@ class DigitBoundaryMetrics(BaseMetrics):
     # Constructor
     # ------------------------------------------------------------------
 
-    _BUILTIN_MATH_SAMPLES_PATH = os.path.join(
-        os.path.dirname(os.path.dirname(__file__)),
-        "sample_data",
-        "math_samples.json",
-    )
-
     def __init__(
         self,
         input_provider: InputProvider,
@@ -108,44 +101,15 @@ class DigitBoundaryMetrics(BaseMetrics):
         self._math_data_path = math_data_path
         self._math_texts: List[str] = []
         if math_data_path:
-            self._math_texts = self._load_math_data(math_data_path)
+            self._math_texts = load_math_data(math_data_path)
             logger.info(
                 "Loaded %d math texts from %s", len(self._math_texts), math_data_path
             )
         elif use_builtin_math_data:
-            self._math_texts = self._load_math_data(
-                self._BUILTIN_MATH_SAMPLES_PATH
-            )
+            self._math_texts = load_math_data(BUILTIN_MATH_SAMPLES_PATH)
             logger.info(
                 "Loaded %d built-in math samples", len(self._math_texts)
             )
-
-    @staticmethod
-    def _load_math_data(path: str) -> List[str]:
-        """Load math-rich text from a file.
-
-        Supported formats:
-
-        * ``.json`` -- expects ``{"texts": ["...", ...]}`` or a bare list
-          of strings.
-        * ``.txt`` / other -- reads non-empty lines.
-        """
-        if path.endswith(".json"):
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, list):
-                texts = [str(t) for t in data if str(t).strip()]
-            elif isinstance(data, dict) and "texts" in data:
-                texts = [str(t) for t in data["texts"] if str(t).strip()]
-            else:
-                raise ValueError(
-                    f"JSON math data must be a list of strings or "
-                    f'{{"texts": [...]}}; got {type(data).__name__}'
-                )
-        else:
-            with open(path, "r", encoding="utf-8") as f:
-                texts = [line.rstrip() for line in f if line.strip()]
-        return texts
 
     # ------------------------------------------------------------------
     # Digit-span boundary extraction

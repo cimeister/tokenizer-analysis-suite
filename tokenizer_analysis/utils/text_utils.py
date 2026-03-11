@@ -5,17 +5,52 @@ This module provides common text processing functions that are used across
 multiple data loading and processing components to eliminate code duplication.
 """
 
+import json
+import os
 import re
 import random
 from typing import List, Optional
 from ..constants import (
     MIN_PARAGRAPH_LENGTH,
-    MIN_LINE_LENGTH, 
+    MIN_LINE_LENGTH,
     MIN_SENTENCE_LENGTH,
     MIN_CONTENT_LENGTH,
     DEFAULT_CHUNK_SIZE,
     DEFAULT_RANDOM_SEED
 )
+
+BUILTIN_MATH_SAMPLES_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)),
+    "sample_data",
+    "math_samples.json",
+)
+
+
+def load_math_data(path: str) -> List[str]:
+    """Load math-rich text from a file.
+
+    Supported formats:
+
+    * ``.json`` -- expects ``{"texts": ["...", ...]}`` or a bare list
+      of strings.
+    * ``.txt`` / other -- reads non-empty lines.
+    """
+    if path.endswith(".json"):
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            texts = [str(t) for t in data if str(t).strip()]
+        elif isinstance(data, dict) and "texts" in data:
+            texts = [str(t) for t in data["texts"] if str(t).strip()]
+        else:
+            raise ValueError(
+                f"JSON math data must be a list of strings or "
+                f'{{"texts": [...]}}; got {type(data).__name__}'
+            )
+    else:
+        with open(path, "r", encoding="utf-8") as f:
+            texts = [line.rstrip() for line in f if line.strip()]
+    return texts
 
 
 def _split_and_filter(text: str, split_pattern: Optional[str], min_length: int) -> List[str]:

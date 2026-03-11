@@ -541,6 +541,21 @@ Examples:
         help="Skip UTF-8 character boundary integrity analysis"
     )
     parser.add_argument(
+        "--no-reconstruction",
+        action="store_true",
+        help="Skip reconstruction fidelity analysis (decode round-trip)"
+    )
+    parser.add_argument(
+        "--cer-time-budget",
+        type=float,
+        default=10.0,
+        metavar="SECONDS",
+        help="Max seconds to spend on CER computation per tokenizer. "
+             "After a warmup phase the total time is extrapolated; if it "
+             "exceeds this budget, CER and whitespace fidelity are skipped "
+             "for that tokenizer. 0 disables the budget (default: 10.0)"
+    )
+    parser.add_argument(
         "--sort-results-by",
         type=str,
         default=None,
@@ -758,9 +773,11 @@ Examples:
             include_digit_boundary=not args.no_digit_boundary,
             include_code_ast=not args.no_code_ast,
             include_utf8_integrity=not args.no_utf8_integrity,
+            include_reconstruction=not args.no_reconstruction,
             verbose=args.verbose,
             save_tokenized_data=args.save_tokenized_data,
-            tokenized_data_path=args.tokenized_data_output_path
+            tokenized_data_path=args.tokenized_data_output_path,
+            cer_time_budget_s=args.cer_time_budget,
         )
     else:
         # Full multi-tokenizer analysis
@@ -771,9 +788,11 @@ Examples:
             include_digit_boundary=not args.no_digit_boundary,
             include_code_ast=not args.no_code_ast,
             include_utf8_integrity=not args.no_utf8_integrity,
+            include_reconstruction=not args.no_reconstruction,
             verbose=args.verbose,
             save_tokenized_data=args.save_tokenized_data,
-            tokenized_data_path=args.tokenized_data_output_path
+            tokenized_data_path=args.tokenized_data_output_path,
+            cer_time_budget_s=args.cer_time_budget,
         )
         
         if args.run_grouped_analysis and analyzer.language_metadata:
@@ -784,7 +803,8 @@ Examples:
             grouped_results = analyzer.run_grouped_analysis(
                 group_by=analyzer.language_metadata.analysis_groups.keys(),
                 save_plots=not args.no_plots,
-                base_results=results
+                base_results=results,
+                include_reconstruction=not args.no_reconstruction,
             )
             
             # Add grouped results to main results

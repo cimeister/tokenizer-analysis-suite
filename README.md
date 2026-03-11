@@ -119,6 +119,7 @@ pip install tree-sitter-language-pack
 | `--no-digit-boundary` | Skip math metrics (digit boundaries, operators) |
 | `--math-data FILE` | Math-rich text file (.txt/.json) for digit boundary metrics |
 | `--no-utf8-integrity` | Skip UTF-8 character boundary metrics |
+| `--no-reconstruction` | Skip reconstruction fidelity analysis (see [Performance](#performance)) |
 | `--generate-latex-tables` | Generate LaTeX tables |
 | `--update-results-md [PATH]` | Generate/update cumulative Markdown leaderboard |
 | `--dataset NAME` | Dataset label for the results table |
@@ -348,6 +349,43 @@ Fraction of mathematical operators (`+`, `-`, `*`, `=`, `<=`, etc.) tokenized as
 
 **Why it matters:** Merging an operator with its operand (e.g., `+3` as one token) forces the model to disentangle operation from value within a single embedding.
 
+### Reconstruction Fidelity Metrics
+
+Measures how lossy the encode→decode round-trip is. Tokenizers can lose information through normalization, UNK substitution, whitespace mangling, and decode asymmetry. These metrics run on language text, code, and math data. Requires that the tokenizer supports decoding (most do); non-decodable tokenizers are silently skipped.
+
+#### Round-trip Exact Match Rate (`exact_match_rate`)
+
+Fraction of texts where `decode(encode(text)) == text`. A score of 1.0 means the tokenizer is perfectly lossless for the evaluated data.
+
+**Example:** The text `"Hello, world!"` is encoded to `[15496, 11, 995, 0]` and decoded back to `"Hello, world!"` — exact match. The text `"café"` is encoded and decoded to `"cafe"` (accent stripped by normalization) — not an exact match.
+
+#### Character Error Rate (`mean_cer`)
+
+Levenshtein edit distance between the original text and the decoded text,
+normalized by the length of the original. Measures the fraction of
+single-character insertions, deletions, and substitutions needed to
+transform the decoded text back into the original.
+
+CER = 0 means a perfect round-trip. **Note:** CER can exceed 1.0 when the
+decoded text is much longer than the original (e.g., a tokenizer that
+expands byte-fallback tokens into multi-character escape sequences).
+
+**Example:** Original `"hello"` decoded as `"helo"` → edit distance 1 / 5
+characters = CER 0.2. Original `"a"` decoded as `"abcd"` → edit distance
+3 / 1 character = CER 3.0.
+
+#### UNK Token Rate (`unk_token_rate`)
+
+Fraction of encoded tokens that are the tokenizer's UNK token ID. Measures how much of the input the tokenizer cannot represent. A rate of 0.0 means no unknown tokens were produced.
+
+**Example:** Encoding `"𝕳𝖊𝖑𝖑𝖔"` produces `[UNK, UNK, UNK, UNK, UNK]` — UNK rate 1.0. Encoding `"Hello"` produces `[15496]` — UNK rate 0.0.
+
+#### Whitespace Fidelity (`whitespace_fidelity`)
+
+Fraction of whitespace characters (spaces, tabs, newlines) in the original text that are preserved through the encode-decode round-trip. Uses a greedy forward-scan alignment to pair characters.
+
+**Example:** Original `"a b\tc"` decoded as `"a b c"` (tab replaced by space) has 1 out of 2 whitespace chars preserved = fidelity 0.5.
+
 ### UTF-8 Character Boundary Metrics
 
 Evaluates how byte-level tokenizers handle multi-byte UTF-8 characters at token boundaries. Runs on any text data (no special config needed). Disable with `--no-utf8-integrity`.
@@ -488,6 +526,63 @@ scripts/
 ├── run_tokenizer_analysis.py     # Main CLI for analysis
 ├── visualize_tokenization.py     # Token boundary visualization
 └── update_remote.py              # Push RESULTS.md to a remote git branch
+```
+
+## Performance
+
+### Encoding (the main bottleneck)
+
+Encoding is **single-threaded**: every combination of tokenizer, language, and sample is processed sequentially, so total encode calls scale as **O(N × L × M)** (tokenizers × languages × samples). With 10+ tokenizers, 13 languages, and 1000 samples per language, encoding alone takes roughly 80–165 s depending on tokenizer backend.
+
+Knobs to reduce encoding time:
+
+| Knob | Effect |
+|------|--------|
+| `--samples-per-lang N` | Fewer samples per language (default 2000) |
+| `--save-tokenized-data` | Cache encoded data as a pickle file for reuse |
+| `--tokenized-data-file PATH` | Load previously cached data instead of re-encoding |
+
+### Reconstruction fidelity
+
+Reconstruction metrics (`mean_cer`, `whitespace_fidelity`) decode every tokenized text back to a string and compare it to the original. Some `transformers` and tiktoken-backed tokenizers add significant per-call Python overhead, so this can dominate runtime on large runs. Pass `--no-reconstruction` to skip.
+
+### Skipping expensive metrics
+
+| Flag | What it skips |
+|------|---------------|
+| `--no-reconstruction` | Decode round-trip, CER, whitespace fidelity |
+| `--no-digit-boundary` | Digit boundary alignment, digit split variability, numeric magnitude consistency, operator isolation |
+| `--no-code-ast` | AST boundary alignment analysis (also skips synthetic code generation) |
+| `--no-utf8-integrity` | UTF-8 character boundary integrity analysis |
+| `--no-plots` | All matplotlib rendering |
+
+### Pre-tokenized data cache
+
+A two-step workflow lets you encode once and iterate on metrics/visualization without re-encoding:
+
+```bash
+# Step 1 — encode and save (slow, once)
+python scripts/run_tokenizer_analysis.py \
+  --tokenizer-config tokenizers.json --language-config languages.json \
+  --save-tokenized-data --tokenized-data-output-path results/tokenized_data.pkl
+
+# Step 2 — reuse cached data (fast, repeat as needed)
+python scripts/run_tokenizer_analysis.py \
+  --tokenized-data-file results/tokenized_data.pkl \
+  --language-config languages.json
+```
+
+> **Note:** Code/math metrics that require raw `encode()` calls (AST boundary, MorphScore) are unavailable in pre-tokenized mode.
+
+### Quick-iteration recipe
+
+For fast development iterations (~10–20 s), minimize samples and disable expensive extras:
+
+```bash
+python scripts/run_tokenizer_analysis.py \
+  --tokenizer-config tokenizers.json --language-config languages.json \
+  --samples-per-lang 100 \
+  --no-reconstruction --no-plots --no-code-ast --no-utf8-integrity --no-digit-boundary
 ```
 
 ## Troubleshooting
