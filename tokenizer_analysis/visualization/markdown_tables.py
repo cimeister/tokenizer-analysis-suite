@@ -21,10 +21,12 @@ import tempfile
 logger = logging.getLogger(__name__)
 
 # Regex to detect old-format composite keys: "name (user, dataset)"
-_COMPOSITE_KEY_RE = re.compile(r'^(.+?)\s*\(([^,]+),\s*([^)]+)\)$')
+# Use greedy .+ so names containing parentheses (e.g. "Gemma 3 (512 codebook)")
+# match correctly — the last "(user, dataset)" group is always the suffix.
+_COMPOSITE_KEY_RE = re.compile(r'^(.+)\s*\(([^,]+),\s*([^)]+)\)$')
 
 # Regex to detect new-format display names: "name [Nk]"
-_DISPLAY_NAME_RE = re.compile(r'^(.+?)\s*\[\d+k\]$')
+_DISPLAY_NAME_RE = re.compile(r'^(.+)\s*\[\d+k\]$')
 
 
 def results_filename(
@@ -954,6 +956,7 @@ def push_results_to_branch(
     skip_merge: bool = False,
     remote_filename: str = "RESULTS.md",
     plot_dir: Optional[str] = None,
+    max_retries: int = 3,
 ) -> bool:
     """Commit *filepath* as *remote_filename* on *branch* and push, without
     touching the working tree or the current branch.
@@ -970,6 +973,12 @@ def push_results_to_branch(
     Other files already on the branch are preserved in the tree so that
     multiple result files (one per dataset / normalization method) can
     coexist.
+
+    The local *filepath* is **never** modified.  Merged content is written
+    to a temporary file that is cleaned up after the push.
+
+    A disposable git ref (``refs/tmp/push-results-*``) is used instead of
+    creating a local branch named *branch*.
 
     Parameters
     ----------
@@ -993,203 +1002,304 @@ def push_results_to_branch(
         Optional path to a local directory of bar-plot PNGs to push
         alongside the markdown file.  The directory is stored as a
         subtree entry in the git tree on the results branch.
+    max_retries : int
+        Maximum number of fetch→merge→push attempts (default 3).  Retries
+        handle the race condition where another user pushes between our
+        fetch and push.
 
     Returns
     -------
     bool
         ``True`` on success, ``False`` on failure.
     """
+    import uuid as _uuid
+
+    # Validate we're inside a git repository
+    repo_check = _run_git('rev-parse', '--is-inside-work-tree', check=False)
+    if repo_check.returncode != 0:
+        logger.error(
+            "Not inside a git repository. "
+            "Run this command from within a git working tree."
+        )
+        return False
+
     if commit_message is None:
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         commit_message = f"Update {remote_filename} ({timestamp})"
 
-    ref = f"refs/heads/{branch}"
+    # Use a disposable ref so we never clobber a local branch
+    ref_id = _uuid.uuid4().hex[:8]
+    ref = f"refs/tmp/push-results-{ref_id}"
     remote_ref = f"{remote}/{branch}"
 
-    try:
-        # 1. Fetch the remote branch (ok to fail if it doesn't exist yet)
-        _run_git('fetch', remote, branch, check=False)
+    tmp_md_path: Optional[str] = None
+    tmp_plot_dir: Optional[str] = None
 
-        # 2. Try to read the target file from the remote branch
-        parent_sha: Optional[str] = None
-        show_result = _run_git(
-            'show', f'{remote_ref}:{remote_filename}', check=False
-        )
+    for attempt in range(1, max_retries + 1):
+        try:
+            # Clean up temp files from previous attempt
+            if tmp_md_path and os.path.exists(tmp_md_path):
+                os.unlink(tmp_md_path)
+            if tmp_plot_dir and os.path.isdir(tmp_plot_dir):
+                import shutil
+                shutil.rmtree(tmp_plot_dir, ignore_errors=True)
+            tmp_md_path = None
+            tmp_plot_dir = None
 
-        if show_result.returncode == 0 and show_result.stdout.strip():
-            # Remote file exists
-            if not skip_merge:
-                # Merge remote rows into local file
-                remote_content = show_result.stdout
+            # 1. Fetch the remote branch (ok to fail if it doesn't exist yet)
+            _run_git('fetch', remote, branch, check=False)
 
-                with tempfile.NamedTemporaryFile(
-                    mode='w', suffix='.md', delete=False
-                ) as tmp:
-                    tmp.write(remote_content)
-                    tmp_path = tmp.name
+            # 2. Determine which file to hash — the original filepath,
+            #    or a temp file with merged content.
+            file_to_hash = filepath
 
-                try:
-                    remote_headers, remote_rows = (
-                        MarkdownTableGenerator.parse_existing_markdown(tmp_path)
-                    )
-                finally:
-                    os.unlink(tmp_path)
+            parent_sha: Optional[str] = None
+            show_result = _run_git(
+                'show', f'{remote_ref}:{remote_filename}', check=False
+            )
 
-                # If the remote has rows that the local file doesn't, merge them
-                if remote_rows:
-                    local_headers, local_rows = (
-                        MarkdownTableGenerator.parse_existing_markdown(filepath)
-                    )
+            if show_result.returncode == 0 and show_result.stdout.strip():
+                # Remote file exists
+                if not skip_merge:
+                    remote_content = show_result.stdout
 
-                    merged = False
-                    for tok_name, row_map in remote_rows.items():
-                        if tok_name not in local_rows:
-                            local_rows[tok_name] = row_map
-                            merged = True
+                    with tempfile.NamedTemporaryFile(
+                        mode='w', suffix='.md', delete=False,
+                        encoding='utf-8',
+                    ) as tmp:
+                        tmp.write(remote_content)
+                        remote_tmp_path = tmp.name
 
-                    if merged:
-                        # Rewrite local file with merged data
-                        # Only keep headers that are known metric titles or meta columns.
-                        known_titles = {
-                            c['title']
-                            for c in MarkdownTableGenerator.DEFAULT_METRIC_CONFIGS
-                        } | {'Tokenizer', 'Dataset', 'User', 'Date'}
-                        all_headers = list(local_headers) if local_headers else []
-                        for h in remote_headers:
-                            if h not in all_headers and h in known_titles:
-                                all_headers.append(h)
+                    try:
+                        remote_headers, remote_rows = (
+                            MarkdownTableGenerator.parse_existing_markdown(
+                                remote_tmp_path
+                            )
+                        )
+                    finally:
+                        os.unlink(remote_tmp_path)
 
-                        data_headers = [h for h in all_headers if h != 'Tokenizer']
-                        headers = ['Tokenizer'] + data_headers
-                        separator = ['---'] * len(headers)
+                    if remote_rows:
+                        local_headers, local_rows = (
+                            MarkdownTableGenerator.parse_existing_markdown(
+                                filepath
+                            )
+                        )
 
-                        # Row order: local first, then remote-only
-                        ordered_names = [
-                            n for n in local_rows if n in local_rows
-                        ]
-                        for n in remote_rows:
-                            if n not in ordered_names:
-                                ordered_names.append(n)
+                        merged = False
+                        for tok_name, row_map in remote_rows.items():
+                            if tok_name not in local_rows:
+                                local_rows[tok_name] = row_map
+                                merged = True
 
-                        rows = []
-                        all_rows = {**remote_rows, **local_rows}  # local overwrites remote
-                        for tok_name in ordered_names:
-                            row_map = all_rows.get(tok_name, {})
-                            row = [tok_name] + [
-                                row_map.get(h, '---') for h in data_headers
+                        if merged:
+                            # Accept all headers from both local and remote
+                            all_headers = (
+                                list(local_headers) if local_headers else []
+                            )
+                            for h in remote_headers:
+                                if h not in all_headers:
+                                    all_headers.append(h)
+
+                            data_headers = [
+                                h for h in all_headers if h != 'Tokenizer'
                             ]
-                            rows.append(row)
+                            headers = ['Tokenizer'] + data_headers
+                            separator = ['---'] * len(headers)
 
-                        # Re-apply arrows and bolding so the merged
-                        # file is consistent with normal generation.
-                        MarkdownTableGenerator._apply_bolding_and_arrows(
-                            headers,
-                            rows,
-                            MarkdownTableGenerator.DEFAULT_METRIC_CONFIGS,
-                            data_headers,
-                        )
-                        separator = ['---'] * len(headers)
+                            ordered_names = list(local_rows.keys())
+                            for n in remote_rows:
+                                if n not in ordered_names:
+                                    ordered_names.append(n)
 
-                        md = MarkdownTableGenerator._render_markdown(
-                            headers, separator, rows
-                        )
-                        Path(filepath).write_text(md, encoding='utf-8')
-                        logger.info(
-                            f"Merged remote rows into local {remote_filename} before pushing"
-                        )
-                        try:
-                            generate_bar_plots_from_markdown(filepath)
-                        except Exception as exc:
-                            logger.warning(
-                                "Bar plot regeneration after remote merge failed: %s", exc
+                            rows = []
+                            all_rows = {
+                                **remote_rows, **local_rows
+                            }  # local overwrites remote
+                            for tok_name in ordered_names:
+                                row_map = all_rows.get(tok_name, {})
+                                display = row_map.get('Tokenizer', tok_name)
+                                row = [display] + [
+                                    row_map.get(h, '---')
+                                    for h in data_headers
+                                ]
+                                rows.append(row)
+
+                            MarkdownTableGenerator._apply_bolding_and_arrows(
+                                headers,
+                                rows,
+                                MarkdownTableGenerator.DEFAULT_METRIC_CONFIGS,
+                                data_headers,
+                            )
+                            separator = ['---'] * len(headers)
+
+                            md = MarkdownTableGenerator._render_markdown(
+                                headers, separator, rows
                             )
 
-        # Get parent commit SHA for the branch (if it exists)
-        rev_result = _run_git(
-            'rev-parse', remote_ref, check=False
-        )
-        if rev_result.returncode == 0:
-            parent_sha = rev_result.stdout.strip()
+                            # Write merged content to a temp file — never
+                            # modify the user's local filepath.
+                            with tempfile.NamedTemporaryFile(
+                                mode='w', suffix='.md', delete=False,
+                                encoding='utf-8',
+                            ) as tmp_merged:
+                                tmp_merged.write(md)
+                                tmp_md_path = tmp_merged.name
 
-        # 3. Create a blob from the (possibly merged) local file
-        blob_result = _run_git('hash-object', '-w', filepath)
-        blob_sha = blob_result.stdout.strip()
+                            file_to_hash = tmp_md_path
+                            logger.info(
+                                "Merged remote rows into %s "
+                                "(temp file, local file untouched)",
+                                remote_filename,
+                            )
 
-        # 4. Build a tree that preserves existing files on the branch
-        #    and adds/replaces the target file.
-        tree_entries: List[str] = []
+                            # Generate bar plots into a temp directory
+                            try:
+                                tmp_plot_dir = tempfile.mkdtemp(
+                                    prefix='plots-'
+                                )
+                                # Copy merged md to temp plot dir so
+                                # _plots_dir_for_results_file derives the
+                                # correct subdir name.
+                                import shutil
+                                tmp_md_for_plots = os.path.join(
+                                    tmp_plot_dir, remote_filename
+                                )
+                                shutil.copy2(tmp_md_path, tmp_md_for_plots)
+                                generate_bar_plots_from_markdown(
+                                    tmp_md_for_plots
+                                )
+                                merged_plot_dir = _plots_dir_for_results_file(
+                                    tmp_md_for_plots
+                                )
+                                if os.path.isdir(merged_plot_dir):
+                                    plot_dir = merged_plot_dir
+                            except Exception as exc:
+                                logger.warning(
+                                    "Bar plot regeneration after remote "
+                                    "merge failed: %s",
+                                    exc,
+                                )
 
-        # Read existing tree entries from the parent commit (if any)
-        if parent_sha:
-            ls_result = _run_git(
-                'ls-tree', parent_sha, check=False
+            # Get parent commit SHA for the branch (if it exists)
+            rev_result = _run_git(
+                'rev-parse', remote_ref, check=False
             )
-            if ls_result.returncode == 0 and ls_result.stdout.strip():
-                for line in ls_result.stdout.strip().splitlines():
-                    # Each line: "<mode> <type> <sha>\t<name>"
-                    entry_name = line.split('\t', 1)[1]
-                    if entry_name != remote_filename:
-                        tree_entries.append(line)
+            if rev_result.returncode == 0:
+                parent_sha = rev_result.stdout.strip()
 
-        # Add/replace our file
-        tree_entries.append(f"100644 blob {blob_sha}\t{remote_filename}")
+            # 3. Create a blob from the (possibly merged) temp file
+            blob_result = _run_git('hash-object', '-w', file_to_hash)
+            blob_sha = blob_result.stdout.strip()
 
-        # Add plot directory as a subtree (if provided)
-        if plot_dir and os.path.isdir(plot_dir):
-            plot_dirname = Path(plot_dir).name
-            # Remove any existing entry for this directory
-            tree_entries = [
-                e for e in tree_entries
-                if e.split('\t', 1)[1] != plot_dirname
-            ]
-            # Build subtree for plot files
-            plot_tree_entries: List[str] = []
-            for png_file in sorted(Path(plot_dir).glob('*.png')):
-                pblob = _run_git('hash-object', '-w', str(png_file))
-                plot_tree_entries.append(
-                    f"100644 blob {pblob.stdout.strip()}\t{png_file.name}"
+            # 4. Build a tree that preserves existing files on the branch
+            tree_entries: List[str] = []
+
+            if parent_sha:
+                ls_result = _run_git(
+                    'ls-tree', parent_sha, check=False
                 )
-            if plot_tree_entries:
-                subtree = _run_git('mktree', stdin='\n'.join(plot_tree_entries))
-                tree_entries.append(
-                    f"040000 tree {subtree.stdout.strip()}\t{plot_dirname}"
+                if ls_result.returncode == 0 and ls_result.stdout.strip():
+                    for line in ls_result.stdout.strip().splitlines():
+                        entry_name = line.split('\t', 1)[1]
+                        if entry_name != remote_filename:
+                            tree_entries.append(line)
+
+            tree_entries.append(
+                f"100644 blob {blob_sha}\t{remote_filename}"
+            )
+
+            # Add plot directory as a subtree (if provided)
+            if plot_dir and os.path.isdir(plot_dir):
+                plot_dirname = Path(plot_dir).name
+                tree_entries = [
+                    e for e in tree_entries
+                    if e.split('\t', 1)[1] != plot_dirname
+                ]
+                plot_tree_entries: List[str] = []
+                for png_file in sorted(Path(plot_dir).glob('*.png')):
+                    pblob = _run_git('hash-object', '-w', str(png_file))
+                    plot_tree_entries.append(
+                        f"100644 blob {pblob.stdout.strip()}\t"
+                        f"{png_file.name}"
+                    )
+                if plot_tree_entries:
+                    subtree = _run_git(
+                        'mktree', stdin='\n'.join(plot_tree_entries)
+                    )
+                    tree_entries.append(
+                        f"040000 tree {subtree.stdout.strip()}\t"
+                        f"{plot_dirname}"
+                    )
+            elif skip_merge:
+                stale_dirname = _plots_dirname_for_remote_filename(
+                    remote_filename
                 )
-        elif skip_merge:
-            # Removal path: if no new plot_dir was provided, drop the stale
-            # plot subtree that corresponds to this results file.
-            stale_dirname = _plots_dirname_for_remote_filename(remote_filename)
-            tree_entries = [
-                e for e in tree_entries
-                if e.split('\t', 1)[1] != stale_dirname
-            ]
+                tree_entries = [
+                    e for e in tree_entries
+                    if e.split('\t', 1)[1] != stale_dirname
+                ]
 
-        tree_input = '\n'.join(tree_entries)
-        tree_result = _run_git('mktree', stdin=tree_input)
-        tree_sha = tree_result.stdout.strip()
+            tree_input = '\n'.join(tree_entries)
+            tree_result = _run_git('mktree', stdin=tree_input)
+            tree_sha = tree_result.stdout.strip()
 
-        # 5. Create a commit (with parent if branch already exists)
-        commit_args = ['commit-tree', tree_sha, '-m', commit_message]
-        if parent_sha:
-            commit_args += ['-p', parent_sha]
-        commit_result = _run_git(*commit_args)
-        commit_sha = commit_result.stdout.strip()
+            # 5. Create a commit (with parent if branch already exists)
+            commit_args = ['commit-tree', tree_sha, '-m', commit_message]
+            if parent_sha:
+                commit_args += ['-p', parent_sha]
+            commit_result = _run_git(*commit_args)
+            commit_sha = commit_result.stdout.strip()
 
-        # 6. Point the local branch ref at the new commit
-        _run_git('update-ref', ref, commit_sha)
+            # 6. Point a disposable ref at the new commit
+            _run_git('update-ref', ref, commit_sha)
 
-        # 7. Push to remote
-        _run_git('push', remote, f'{branch}:{branch}')
+            # 7. Push to remote
+            try:
+                _run_git('push', remote, f'{ref}:{branch}')
+            except subprocess.CalledProcessError as push_err:
+                stderr = (push_err.stderr or '').lower()
+                if 'non-fast-forward' in stderr and attempt < max_retries:
+                    logger.warning(
+                        "Push rejected (non-fast-forward), "
+                        "retrying (%d/%d)…",
+                        attempt, max_retries,
+                    )
+                    # Clean up the ref before retrying
+                    _run_git('update-ref', '-d', ref, check=False)
+                    continue
+                raise
 
-        logger.info(
-            f"Pushed {remote_filename} to {remote}/{branch} (commit {commit_sha[:8]})"
-        )
-        return True
+            logger.info(
+                "Pushed %s to %s/%s (commit %s)",
+                remote_filename, remote, branch, commit_sha[:8],
+            )
+            return True
 
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Git operation failed: {e}")
-        if e.stderr:
-            logger.error(f"stderr: {e.stderr.strip()}")
-        return False
-    except Exception as e:
-        logger.error(f"Failed to push results to {remote}/{branch}: {e}")
-        return False
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Git operation failed: {e}")
+            if e.stderr:
+                logger.error(f"stderr: {e.stderr.strip()}")
+            return False
+        except Exception as e:
+            logger.error(
+                f"Failed to push results to {remote}/{branch}: {e}"
+            )
+            return False
+        finally:
+            # Clean up disposable ref
+            _run_git('update-ref', '-d', ref, check=False)
+            # Clean up temp files
+            if tmp_md_path and os.path.exists(tmp_md_path):
+                os.unlink(tmp_md_path)
+            if tmp_plot_dir and os.path.isdir(tmp_plot_dir):
+                import shutil
+                shutil.rmtree(tmp_plot_dir, ignore_errors=True)
+
+    # Exhausted all retries
+    logger.error(
+        "Push failed after %d attempts (non-fast-forward race). "
+        "Your local file is untouched — try again later.",
+        max_retries,
+    )
+    return False

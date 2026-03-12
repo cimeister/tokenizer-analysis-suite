@@ -1,0 +1,306 @@
+"""Tests for markdown table generation, parsing, and push-merge workflow.
+
+Covers the most critical parsing/merge paths fixed in the H1–H6 / M1–M4
+bug-fix plan.
+"""
+import os
+import textwrap
+from pathlib import Path
+
+import pytest
+
+from tokenizer_analysis.visualization.markdown_tables import (
+    MarkdownTableGenerator,
+    _COMPOSITE_KEY_RE,
+    _DISPLAY_NAME_RE,
+    _format_vocab_tier,
+    results_filename,
+)
+
+
+# ── Regex tests (H6) ──────────────────────────────────────────────────
+
+
+class TestCompositeKeyRegex:
+    """_COMPOSITE_KEY_RE must handle names that contain parentheses."""
+
+    def test_simple_name(self):
+        m = _COMPOSITE_KEY_RE.match("Classical (meistecl, flores)")
+        assert m is not None
+        assert m.group(1).strip() == "Classical"
+        assert m.group(2) == "meistecl"
+        assert m.group(3) == "flores"
+
+    def test_name_with_parens(self):
+        m = _COMPOSITE_KEY_RE.match(
+            "Gemma 3 (512 codebook) (saibo, flores)"
+        )
+        assert m is not None
+        assert m.group(1).strip() == "Gemma 3 (512 codebook)"
+        assert m.group(2) == "saibo"
+        assert m.group(3) == "flores"
+
+    def test_name_with_multiple_parens(self):
+        m = _COMPOSITE_KEY_RE.match(
+            "Foo (bar) (baz) (alice, dataset1)"
+        )
+        assert m is not None
+        assert m.group(1).strip() == "Foo (bar) (baz)"
+        assert m.group(2) == "alice"
+        assert m.group(3) == "dataset1"
+
+    def test_plain_name_no_match(self):
+        assert _COMPOSITE_KEY_RE.match("plain_name") is None
+
+    def test_brackets_no_match(self):
+        assert _COMPOSITE_KEY_RE.match("Tok [128k]") is None
+
+
+class TestDisplayNameRegex:
+    """_DISPLAY_NAME_RE must match names with [Nk] suffix."""
+
+    def test_standard(self):
+        m = _DISPLAY_NAME_RE.match("Classical [128k]")
+        assert m is not None
+        assert m.group(1).strip() == "Classical"
+
+    def test_name_with_parens(self):
+        m = _DISPLAY_NAME_RE.match("Gemma 3 (512 codebook) [128k]")
+        assert m is not None
+        assert m.group(1).strip() == "Gemma 3 (512 codebook)"
+
+    def test_no_bracket_no_match(self):
+        assert _DISPLAY_NAME_RE.match("Classical") is None
+
+    def test_composite_key_no_match(self):
+        assert _DISPLAY_NAME_RE.match("Classical (alice, flores)") is None
+
+
+# ── Parse round-trip tests (H1 / H2) ──────────────────────────────────
+
+
+_SAMPLE_NEW_FORMAT = textwrap.dedent("""\
+    # Tokenizer Evaluation Results
+
+    _Last updated: 2025-06-01 12:00:00_
+
+    | Tokenizer | Fertility ↓ | Dataset | User | Date |
+    | --- | --- | --- | --- | --- |
+    | Classical [128k] | 1.234 | flores | meistecl | 2025-06-01 |
+    | Gemma 3 (512 codebook) [256k] | 0.987 | flores | saibo | 2025-06-01 |
+""")
+
+
+class TestParseRoundTrip:
+    """Parsing new-format markdown must reconstruct composite keys and
+    preserve the display name in the ``Tokenizer`` column of each row_map.
+    """
+
+    def test_composite_key_reconstruction(self, tmp_path):
+        md_file = tmp_path / "RESULTS_flores.md"
+        md_file.write_text(_SAMPLE_NEW_FORMAT)
+        headers, rows = MarkdownTableGenerator.parse_existing_markdown(
+            str(md_file)
+        )
+        assert "Tokenizer" in headers
+        # Composite keys should be reconstructed
+        assert "Classical (meistecl, flores)" in rows
+        assert "Gemma 3 (512 codebook) (saibo, flores)" in rows
+
+    def test_display_name_preserved(self, tmp_path):
+        md_file = tmp_path / "RESULTS_flores.md"
+        md_file.write_text(_SAMPLE_NEW_FORMAT)
+        _, rows = MarkdownTableGenerator.parse_existing_markdown(str(md_file))
+        row = rows["Classical (meistecl, flores)"]
+        assert row["Tokenizer"] == "Classical [128k]"
+
+    def test_display_name_with_parens_preserved(self, tmp_path):
+        md_file = tmp_path / "RESULTS_flores.md"
+        md_file.write_text(_SAMPLE_NEW_FORMAT)
+        _, rows = MarkdownTableGenerator.parse_existing_markdown(str(md_file))
+        row = rows["Gemma 3 (512 codebook) (saibo, flores)"]
+        assert row["Tokenizer"] == "Gemma 3 (512 codebook) [256k]"
+
+
+# ── Merge display-name tests (H1) ─────────────────────────────────────
+
+
+_LOCAL_MD = textwrap.dedent("""\
+    # Tokenizer Evaluation Results
+
+    _Last updated: 2025-06-01 12:00:00_
+
+    | Tokenizer | Fertility ↓ | Dataset | User | Date |
+    | --- | --- | --- | --- | --- |
+    | LocalTok [64k] | 2.000 | flores | alice | 2025-06-01 |
+""")
+
+_REMOTE_MD = textwrap.dedent("""\
+    # Tokenizer Evaluation Results
+
+    _Last updated: 2025-06-01 12:00:00_
+
+    | Tokenizer | Fertility ↓ | Dataset | User | Date |
+    | --- | --- | --- | --- | --- |
+    | RemoteTok [128k] | 1.500 | flores | bob | 2025-06-01 |
+""")
+
+
+class TestMergeDisplayName:
+    """After merging local + remote rows, the Tokenizer column must contain
+    display names (e.g. ``"RemoteTok [128k]"``), not composite keys.
+    """
+
+    def test_merge_preserves_display_names(self, tmp_path):
+        local_file = tmp_path / "RESULTS_flores.md"
+        local_file.write_text(_LOCAL_MD)
+        remote_file = tmp_path / "remote.md"
+        remote_file.write_text(_REMOTE_MD)
+
+        local_headers, local_rows = (
+            MarkdownTableGenerator.parse_existing_markdown(str(local_file))
+        )
+        remote_headers, remote_rows = (
+            MarkdownTableGenerator.parse_existing_markdown(str(remote_file))
+        )
+
+        # Simulate the merge logic from push_results_to_branch
+        for tok_name, row_map in remote_rows.items():
+            if tok_name not in local_rows:
+                local_rows[tok_name] = row_map
+
+        all_headers = list(local_headers)
+        for h in remote_headers:
+            if h not in all_headers:
+                all_headers.append(h)
+
+        data_headers = [h for h in all_headers if h != 'Tokenizer']
+        all_rows = {**remote_rows, **local_rows}
+
+        for tok_name in list(all_rows.keys()):
+            row_map = all_rows[tok_name]
+            display = row_map.get('Tokenizer', tok_name)
+            # The display name should NEVER look like a composite key
+            assert '(' not in display or '[' in display, (
+                f"Display name looks like composite key: {display!r}"
+            )
+
+
+# ── Remove display-name tests (H2) ────────────────────────────────────
+
+
+class TestRemoveDisplayName:
+    """After removing a user's rows, remaining rows must keep display names."""
+
+    def test_remove_preserves_display(self, tmp_path):
+        md = textwrap.dedent("""\
+            # Tokenizer Evaluation Results
+
+            _Last updated: 2025-06-01 12:00:00_
+
+            | Tokenizer | Fertility ↓ | Dataset | User | Date |
+            | --- | --- | --- | --- | --- |
+            | TokA [64k] | 2.000 | flores | alice | 2025-06-01 |
+            | TokB [128k] | 1.500 | flores | bob | 2025-06-01 |
+        """)
+        md_file = tmp_path / "RESULTS_flores.md"
+        md_file.write_text(md)
+
+        headers, rows = MarkdownTableGenerator.parse_existing_markdown(
+            str(md_file)
+        )
+        # Keep only bob's rows (simulate remove_my_results for alice)
+        kept = {
+            k: v for k, v in rows.items()
+            if v.get('User', '').strip().lower() != 'alice'
+        }
+
+        data_headers = [h for h in headers if h != 'Tokenizer']
+        for key, row_map in kept.items():
+            display = row_map.get('Tokenizer', key)
+            assert display == "TokB [128k]"
+
+
+# ── Column preservation tests (M2) ────────────────────────────────────
+
+
+class TestColumnPreservation:
+    """Unknown columns from the remote must survive a merge."""
+
+    def test_unknown_remote_column_preserved(self, tmp_path):
+        local_md = textwrap.dedent("""\
+            # Tokenizer Evaluation Results
+
+            _Last updated: 2025-06-01 12:00:00_
+
+            | Tokenizer | Fertility ↓ | Dataset | User | Date |
+            | --- | --- | --- | --- | --- |
+            | TokA [64k] | 2.000 | flores | alice | 2025-06-01 |
+        """)
+        remote_md = textwrap.dedent("""\
+            # Tokenizer Evaluation Results
+
+            _Last updated: 2025-06-01 12:00:00_
+
+            | Tokenizer | Fertility ↓ | NewMetric ↑ | Dataset | User | Date |
+            | --- | --- | --- | --- | --- | --- |
+            | TokB [128k] | 1.500 | 0.999 | flores | bob | 2025-06-01 |
+        """)
+
+        local_file = tmp_path / "local.md"
+        local_file.write_text(local_md)
+        remote_file = tmp_path / "remote.md"
+        remote_file.write_text(remote_md)
+
+        local_headers, local_rows = (
+            MarkdownTableGenerator.parse_existing_markdown(str(local_file))
+        )
+        remote_headers, remote_rows = (
+            MarkdownTableGenerator.parse_existing_markdown(str(remote_file))
+        )
+
+        # Merge remote rows into local
+        for tok_name, row_map in remote_rows.items():
+            if tok_name not in local_rows:
+                local_rows[tok_name] = row_map
+
+        # Build unified header list (no known_titles filter)
+        all_headers = list(local_headers)
+        for h in remote_headers:
+            if h not in all_headers:
+                all_headers.append(h)
+
+        assert "NewMetric" in all_headers, (
+            "Unknown metric column 'NewMetric' was dropped during merge"
+        )
+
+
+# ── Utility function tests ────────────────────────────────────────────
+
+
+class TestVocabTierFormat:
+    def test_128k(self):
+        assert _format_vocab_tier(128000) == "128k"
+
+    def test_32k(self):
+        assert _format_vocab_tier(32000) == "32k"
+
+    def test_256k(self):
+        assert _format_vocab_tier(256000) == "256k"
+
+    def test_rounding(self):
+        assert _format_vocab_tier(127500) == "128k"
+
+
+class TestResultsFilename:
+    def test_default(self):
+        assert results_filename() == "RESULTS.md"
+
+    def test_dataset_only(self):
+        assert results_filename("flores") == "RESULTS_flores.md"
+
+    def test_dataset_and_method(self):
+        assert results_filename("flores", "bytes") == "RESULTS_flores_bytes.md"
+
+    def test_default_dataset_with_method(self):
+        assert results_filename("default", "bytes") == "RESULTS_bytes.md"

@@ -3,7 +3,7 @@ name = "tokenizer-analysis"
 version = "0.1.0"
 description = "Comprehensive tokenizer analysis framework"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 authors = [
     { name = "Apertus tokenization team" },
 ]
@@ -38,11 +38,14 @@ Repository = "https://github.com/sanderland/tokenizer-intrinsic-evals"
 [project.scripts]
 tokenizer-analysis = "tokenizer_analysis.cli.run_analysis:main"
 tokenizer-visualize = "tokenizer_analysis.cli.visualize_tokenization:main"
+update-remote = "tokenizer_analysis.cli.update_remote:main"
 
 [project.optional-dependencies]
 code-ast = [
-    "tree-sitter-language-pack>=0.9.0,<0.10.0; python_version >= '3.9' and python_version < '3.10'",
-    "tree-sitter-language-pack>=0.10.0; python_version >= '3.10'",
+    "tree-sitter-language-pack>=0.10.0",
+]
+parquet = [
+    "pyarrow>=10.0.0",
 ]
 
 [dependency-groups]
