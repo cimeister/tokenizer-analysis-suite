@@ -201,14 +201,29 @@ class UnifiedTokenizerAnalyzer:
             Analysis results dictionary
         """
         logger.info("Starting unified tokenizer analysis...")
-        
+
         tokenized_data = self.input_provider.get_tokenized_data()
         languages = self.input_provider.get_languages()
-        
+
         logger.info(f"Analyzing {len(languages)} languages: {languages}")
         logger.info(f"Tokenizers: {self.tokenizer_names}")
-        
+
         results = {}
+
+        # Collect encoding timing if available
+        encode_times = getattr(self.input_provider, 'encode_times', None)
+        if encode_times:
+            per_tok = {}
+            for tok_name, times in encode_times.items():
+                if times:
+                    arr = np.array(times)
+                    per_tok[tok_name] = {
+                        'mean_ms': float(np.mean(arr) * 1000),
+                        'total_s': float(np.sum(arr)),
+                        'num_samples': len(times),
+                    }
+            if per_tok:
+                results['encoding_speed'] = {'per_tokenizer': per_tok}
         
         # Run basic tokenization metrics
         logger.info("Computing basic tokenization metrics...")

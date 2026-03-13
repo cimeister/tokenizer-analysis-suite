@@ -335,21 +335,16 @@ class HuggingFaceTokenizer(TokenizerWrapper):
         tokenizer = _load_huggingface_tokenizer(config)
         return cls(name, tokenizer, config)
 
-class UniMixLMTokenizer(TokenizerWrapper):
-    """Wrapper for HuggingFace tokenizers."""
-    
+class UniMixLMTokenizer(HuggingFaceTokenizer):
+    """Wrapper for UniMixLM tokenizers.
+
+    Extends :class:`HuggingFaceTokenizer` with language-specific (``langspec``)
+    encoding that picks the best per-language tokenizer by log-probability, and
+    pre-tokenization via ``base_tokenizer``.
+    """
+
     def __init__(self, name: str, tokenizer, config: Dict[str, Any]):
-        """
-        Initialize Unimixlm tokenizer wrapper.
-        
-        Args:
-            name: Tokenizer name
-            tokenizer: Unimix tokenizer instance
-            config: Original configuration dict
-        """
-        self._name = name
-        self._tokenizer = tokenizer
-        self._config = config
+        super().__init__(name, tokenizer, config)
         self.tokenizer_class = self._config.get('unimixlm_class')
         if self.tokenizer_class == 'langspec':
             from tokenizers import Tokenizer
@@ -366,9 +361,10 @@ class UniMixLMTokenizer(TokenizerWrapper):
                     "scores": self._extract_log_scores(tok),
                     "path": lang_tok_path,
                 }
-        self._fast_decode = _setup_fast_decode(tokenizer)
         logger.info("Creating UnimixLM tokenizer")
-    
+
+    # ── langspec helpers ─────────────────────────────────────────────
+
     @staticmethod
     def _get_hf_unigram_tokenizer_vocab(tokenizer):
         state = tokenizer.model.__getstate__()
@@ -379,54 +375,27 @@ class UniMixLMTokenizer(TokenizerWrapper):
             tuples = sorted(vocab.items(), key=lambda x: x[1])
             return [(tk, -1) for tk, idx in tuples]
         return vocab
-        
+
     @staticmethod
     def _extract_log_scores(tok) -> Dict[str, float]:
-        """
-        Return dict {token -> log_score} from a HF Unigram tokenizer.
-        """
+        """Return dict {token -> log_score} from a HF Unigram tokenizer."""
         vocab_tuples = UniMixLMTokenizer._get_hf_unigram_tokenizer_vocab(tok)
-        return {tok_id: tok_tuple[1] for tok_id, tok_tuple in enumerate(vocab_tuples) }
-        
-    def get_name(self) -> str:
-        return self._name
-    
-    def get_vocab_size(self) -> int:
-        return len(self._tokenizer.get_vocab())
-    
-    def get_vocab(self) -> Dict[str, int]:
-        return self._tokenizer.get_vocab()
-    
-    def can_encode(self) -> bool:
-        return True
-    
+        return {tok_id: tok_tuple[1] for tok_id, tok_tuple in enumerate(vocab_tuples)}
+
+    # ── overrides for langspec encoding ──────────────────────────────
+
     def encode(self, text: str) -> List[int]:
         if self.tokenizer_class == 'langspec':
             best_lang, best_tokens, best_logp = None, [], float("-inf")
-
             for lang_code, info in self.per_lang_tok.items():
                 enc = info["tokenizer"].encode(text)
                 tok_ids = enc.ids
                 logp = sum(info["scores"][t] for t in tok_ids)
-    
                 if logp > best_logp:
                     best_lang, best_tokens, best_logp = lang_code, tok_ids, logp
-    
             return best_tokens
-            
-        else:
-            result = self._tokenizer.encode(text)
-            # Handle different return types
-            if hasattr(result, 'ids'):
-                return result.ids
-            elif isinstance(result, list):
-                return result
-            elif isinstance(result, dict) and 'input_ids' in result:
-                return result['input_ids']
-            else:
-                raise ValueError(f"Unexpected encoding result type: {type(result)}")
-        
-    
+        return super().encode(text)
+
     def encode_with_offsets(self, text: str) -> Tuple[List[int], Optional[List[Tuple[int, int]]]]:
         """Encode text using UniMixLM tokenizer and return offsets."""
         if self.tokenizer_class == 'langspec':
@@ -439,57 +408,23 @@ class UniMixLMTokenizer(TokenizerWrapper):
             if best_enc is not None and hasattr(best_enc, 'offsets'):
                 return best_enc.ids, best_enc.offsets
             return (best_enc.ids if best_enc else []), None
-        else:
-            result = self._tokenizer.encode(text)
-            if hasattr(result, 'ids') and hasattr(result, 'offsets'):
-                return result.ids, result.offsets
-            # Reuse result — don't call encode() again
-            if hasattr(result, 'ids'):
-                return result.ids, None
-            elif isinstance(result, list):
-                return result, None
-            elif isinstance(result, dict) and 'input_ids' in result:
-                return result['input_ids'], None
-            else:
-                raise ValueError(f"Unexpected encoding result type: {type(result)}")
+        return super().encode_with_offsets(text)
 
-    def can_decode(self) -> bool:
-        return True
-
-    def decode(self, token_ids: List[int], skip_special_tokens: bool = True) -> Optional[str]:
-        try:
-            if skip_special_tokens and self._fast_decode is not None:
-                return self._fast_decode(token_ids)
-            return self._tokenizer.decode(token_ids, skip_special_tokens=skip_special_tokens)
-        except Exception:
-            return None
+    # ── overrides for base_tokenizer pre-tokenization ────────────────
 
     def can_pretokenize(self) -> bool:
-        return hasattr(self._tokenizer.base_tokenizer, 'pre_tokenizer') and self._tokenizer.base_tokenizer.pre_tokenizer is not None
+        return (
+            hasattr(self._tokenizer, 'base_tokenizer')
+            and hasattr(self._tokenizer.base_tokenizer, 'pre_tokenizer')
+            and self._tokenizer.base_tokenizer.pre_tokenizer is not None
+        )
 
     def pretokenize(self, text: str) -> List[str]:
         if not self.can_pretokenize():
             raise NotImplementedError(f"Tokenizer {self._name} does not support pretokenization")
         return [token for token, _ in self._tokenizer.base_tokenizer.pre_tokenizer.pre_tokenize_str(text)]
 
-    def get_unk_token_id(self) -> Optional[int]:
-        """Get the UNK token ID from UniMixLM tokenizer."""
-        try:
-            if hasattr(self._tokenizer, 'unk_token_id'):
-                return self._tokenizer.unk_token_id
-            if hasattr(self._tokenizer, 'token_to_id'):
-                return self._tokenizer.token_to_id('<unk>')
-        except Exception:
-            pass
-        return None
-
-    def get_underlying_tokenizer(self):
-        """Return the underlying HuggingFace tokenizer object."""
-        return self._tokenizer
-
-    def convert_ids_to_tokens(self, token_ids: List[int]) -> List[str]:
-        """Convert token IDs using the underlying tokenizers library."""
-        return [self._tokenizer.id_to_token(tid) or f"<UNK_{tid}>" for tid in token_ids]
+    # ── from_config ──────────────────────────────────────────────────
 
     @classmethod
     def from_config(cls, name: str, config: Dict[str, Any]) -> 'UniMixLMTokenizer':
@@ -499,13 +434,8 @@ class UniMixLMTokenizer(TokenizerWrapper):
         if tokenizer_class is not None:
             tokenizer = Tokenizer.from_file(config['path'])
         else:
-            # Try loading as a HuggingFace tokenizer
-            try: 
-                from transformers import AutoTokenizer
-                tokenizer = AutoTokenizer.from_pretrained(config['path'])
-            except Exception as e:
-                logger.info(f"Tried to load tokenizer via default method and could not {e}")
-                raise
+            from ..utils.tokenizer_utils import _load_huggingface_tokenizer
+            tokenizer = _load_huggingface_tokenizer(config)
 
         return cls(name, tokenizer, config)
 

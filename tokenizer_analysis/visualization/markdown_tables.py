@@ -236,6 +236,15 @@ class MarkdownTableGenerator:
                 'lower_is_better': False,
             },
             {
+                'key': 'encode_time_ms',
+                'title': 'Enc. ms/sample',
+                'key_path': ['encoding_speed', 'per_tokenizer'],
+                'value_key': 'mean_ms',
+                'stat_key': None,
+                'format': '{:.2f}',
+                'lower_is_better': True,
+            },
+            {
                 'key': 'num_languages',
                 'title': 'Languages',
                 'key_path': ['tokenizer_fairness_gini', 'per_tokenizer'],
@@ -1211,7 +1220,13 @@ def push_results_to_branch(
 
             # Add plot directory as a subtree (if provided)
             if plot_dir and os.path.isdir(plot_dir):
-                plot_dirname = Path(plot_dir).name
+                # Always derive the remote plot dirname from remote_filename
+                # so that e.g. RESULTS_flores_core_lines_bpe_ablations.md
+                # stores its plots in flores_core_lines_bpe_ablations/,
+                # not in flores_core_lines/ (which belongs to another file).
+                plot_dirname = _plots_dirname_for_remote_filename(
+                    remote_filename
+                )
                 tree_entries = [
                     e for e in tree_entries
                     if e.split('\t', 1)[1] != plot_dirname

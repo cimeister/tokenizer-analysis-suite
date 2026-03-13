@@ -109,9 +109,20 @@ def _load_huggingface_tokenizer(config):
         except Exception as e:
             logger.warning(f"Failed to load tokenizer from file {path}: {e}")
     
-    # Strategy 2: Try loading as HuggingFace tokenizer (directory or model name)
+    # Strategy 2: Try loading as HuggingFace tokenizer (directory or model name).
+    # Prefer PreTrainedTokenizerFast which loads from tokenizer.json directly.
+    # Some repos (e.g. DeepSeek) have a tokenizer.json with full vocabulary
+    # but AutoTokenizer resolves to a LlamaTokenizer whose SentencePiece
+    # model is incomplete (e.g. missing CJK characters).
     try:
         logger.info(f"Loading tokenizer from HuggingFace: {path}")
+        from transformers import PreTrainedTokenizerFast
+        try:
+            tokenizer = PreTrainedTokenizerFast.from_pretrained(path)
+            logger.info(f"Loaded {path} via PreTrainedTokenizerFast")
+            return tokenizer
+        except Exception:
+            pass
         tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
         return tokenizer
     except Exception as e:

@@ -292,6 +292,32 @@ results/
 └── tokenized_data.pkl               # Cached data (--save-tokenized-data)
 ```
 
+### JSON Results Schema
+
+`analysis_results.json` is always written with a slimmed schema. Pass `--save-full-results` to also write `analysis_results_full.json` with all computed data. Both files follow the same per-metric layout:
+
+```json
+{
+  "<metric_name>": {
+    "per_tokenizer": {
+      "<tokenizer_name>": {
+        "global": {},
+        "per_language": {"<lang_code>": {}}
+      }
+    },
+    "per_language": {"<lang_code>": {"<tokenizer_name>": "<value>"}},
+    "metadata": {}
+  }
+}
+```
+
+- **`global`**: Aggregate score for this tokenizer. Stats dicts contain `mean`, `std`, `median`, `count`; structured dicts vary by metric.
+- **`per_language`** (inside `per_tokenizer`): Per-language breakdown for this tokenizer.
+- **`per_language`** (top-level): Cross-tokenizer leaderboard keyed by language, where present in raw data.
+- **`metadata`**: Metric configuration and data provenance, where present.
+
+The slimmed file omits `pairwise_comparisons`, `summary`, `per_category` breakdowns, and derivable stat fields (`sum`, `std_err`, `min`, `max`). The full results file includes `per_category` for metrics that have category breakdowns (e.g. AST node types, operator types). Some metrics use additional keys (e.g. `by_digit_length`, `scaling` for digit metrics; `character_length`/`byte_length` for token length).
+
 ## Metrics
 
 ### Basic Tokenization Metrics

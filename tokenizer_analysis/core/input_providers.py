@@ -4,8 +4,9 @@ Input provider implementations for raw and pre-tokenized data.
 
 from typing import Dict, List, Any, Union, Optional, TYPE_CHECKING
 import logging
+import time
 from .input_types import (
-    InputProvider, TokenizedData, InputSpecification, 
+    InputProvider, TokenizedData, InputSpecification,
     VocabularyProvider
 )
 
@@ -29,6 +30,7 @@ class RawTokenizationProvider(InputProvider):
         self.specifications = specifications
         self._validate_specifications()
         self._tokenized_cache = {}
+        self._encode_times: Dict[str, List[float]] = {}  # tok_name -> per-sample seconds
     
     def _validate_specifications(self):
         """Validate that all specifications are in raw mode."""
@@ -45,6 +47,7 @@ class RawTokenizationProvider(InputProvider):
         
         for tok_name, spec in self.specifications.items():
             tokenized_data[tok_name] = []
+            self._encode_times[tok_name] = []
             logger.info(f"Tokenizing data for {tok_name} tokenizer...")
             for language, text_data in spec.texts.items():
                 try:
@@ -72,7 +75,9 @@ class RawTokenizationProvider(InputProvider):
                             continue
                         
                         # Tokenize the text using TokenizerWrapper interface
+                        t0 = time.perf_counter()
                         tokens, offsets = spec.tokenizer.encode_with_offsets(text)
+                        self._encode_times[tok_name].append(time.perf_counter() - t0)
 
                         # Validate tokens are integers
                         if not isinstance(tokens, list) or not all(isinstance(t, int) for t in tokens):
@@ -103,17 +108,25 @@ class RawTokenizationProvider(InputProvider):
         self._tokenized_cache = tokenized_data
         return tokenized_data
     
+    @property
+    def encode_times(self) -> Dict[str, List[float]]:
+        """Per-sample encoding times (seconds) for each tokenizer.
+
+        Populated after ``get_tokenized_data()`` has been called.
+        """
+        return self._encode_times
+
     def get_tokenizer_names(self) -> List[str]:
         """Get list of tokenizer names."""
         return list(self.specifications.keys())
-    
+
     def get_vocab_size(self, tokenizer_name: str) -> int:
         """Get vocabulary size for a tokenizer."""
         if tokenizer_name not in self.specifications:
             raise ValueError(f"Unknown tokenizer: {tokenizer_name}")
-        
+
         tokenizer = self.specifications[tokenizer_name].tokenizer
-        
+
         # Handle different tokenizer types
         if hasattr(tokenizer, 'vocab_size'):
             return tokenizer.vocab_size
@@ -293,18 +306,25 @@ class MixedInputProvider(InputProvider):
         
         return combined_data
     
+    @property
+    def encode_times(self) -> Dict[str, List[float]]:
+        """Delegate to the raw sub-provider (pre-tokenized has no times)."""
+        if self.raw_provider:
+            return self.raw_provider.encode_times
+        return {}
+
     def get_tokenizer_names(self) -> List[str]:
         """Get list of all tokenizer names."""
         names = []
-        
+
         if self.raw_provider:
             names.extend(self.raw_provider.get_tokenizer_names())
-        
+
         if self.pretokenized_provider:
             names.extend(self.pretokenized_provider.get_tokenizer_names())
-        
+
         return names
-    
+
     def get_vocab_size(self, tokenizer_name: str) -> int:
         """Get vocabulary size for a tokenizer."""
         if self.raw_provider and tokenizer_name in self.raw_provider.get_tokenizer_names():
@@ -313,7 +333,7 @@ class MixedInputProvider(InputProvider):
             return self.pretokenized_provider.get_vocab_size(tokenizer_name)
         else:
             raise ValueError(f"Unknown tokenizer: {tokenizer_name}")
-    
+
     def get_languages(self, tokenizer_name: str = None) -> List[str]:
         """Get list of languages."""
         if tokenizer_name:
@@ -326,13 +346,13 @@ class MixedInputProvider(InputProvider):
         else:
             # Return all unique languages across all providers
             all_languages = set()
-            
+
             if self.raw_provider:
                 all_languages.update(self.raw_provider.get_languages())
-            
+
             if self.pretokenized_provider:
                 all_languages.update(self.pretokenized_provider.get_languages())
-            
+
             return sorted(list(all_languages))
 
 

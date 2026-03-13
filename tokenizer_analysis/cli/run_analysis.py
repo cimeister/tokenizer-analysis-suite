@@ -149,107 +149,291 @@ def _resolve_code_ast_config(args) -> Optional[Dict]:
     return None
 
 
+_DROPPABLE_STAT_KEYS = {'sum', 'std_err', 'min', 'max'}
+
+
+def _strip_stats(d):
+    """Keep only {mean, std, median, count} from a compute_basic_stats() dict."""
+    if isinstance(d, dict) and {'mean', 'std', 'count'} <= d.keys():
+        return {k: v for k, v in d.items() if k not in _DROPPABLE_STAT_KEYS}
+    return d
+
+
+def _strip_per_language(per_lang):
+    """Apply _strip_stats to each entry in a per-language dict."""
+    if not isinstance(per_lang, dict):
+        return per_lang
+    return {lang: _strip_stats(v) if isinstance(v, dict) else v
+            for lang, v in per_lang.items()}
+
+
+def _sample_array(value):
+    """Downsample large arrays for JSON export."""
+    if isinstance(value, list) and len(value) > LARGE_ARRAY_THRESHOLD:
+        step = len(value) // ARRAY_SAMPLING_POINTS
+        return value[::step] if step > 1 else value[:ARRAY_SAMPLING_POINTS]
+    return value
+
+
+def _slim_tokenizer_entry(metric_name: str, tok_data: dict) -> dict:
+    """Normalize a single tokenizer's data to consistent {global, per_language, ...} keys."""
+    if not isinstance(tok_data, dict):
+        return tok_data
+
+    out = {}
+
+    # --- Metrics with a standard 'global' stats dict ---
+    if metric_name in ('fertility', 'avg_tokens_per_line'):
+        if 'global' in tok_data:
+            out['global'] = _strip_stats(tok_data['global'])
+        elif 'stats' in tok_data:
+            out['global'] = _strip_stats(tok_data['stats'])
+        if 'per_language' in tok_data:
+            out['per_language'] = _strip_per_language(tok_data['per_language'])
+        # avg_tokens_per_line: keep total_lines if present
+        if metric_name == 'avg_tokens_per_line' and 'total_lines' in tok_data:
+            out['global'] = out.get('global', {})
+            out['global']['total_lines'] = tok_data['total_lines']
+
+    # --- Compression rate ---
+    elif metric_name == 'compression_rate':
+        if 'global' in tok_data:
+            out['global'] = tok_data['global']  # {compression_rate, total_units, total_tokens}
+        if 'per_language' in tok_data:
+            out['per_language'] = tok_data['per_language']
+
+    # --- Vocabulary utilization ---
+    elif metric_name == 'vocabulary_utilization':
+        out['global'] = {
+            'utilization': tok_data.get('global_utilization'),
+            'used_tokens': tok_data.get('global_used_tokens'),
+            'vocab_size': tok_data.get('global_vocab_size'),
+        }
+        if 'per_language' in tok_data:
+            out['per_language'] = tok_data['per_language']
+
+    # --- Type-token ratio ---
+    elif metric_name == 'type_token_ratio':
+        out['global'] = {
+            'ttr': tok_data.get('global_ttr'),
+            'types': tok_data.get('global_types'),
+            'tokens': tok_data.get('global_tokens'),
+        }
+
+    # --- Unigram distribution metrics ---
+    elif metric_name == 'unigram_distribution_metrics':
+        out['global'] = {
+            'unigram_entropy': tok_data.get('global_unigram_entropy'),
+            'avg_token_rank': tok_data.get('global_avg_token_rank'),
+        }
+        if 'per_language' in tok_data:
+            out['per_language'] = tok_data['per_language']
+
+    # --- Rényi efficiency: pivot from {renyi_X: {overall, lang...}} to {global: {renyi_X: v}, per_language: {lang: {renyi_X: v}}} ---
+    elif metric_name == 'renyi_efficiency':
+        global_vals = {}
+        lang_vals = {}  # lang -> {renyi_X: v}
+        for key, value in tok_data.items():
+            if key.startswith('renyi_') and isinstance(value, dict):
+                if 'overall' in value:
+                    global_vals[key] = value['overall']
+                for lang, score in value.items():
+                    if lang != 'overall':
+                        lang_vals.setdefault(lang, {})[key] = score
+        out['global'] = global_vals
+        if lang_vals:
+            out['per_language'] = lang_vals
+
+    # --- Tokenizer fairness (Gini) ---
+    elif metric_name == 'tokenizer_fairness_gini':
+        out['global'] = {
+            'gini_coefficient': tok_data.get('gini_coefficient'),
+            'mean_cost': tok_data.get('mean_cost'),
+            'std_cost': tok_data.get('std_cost'),
+            'cost_ratio': tok_data.get('cost_ratio'),
+            'num_languages': tok_data.get('num_languages'),
+        }
+        if 'warning' in tok_data:
+            out['global']['warning'] = tok_data['warning']
+        if 'language_costs' in tok_data:
+            out['per_language'] = tok_data['language_costs']
+
+    # --- Lorenz curve data: keep as-is but sample large arrays ---
+    elif metric_name == 'lorenz_curve_data':
+        for key, value in tok_data.items():
+            out[key] = _sample_array(value)
+
+    # --- Token length: keep character_length and byte_length sub-dicts stripped ---
+    elif metric_name == 'token_length':
+        for key in ('character_length', 'byte_length', 'primary_length'):
+            if key in tok_data:
+                out[key] = _strip_stats(tok_data[key])
+
+    # --- UTF-8 metrics ---
+    elif metric_name in ('utf8_token_integrity', 'utf8_char_split'):
+        if 'global' in tok_data:
+            out['global'] = tok_data['global']
+        if 'per_language' in tok_data:
+            out['per_language'] = tok_data['per_language']
+
+    # --- Morphological alignment: strip raw 'values' arrays ---
+    elif metric_name == 'morphological_alignment':
+        for sub_metric, lang_data in tok_data.items():
+            if isinstance(lang_data, dict):
+                stripped = {}
+                for lang, entry in lang_data.items():
+                    if isinstance(entry, dict):
+                        stripped[lang] = {k: v for k, v in entry.items() if k != 'values'}
+                    else:
+                        stripped[lang] = entry
+                out[sub_metric] = stripped
+            else:
+                out[sub_metric] = lang_data
+
+    # --- MorphScore ---
+    elif metric_name == 'morphscore':
+        if 'per_language' in tok_data:
+            out['per_language'] = tok_data['per_language']
+        if 'summary' in tok_data:
+            out['global'] = tok_data['summary']
+        if 'error' in tok_data:
+            out['error'] = tok_data['error']
+
+    # --- AST boundary alignment: drop by_category, rename overall->global, by_language->per_language ---
+    elif metric_name == 'ast_boundary_alignment':
+        if 'overall' in tok_data:
+            out['global'] = tok_data['overall']
+        if 'by_language' in tok_data:
+            out['per_language'] = tok_data['by_language']
+        # by_category dropped (full results only)
+
+    # --- Digit boundary metrics: overall is per-language, keep by_digit_length and by_bucket ---
+    elif metric_name in ('three_digit_boundary_alignment', 'digit_split_variability'):
+        if 'overall' in tok_data:
+            out['per_language'] = tok_data['overall']
+        if 'by_digit_length' in tok_data:
+            out['by_digit_length'] = tok_data['by_digit_length']
+        if 'by_bucket' in tok_data:
+            out['by_bucket'] = tok_data['by_bucket']
+
+    # --- Numeric magnitude consistency: same as digit boundary + scaling ---
+    elif metric_name == 'numeric_magnitude_consistency':
+        if 'overall' in tok_data:
+            out['per_language'] = tok_data['overall']
+        if 'by_digit_length' in tok_data:
+            out['by_digit_length'] = tok_data['by_digit_length']
+        if 'scaling' in tok_data:
+            out['scaling'] = tok_data['scaling']
+
+    # --- Operator isolation rate: rename by_language->per_language, drop all by_category (full results only) ---
+    elif metric_name == 'operator_isolation_rate':
+        if 'by_language' in tok_data:
+            per_lang = {}
+            for lang, lang_data in tok_data['by_language'].items():
+                if isinstance(lang_data, dict):
+                    # Drop nested by_category from each language entry
+                    entry = {k: v for k, v in lang_data.items() if k != 'by_category'}
+                    per_lang[lang] = entry
+                else:
+                    per_lang[lang] = lang_data
+            out['per_language'] = per_lang
+
+    # --- Reconstruction fidelity: domain-keyed data ---
+    elif metric_name == 'reconstruction_fidelity':
+        for key, value in tok_data.items():
+            if key == 'overall':
+                out['global'] = value
+            elif key in ('by_domain', 'by_language'):
+                out['per_' + key.split('_', 1)[1]] = value
+            else:
+                out[key] = value
+
+    # --- Identifier fragmentation ---
+    elif metric_name == 'identifier_fragmentation':
+        if 'overall' in tok_data:
+            out['global'] = tok_data['overall']
+        per_lang = tok_data.get('per_language') or tok_data.get('by_language')
+        if per_lang:
+            out['per_language'] = per_lang
+
+    # --- Indentation consistency ---
+    elif metric_name in ('indentation_preservation', 'indentation_consistency'):
+        if 'by_language' in tok_data:
+            out['per_language'] = tok_data['by_language']
+        if 'overall' in tok_data:
+            out['global'] = tok_data['overall']
+
+    # --- Fallback: copy keys with basic renaming ---
+    else:
+        for key, value in tok_data.items():
+            if key == 'overall':
+                out['global'] = value
+            elif key == 'by_language':
+                out['per_language'] = value
+            elif key == 'by_category':
+                pass  # per_category only in full results
+            elif key == 'global' and isinstance(value, dict):
+                out['global'] = _strip_stats(value)
+            elif key == 'per_language':
+                out['per_language'] = _strip_per_language(value)
+            else:
+                out[key] = value
+
+    return out
+
+
+def _rename_by_category(obj):
+    """Recursively rename by_category → per_category in a results dict."""
+    if isinstance(obj, dict):
+        return {
+            ('per_category' if k == 'by_category' else k): _rename_by_category(v)
+            for k, v in obj.items()
+        }
+    if isinstance(obj, list):
+        return [_rename_by_category(item) for item in obj]
+    return obj
+
+
 def slim_results_for_json(results: Dict) -> Dict:
-    """Create a slimmed-down version of results for JSON export."""
+    """Create a slimmed-down version of results for JSON export.
+
+    Normalizes every metric to a consistent schema:
+      {metric: {per_tokenizer: {tok: {global, per_language, ...}}, per_language, metadata}}
+    Drops pairwise_comparisons, summary (derivable/duplicate data), and
+    redundant stat fields (sum, std_err, min, max).
+    """
     slimmed = {}
-    
-    # Keep only essential summary statistics, not raw data
+
     for metric_name, metric_data in results.items():
-        if isinstance(metric_data, dict):
-            slimmed_metric = {}
-            
-            # For per-tokenizer results, keep only summary stats
-            if 'per_tokenizer' in metric_data:
-                slimmed_metric['per_tokenizer'] = {}
-                for tok_name, tok_data in metric_data['per_tokenizer'].items():
-                    if isinstance(tok_data, dict):
-                        # Keep essential stats but remove raw arrays
-                        tok_summary = {}
-                        for key, value in tok_data.items():
-                            if key in ['global', 'global_ttr', 'global_utilization', 'global_avg']:
-                                if isinstance(value, dict):
-                                    # Keep only mean/std, not raw values
-                                    filtered_value = {k: v for k, v in value.items() 
-                                                    if k in ['mean', 'std', 'median', 'count'] and not k.endswith('_lengths')}
-                                    tok_summary[key] = filtered_value
-                                else:
-                                    tok_summary[key] = value
-                            elif key == 'per_language':
-                                # Include per-language results for analysis
-                                tok_summary[key] = value
-                            elif key.startswith('renyi_') and isinstance(value, dict):
-                                # Keep overall entropy values but not per-language details
-                                tok_summary[key] = {'overall': value.get('overall')}
-                            elif key in ['gini_coefficient', 'mean_cost', 'std_cost', 'min_cost', 'max_cost', 
-                                        'cost_ratio', 'most_efficient_language', 'least_efficient_language', 
-                                        'num_languages', 'language_costs', 'warning']:
-                                # Keep all Gini-related metrics
-                                tok_summary[key] = value
-                            elif key in ['sorted_languages', 'sorted_costs', 'total_cost', 'n_languages', 
-                                        'x_values', 'y_values', 'equality_line']:
-                                # Keep Lorenz curve data but limit array sizes if needed
-                                if isinstance(value, list) and len(value) > LARGE_ARRAY_THRESHOLD:
-                                    # For very large arrays, keep only key points
-                                    step = len(value) // ARRAY_SAMPLING_POINTS  # Keep ~50 points
-                                    tok_summary[key] = value[::step] if step > 1 else value[:ARRAY_SAMPLING_POINTS]
-                                else:
-                                    tok_summary[key] = value
-                        slimmed_metric['per_tokenizer'][tok_name] = tok_summary
-            
-            # Keep pairwise comparisons (they're already summary data)
-            if 'pairwise_comparisons' in metric_data:
-                slimmed_metric['pairwise_comparisons'] = metric_data['pairwise_comparisons']
-            
-            # Keep vocabulary sizes
-            if 'vocabulary_sizes' in metric_data:
-                slimmed_metric['vocabulary_sizes'] = metric_data['vocabulary_sizes']
-            
-            # Keep summary stats for morphological analysis
-            if metric_name == 'morphological_alignment' and 'summary' in metric_data:
-                slimmed_metric['summary'] = metric_data['summary']
-            
-            # Keep summary stats for MorphScore analysis
-            if metric_name == 'morphscore' and 'summary' in metric_data:
-                slimmed_metric['summary'] = metric_data['summary']
-
-            # Keep digit boundary alignment, entropy, magnitude, and operator results (already compact)
-            if metric_name in ('three_digit_boundary_alignment', 'digit_split_variability',
-                               'numeric_magnitude_consistency', 'operator_isolation_rate'):
-                if 'summary' in metric_data:
-                    slimmed_metric['summary'] = metric_data['summary']
-                if 'per_tokenizer' in metric_data:
-                    slimmed_metric['per_tokenizer'] = metric_data['per_tokenizer']
-
-            # Keep AST boundary alignment results (already compact)
-            if metric_name == 'ast_boundary_alignment':
-                if 'summary' in metric_data:
-                    slimmed_metric['summary'] = metric_data['summary']
-                if 'per_tokenizer' in metric_data:
-                    slimmed_metric['per_tokenizer'] = metric_data['per_tokenizer']
-
-            # Keep UTF-8 integrity results (already compact)
-            if metric_name in ('utf8_token_integrity', 'utf8_char_split'):
-                if 'summary' in metric_data:
-                    slimmed_metric['summary'] = metric_data['summary']
-                if 'per_tokenizer' in metric_data:
-                    slimmed_metric['per_tokenizer'] = metric_data['per_tokenizer']
-            
-            # Keep metadata for Gini metrics
-            if metric_name in ['tokenizer_fairness_gini', 'lorenz_curve_data'] and 'metadata' in metric_data:
-                slimmed_metric['metadata'] = metric_data['metadata']
-            
-            # Keep global results
-            if 'global' in metric_data and metric_name not in ['morphological_alignment', 'morphscore']:
-                slimmed_metric['global'] = metric_data['global']
-            
-            # Include per-language results at the top level
-            if 'per_language' in metric_data:
-                slimmed_metric['per_language'] = metric_data['per_language']
-            
-            slimmed[metric_name] = slimmed_metric
-        else:
+        if not isinstance(metric_data, dict):
             slimmed[metric_name] = metric_data
-    
+            continue
+
+        out = {}
+
+        # Normalize per-tokenizer entries
+        if 'per_tokenizer' in metric_data:
+            out['per_tokenizer'] = {
+                tok: _slim_tokenizer_entry(metric_name, tok_data)
+                for tok, tok_data in metric_data['per_tokenizer'].items()
+            }
+
+        # Cross-tokenizer per-language leaderboard (top-level)
+        per_lang = metric_data.get('per_language') or metric_data.get('by_language')
+        if per_lang:
+            out['per_language'] = per_lang
+
+        # Keep vocabulary sizes if present
+        if 'vocabulary_sizes' in metric_data:
+            out['vocabulary_sizes'] = metric_data['vocabulary_sizes']
+
+        # Keep metadata
+        if 'metadata' in metric_data:
+            out['metadata'] = metric_data['metadata']
+
+        # Deliberately drop: pairwise_comparisons, summary
+        slimmed[metric_name] = out
+
     return slimmed
 
 
@@ -839,7 +1023,7 @@ def run_from_args(args: argparse.Namespace):
     if args.save_full_results:
         full_results_file = Path(args.output_dir) / "analysis_results_full.json"
         logger.info(f"Saving full results to {full_results_file}")
-        full_results_json = convert_for_json(results)
+        full_results_json = convert_for_json(_rename_by_category(results))
         with open(full_results_file, 'w') as f:
             json.dump(full_results_json, f, indent=2)
     
