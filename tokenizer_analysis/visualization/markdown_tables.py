@@ -937,7 +937,7 @@ def _make_bar_plot(
     ax.invert_yaxis()  # Top-to-bottom matches table order
 
     plt.tight_layout()
-    slug = title.lower().replace(' ', '_').replace('.', '').replace('-', '_')
+    slug = title.lower().replace(' ', '_').replace('.', '').replace('-', '_').replace('/', '_')
     path = os.path.join(plot_dir, f'{slug}.png')
     fig.savefig(path, dpi=150, bbox_inches='tight')
     plt.close(fig)
