@@ -137,6 +137,15 @@ class MarkdownTableGenerator:
                 'lower_is_better': True,
             },
             {
+                'key': 'bigram_entropy',
+                'title': 'Bigram Ent.',
+                'key_path': ['bigram_entropy', 'per_tokenizer'],
+                'value_key': 'global_bigram_entropy',
+                'stat_key': None,
+                'format': '{:.3f}',
+                'lower_is_better': False,
+            },
+            {
                 'key': 'morphscore_recall',
                 'title': 'MorphScore Recall',
                 'key_path': ['morphscore', 'per_tokenizer'],

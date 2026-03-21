@@ -63,6 +63,7 @@ def get_metric_display_name(metric_key: str) -> str:
         'compression_rate': 'Compression Rate',
         'vocabulary_utilization': 'Vocabulary Utilization',
         'tokenizer_fairness_gini': 'Gini Coefficient',
+        'bigram_entropy': 'Bigram Entropy',
         'morphscore': 'MorphScore',
         'unk_percentage': 'UNK Percentage'
     }
@@ -80,6 +81,7 @@ def get_ylabel(metric_key: str, metadata: Optional[Dict] = None) -> str:
         'compression_rate': f'Per {norm_method.rstrip("s").title()} Compression Rate',
         'vocabulary_utilization': 'Vocabulary Utilization (%)',
         'tokenizer_fairness_gini': 'Gini Coefficient',
+        'bigram_entropy': 'Bigram Entropy (η)',
         'morphscore_recall': 'MorphScore Recall',
         'morphscore_precision': 'MorphScore Precision',
         'unk_percentage': 'UNK Percentage (%)'
@@ -205,6 +207,15 @@ def plot_compression_rate(results: Dict[str, Any], save_path: str, tokenizer_nam
         results, save_path, tokenizer_names, 'compression_rate',
         lambda td: td['global']['compression_rate'],
         show_global_lines=show_global_lines,
+    )
+
+
+def plot_bigram_entropy(results: Dict[str, Any], save_path: str, tokenizer_names: List[str], show_global_lines: bool = True):
+    """Plot bigram entropy comparison."""
+    plot_metric_bar_chart(
+        results, save_path, tokenizer_names, 'bigram_entropy',
+        lambda td: td['global_bigram_entropy'],
+        show_global_lines=show_global_lines, ylim=(0, 1), global_avg_fmt='.3f',
     )
 
 
@@ -413,6 +424,7 @@ def generate_all_plots(results: Dict[str, Any], save_dir: str, tokenizer_names: 
 
     # Information theory
     plot_compression_rate(results, os.path.join(save_dir, 'compression_rate_individual.svg'), tokenizer_names, show_global_lines)
+    plot_bigram_entropy(results, os.path.join(save_dir, 'bigram_entropy_individual.svg'), tokenizer_names, show_global_lines)
 
     # Fairness
     plot_gini_coefficient(results, os.path.join(save_dir, 'tokenizer_fairness_gini_individual.svg'), tokenizer_names, show_global_lines)
@@ -462,6 +474,7 @@ def _generate_per_language_plots(results: Dict[str, Any], save_dir: str,
     _plot_per_language_compression_rate(results, per_lang_dir, tokenizer_names, show_global_lines)
     _plot_per_language_vocabulary_utilization(results, per_lang_dir, tokenizer_names, show_global_lines)
     _plot_per_language_gini_coefficient(results, per_lang_dir, tokenizer_names, show_global_lines)
+    _plot_per_language_bigram_entropy(results, per_lang_dir, tokenizer_names, show_global_lines)
 
 
 def _generate_faceted_plots(results: Dict[str, Any], save_dir: str,
@@ -471,7 +484,7 @@ def _generate_faceted_plots(results: Dict[str, Any], save_dir: str,
     os.makedirs(facet_dir, exist_ok=True)
 
     # Generate faceted plots for key metrics
-    for metric_name in ['fertility', 'compression_rate', 'vocabulary_utilization']:
+    for metric_name in ['fertility', 'compression_rate', 'vocabulary_utilization', 'bigram_entropy']:
         if metric_name in results:
             _plot_faceted_metric(results, facet_dir, tokenizer_names, metric_name, show_global_lines)
 
@@ -482,9 +495,10 @@ def _plot_per_language_combined_subplots(results: Dict[str, Any], save_dir: str,
     # Collect metrics that have per-language data
     metrics_info = [
         ('fertility', get_metric_display_name('fertility')),
-        ('compression_rate', get_metric_display_name('compression_rate')), 
+        ('compression_rate', get_metric_display_name('compression_rate')),
         ('vocabulary_utilization', get_metric_display_name('vocabulary_utilization')),
-        ('tokenizer_fairness_gini', get_metric_display_name('tokenizer_fairness_gini'))
+        ('tokenizer_fairness_gini', get_metric_display_name('tokenizer_fairness_gini')),
+        ('bigram_entropy', get_metric_display_name('bigram_entropy')),
     ]
     
     metrics_data = {}
@@ -509,6 +523,8 @@ def _plot_per_language_combined_subplots(results: Dict[str, Any], save_dir: str,
                             value = lang_stats if isinstance(lang_stats, (int, float)) else lang_stats.get('mean', 0.0)
                         elif metric_key == 'tokenizer_fairness_gini':
                             value = lang_stats if isinstance(lang_stats, (int, float)) else lang_stats.get('mean', 0.0)
+                        elif metric_key == 'bigram_entropy':
+                            value = lang_stats.get('bigram_entropy', 0.0) if isinstance(lang_stats, dict) else lang_stats
                         else:
                             value = lang_stats.get('mean', 0.0) if isinstance(lang_stats, dict) else lang_stats
                         
@@ -699,6 +715,15 @@ def _plot_per_language_gini_coefficient(results, save_dir, tokenizer_names, show
     )
 
 
+def _plot_per_language_bigram_entropy(results, save_dir, tokenizer_names, show_global_lines):
+    """Plot per-language bigram entropy comparison with grouped bars."""
+    _plot_per_language_metric(
+        results, save_dir, tokenizer_names, 'bigram_entropy',
+        lambda s: s.get('bigram_entropy', 0.0) if isinstance(s, dict) else s,
+        'bigram_entropy_per_language.svg', show_global_lines,
+    )
+
+
 def _plot_faceted_metric(results: Dict[str, Any], save_dir: str,
                         tokenizer_names: List[str], metric_name: str, show_global_lines: bool):
     """Generate faceted plot for a specific metric."""
@@ -742,6 +767,8 @@ def _plot_faceted_metric(results: Dict[str, Any], save_dir: str,
                 lang_data = tok_data['per_language'][lang]
                 if isinstance(lang_data, dict) and 'mean' in lang_data:
                     values.append(lang_data['mean'])
+                elif isinstance(lang_data, dict) and 'bigram_entropy' in lang_data:
+                    values.append(lang_data['bigram_entropy'])
                 elif isinstance(lang_data, (int, float)):
                     values.append(lang_data)
                 else:

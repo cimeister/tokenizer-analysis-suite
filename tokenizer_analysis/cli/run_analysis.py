@@ -229,6 +229,17 @@ def _slim_tokenizer_entry(metric_name: str, tok_data: dict) -> dict:
         if 'per_language' in tok_data:
             out['per_language'] = tok_data['per_language']
 
+    # --- Bigram entropy ---
+    elif metric_name == 'bigram_entropy':
+        out['global'] = {
+            'bigram_entropy': tok_data.get('global_bigram_entropy'),
+            'total_bigrams': tok_data.get('global_total_bigrams'),
+            'types_evaluated': tok_data.get('global_types_evaluated'),
+            'types_excluded': tok_data.get('global_types_excluded'),
+        }
+        if 'per_language' in tok_data:
+            out['per_language'] = tok_data['per_language']
+
     # --- Rényi efficiency: pivot from {renyi_X: {overall, lang...}} to {global: {renyi_X: v}, per_language: {lang: {renyi_X: v}}} ---
     elif metric_name == 'renyi_efficiency':
         global_vals = {}

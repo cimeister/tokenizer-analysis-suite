@@ -4,7 +4,7 @@ Information-theoretic metrics including entropy, compression, and vocabulary uti
 
 from typing import Dict, List, Any, Optional
 import numpy as np
-from collections import Counter
+from collections import Counter, defaultdict
 import logging
 
 from .base import BaseMetrics, TokenizedDataProcessor
@@ -16,14 +16,17 @@ from ..constants import DEFAULT_RENYI_ALPHAS, SHANNON_ENTROPY_ALPHA
 
 logger = logging.getLogger(__name__)
 
+MIN_BIGRAM_OCCURRENCES = 3
+
 
 class InformationTheoreticMetrics(BaseMetrics):
     """Information-theoretic analysis metrics."""
     
     def __init__(self, input_provider: InputProvider,
-                 renyi_alphas: Optional[List[float]] = None, 
+                 renyi_alphas: Optional[List[float]] = None,
                  measurement_config: Optional[TextMeasurementConfig] = None,
-                 language_metadata: Optional[LanguageMetadata] = None):
+                 language_metadata: Optional[LanguageMetadata] = None,
+                 min_bigram_occurrences: int = MIN_BIGRAM_OCCURRENCES):
         """
         Initialize information-theoretic metrics.
 
@@ -32,6 +35,8 @@ class InformationTheoreticMetrics(BaseMetrics):
             renyi_alphas: List of alpha values for Rényi entropy (default: [1.0, 2.0, 3.0])
             measurement_config: Configuration for text measurement method
             language_metadata: Optional language metadata for grouping
+            min_bigram_occurrences: Minimum number of bigram occurrences for a
+                token type to be included in bigram entropy (default: 5)
         """
         super().__init__(input_provider)
         self.renyi_alphas = renyi_alphas or DEFAULT_RENYI_ALPHAS
@@ -39,6 +44,7 @@ class InformationTheoreticMetrics(BaseMetrics):
         self.measurement_config = measurement_config or DEFAULT_LINE_MEASUREMENT_CONFIG
         self.text_measurer = TextMeasurer(self.measurement_config)
         self.language_metadata = language_metadata
+        self.min_bigram_occurrences = min_bigram_occurrences
     
     def compute_renyi_entropy(self, token_counts: Counter, alpha: float) -> float:
         """
@@ -344,6 +350,126 @@ class InformationTheoreticMetrics(BaseMetrics):
     
         return results
 
+    def compute_bigram_entropy(self, tokenized_data: Dict[str, List[TokenizedData]]) -> Dict[str, Any]:
+        """Compute frequency-weighted normalized Shannon entropy of right-accessor distributions.
+
+        For each token type t that appears as the left element of at least
+        MIN_BIGRAM_OCCURRENCES bigrams, we compute the normalized Shannon entropy
+        (η) of its right-successor distribution. The final score is the
+        frequency-weighted mean of η across all qualifying types.
+
+        Args:
+            tokenized_data: Dict mapping tokenizer names to TokenizedData lists
+
+        Returns:
+            Dict with bigram entropy results per tokenizer and language.
+        """
+        min_occ = self.min_bigram_occurrences
+
+        results = {
+            'per_tokenizer': {},
+            'per_language': {},
+            'pairwise_comparisons': {},
+            'metadata': {
+                'description': 'Bigram Entropy — frequency-weighted normalized Shannon entropy of right-accessor distributions',
+                'reference': 'Poelman et al. 2025, EMNLP (Shannon efficiency η)',
+                'metric_range': '[0.0, 1.0]',
+                'interpretation': 'Higher = more uniform successor distributions',
+                'min_bigram_occurrences': min_occ,
+            }
+        }
+
+        def _compute_weighted_entropy(right_accessors: Dict[int, Counter]) -> dict:
+            """Compute weighted bigram entropy from a right-accessor distribution."""
+            weighted_sum = 0.0
+            weight_total = 0
+            total_bigrams = 0
+            types_evaluated = 0
+            types_excluded = 0
+
+            for t, successors in right_accessors.items():
+                ta = sum(successors.values())
+                total_bigrams += ta
+                if ta < min_occ:
+                    types_excluded += 1
+                    continue
+                n_unique = len(successors)
+                if n_unique <= 1:
+                    # Only one successor type → entropy is 0, eta is 0
+                    types_evaluated += 1
+                    weight_total += ta
+                    continue
+                # Shannon entropy
+                h = -sum((c / ta) * np.log2(c / ta) for c in successors.values())
+                # Normalize by max possible entropy
+                max_h = np.log2(min(n_unique, ta))
+                eta = h / max_h if max_h > 0 else 0.0
+                weighted_sum += ta * eta
+                weight_total += ta
+                types_evaluated += 1
+
+            bigram_entropy = weighted_sum / weight_total if weight_total else 0.0
+            return {
+                'bigram_entropy': bigram_entropy,
+                'total_bigrams': total_bigrams,
+                'types_evaluated': types_evaluated,
+                'types_excluded': types_excluded,
+            }
+
+        for tok_name in self.tokenizer_names:
+            if tok_name not in tokenized_data:
+                continue
+
+            tok_data = tokenized_data[tok_name]
+            per_lang_metrics = {}
+            global_right_accessors: Dict[int, Counter] = defaultdict(Counter)
+
+            # Group data by language
+            lang_groups = TokenizedDataProcessor.group_by_language(tok_data)
+
+            for lang, lang_data in lang_groups.items():
+                lang_right_accessors: Dict[int, Counter] = defaultdict(Counter)
+                for data in lang_data:
+                    tokens = data.tokens
+                    for i in range(len(tokens) - 1):
+                        lang_right_accessors[tokens[i]][tokens[i + 1]] += 1
+                        global_right_accessors[tokens[i]][tokens[i + 1]] += 1
+
+                per_lang_metrics[lang] = _compute_weighted_entropy(lang_right_accessors)
+
+            global_stats = _compute_weighted_entropy(global_right_accessors)
+
+            results['per_tokenizer'][tok_name] = {
+                'global_bigram_entropy': global_stats['bigram_entropy'],
+                'global_total_bigrams': global_stats['total_bigrams'],
+                'global_types_evaluated': global_stats['types_evaluated'],
+                'global_types_excluded': global_stats['types_excluded'],
+                'per_language': per_lang_metrics,
+            }
+
+        # Aggregate per-language results for cross-tokenizer comparison
+        all_languages = set()
+        for tok_results in results['per_tokenizer'].values():
+            all_languages.update(tok_results['per_language'].keys())
+
+        for lang in all_languages:
+            results['per_language'][lang] = {}
+            for tok_name in self.tokenizer_names:
+                if tok_name in results['per_tokenizer']:
+                    lang_data = results['per_tokenizer'][tok_name]['per_language'].get(lang)
+                    if lang_data:
+                        results['per_language'][lang][tok_name] = lang_data['bigram_entropy']
+
+        # Pairwise comparisons on global bigram entropy
+        global_entropies = {
+            name: res['global_bigram_entropy']
+            for name, res in results['per_tokenizer'].items()
+        }
+        results['pairwise_comparisons'] = self.compute_pairwise_comparisons(
+            global_entropies, 'bigram_entropy'
+        )
+
+        return results
 
     def compute(self, tokenized_data: Optional[Dict[str, List[TokenizedData]]] = None) -> Dict[str, Any]:
         """Compute all information-theoretic metrics."""
@@ -355,5 +481,6 @@ class InformationTheoreticMetrics(BaseMetrics):
         results['compression_rate'] = self.compute_compression_rate(tokenized_data)
         results['renyi_efficiency'] = self.compute_renyi_efficiency_analysis(tokenized_data)
         results['unigram_distribution_metrics'] = self.compute_unigram_distribution_metrics(tokenized_data)
+        results['bigram_entropy'] = self.compute_bigram_entropy(tokenized_data)
 
         return results
