@@ -202,36 +202,25 @@ def collect_samples(args: argparse.Namespace) -> list[tuple[str, str]]:
 
 # ── Offset extraction ────────────────────────────────────────────────────
 
-def _get_offsets(wrapper, text: str) -> list[tuple[int, int]] | None:
-    """Try to get (start, end) character offsets for each token.
+def _get_offsets(wrapper, text: str, ids: list[int]) -> list[tuple[int, int]] | None:
+    """Get (start, end) character offsets for each token via encode_with_offsets.
 
-    Works with both ``tokenizers.Tokenizer`` and
-    ``transformers.PreTrainedTokenizerFast``.  Returns *None* if offsets
-    cannot be obtained.
+    Uses the wrapper's ``encode_with_offsets`` method, which guarantees that
+    the returned offsets correspond to the same encoding path as ``encode``.
+
+    Raises ``ValueError`` if offsets are returned but their length does not
+    match *ids*.
     """
-    raw = wrapper.get_underlying_tokenizer()
-    if raw is None:
+    token_ids, offsets = wrapper.encode_with_offsets(text)
+    if offsets is None:
         return None
-
-    # tokenizers.Tokenizer  →  Encoding.offsets
-    if hasattr(raw, 'encode'):
-        try:
-            enc = raw.encode(text)
-            if hasattr(enc, 'offsets'):
-                return enc.offsets
-        except Exception:
-            pass
-
-    # transformers.PreTrainedTokenizerFast / Slow
-    if callable(getattr(raw, '__call__', None)):
-        try:
-            enc = raw(text, return_offsets_mapping=True)
-            if 'offset_mapping' in enc:
-                return [tuple(pair) for pair in enc['offset_mapping']]
-        except Exception:
-            pass
-
-    return None
+    if len(offsets) != len(ids):
+        raise ValueError(
+            f"Offset length mismatch for {wrapper.get_name()}: "
+            f"encode() returned {len(ids)} tokens but encode_with_offsets() "
+            f"returned {len(offsets)} offsets"
+        )
+    return offsets
 
 
 # ── Visualisation ─────────────────────────────────────────────────────────
@@ -308,10 +297,10 @@ def visualize_tokens(
     """Return a formatted string showing the tokenized text for one tokenizer."""
     ids = wrapper.encode(text)
     tokens = wrapper.convert_ids_to_tokens(ids)
-    offsets = _get_offsets(wrapper, text)
+    offsets = _get_offsets(wrapper, text, ids)
 
     # If offsets are available, use them for a character-span view.
-    if offsets and len(offsets) == len(ids):
+    if offsets:
         raw_offsets = offsets
         offsets = _fill_offsets(raw_offsets, len(text))
         spans = [text[s:e] for s, e in offsets]

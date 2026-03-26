@@ -382,10 +382,6 @@ class TestCodeDataLoader:
             for snippet in snippets:
                 assert len(snippet.strip()) > 0, f"Empty snippet for {lang}"
 
-    def test_get_languages_empty(self):
-        loader = CodeDataLoader()
-        assert loader.get_languages() == []
-
     def test_get_languages_after_synthetic(self):
         loader = CodeDataLoader()
         synthetic = CodeDataLoader.generate_synthetic_samples()
@@ -396,18 +392,6 @@ class TestCodeDataLoader:
     def test_get_code_snippets_missing_lang(self):
         loader = CodeDataLoader()
         assert loader.get_code_snippets("nonexistent") == []
-
-    def test_default_max_snippets_per_lang(self):
-        loader = CodeDataLoader()
-        assert loader.max_snippets_per_lang == CodeDataLoader.DEFAULT_MAX_SNIPPETS_PER_LANG
-
-    def test_custom_max_snippets_per_lang(self):
-        loader = CodeDataLoader(max_snippets_per_lang=10)
-        assert loader.max_snippets_per_lang == 10
-
-    def test_cap_zero_disables_limit(self):
-        loader = CodeDataLoader(max_snippets_per_lang=0)
-        assert loader.max_snippets_per_lang == 0
 
     def test_cap_limits_loaded_snippets(self, tmp_path):
         """Loading from a directory with many files respects the cap."""

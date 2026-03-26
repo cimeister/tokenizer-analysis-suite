@@ -15,7 +15,6 @@ logger = logging.getLogger(__name__)
 from tokenizers import Tokenizer
 from tokenizers.models import Unigram, BPE
 from tokenizers.pre_tokenizers import Whitespace, ByteLevel, Sequence
-from tokenizers.processors import TemplateProcessing
 from tokenizers.decoders import ByteLevel as ByteLevelDecoder
 from transformers import AutoTokenizer
 
@@ -172,16 +171,6 @@ def _load_custom_bpe_from_directory(config):
     tokenizer.add_special_tokens(["<s>", "</s>", "<unk>", "<pad>"])
     tokenizer.model.unk_token = "<unk>"
 
-    # Set post-processor
-    tokenizer.post_processor = TemplateProcessing(
-        single="<s> $A </s>",
-        pair="<s> $A </s> </s> $B </s>",
-        special_tokens=[
-            ("<s>", tokenizer.token_to_id("<s>")),
-            ("</s>", tokenizer.token_to_id("</s>")),
-        ]
-    )
-    
     return tokenizer
 
 

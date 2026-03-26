@@ -7,6 +7,7 @@ making it easy for users to integrate custom tokenizers into the framework.
 
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Union, Any, Tuple
+import json
 import logging
 import os
 import glob
@@ -235,7 +236,7 @@ class HuggingFaceTokenizer(TokenizerWrapper):
         return True
     
     def encode(self, text: str) -> List[int]:
-        result = self._tokenizer.encode(text)
+        result = self._tokenizer.encode(text, add_special_tokens=False)
         # Handle different return types
         if hasattr(result, 'ids'):
             return result.ids
@@ -245,12 +246,23 @@ class HuggingFaceTokenizer(TokenizerWrapper):
             return result['input_ids']
         else:
             raise ValueError(f"Unexpected encoding result type: {type(result)}")
-    
+
     def encode_with_offsets(self, text: str) -> Tuple[List[int], Optional[List[Tuple[int, int]]]]:
         """Encode text using HuggingFace tokenizer and return offsets."""
-        result = self._tokenizer.encode(text)
+        result = self._tokenizer.encode(text, add_special_tokens=False)
         if hasattr(result, 'ids') and hasattr(result, 'offsets'):
             return result.ids, result.offsets
+        # transformers.PreTrainedTokenizerFast — use __call__ with offset mapping
+        if callable(getattr(self._tokenizer, '__call__', None)):
+            try:
+                enc = self._tokenizer(text, return_offsets_mapping=True,
+                                      add_special_tokens=False)
+                if 'offset_mapping' in enc:
+                    ids = enc['input_ids']
+                    offsets = [tuple(pair) for pair in enc['offset_mapping']]
+                    return ids, offsets
+            except Exception:
+                pass
         # Reuse result — don't call encode() again
         if hasattr(result, 'ids'):
             return result.ids, None
@@ -269,7 +281,8 @@ class HuggingFaceTokenizer(TokenizerWrapper):
             if skip_special_tokens and self._fast_decode is not None:
                 return self._fast_decode(token_ids)
             return self._tokenizer.decode(token_ids, skip_special_tokens=skip_special_tokens)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"HuggingFace decode failed for {self._name}: {e}")
             return None
 
     def can_pretokenize(self) -> bool:
@@ -384,30 +397,32 @@ class UniMixLMTokenizer(HuggingFaceTokenizer):
 
     # ── overrides for langspec encoding ──────────────────────────────
 
+    def _langspec_best_encoding(self, text: str):
+        """Find the best langspec encoding by log-probability.
+
+        Returns the raw ``tokenizers.Encoding`` object from the winning
+        language tokenizer, or ``None`` if no langspec tokenizers exist.
+        """
+        best_enc, best_logp = None, float("-inf")
+        for info in self.per_lang_tok.values():
+            enc = info["tokenizer"].encode(text)
+            logp = sum(info["scores"][t] for t in enc.ids)
+            if logp > best_logp:
+                best_enc, best_logp = enc, logp
+        return best_enc
+
     def encode(self, text: str) -> List[int]:
         if self.tokenizer_class == 'langspec':
-            best_lang, best_tokens, best_logp = None, [], float("-inf")
-            for lang_code, info in self.per_lang_tok.items():
-                enc = info["tokenizer"].encode(text)
-                tok_ids = enc.ids
-                logp = sum(info["scores"][t] for t in tok_ids)
-                if logp > best_logp:
-                    best_lang, best_tokens, best_logp = lang_code, tok_ids, logp
-            return best_tokens
+            best_enc = self._langspec_best_encoding(text)
+            return best_enc.ids if best_enc is not None else []
         return super().encode(text)
 
     def encode_with_offsets(self, text: str) -> Tuple[List[int], Optional[List[Tuple[int, int]]]]:
-        """Encode text using UniMixLM tokenizer and return offsets."""
         if self.tokenizer_class == 'langspec':
-            best_lang, best_enc, best_logp = None, None, float("-inf")
-            for lang_code, info in self.per_lang_tok.items():
-                enc = info["tokenizer"].encode(text)
-                logp = sum(info["scores"][t] for t in enc.ids)
-                if logp > best_logp:
-                    best_lang, best_enc, best_logp = lang_code, enc, logp
+            best_enc = self._langspec_best_encoding(text)
             if best_enc is not None and hasattr(best_enc, 'offsets'):
                 return best_enc.ids, best_enc.offsets
-            return (best_enc.ids if best_enc else []), None
+            return (best_enc.ids if best_enc is not None else []), None
         return super().encode_with_offsets(text)
 
     # ── overrides for base_tokenizer pre-tokenization ────────────────
@@ -546,14 +561,21 @@ class SentencePieceTokenizer(TokenizerWrapper):
         try:
             ids_to_decode = list(token_ids)
             if skip_special_tokens:
-                bos = self._sp.bos_id() if self._add_bos else -1
-                eos = self._sp.eos_id() if self._add_eos else -1
-                ids_to_decode = [
-                    tid for tid in ids_to_decode
-                    if tid != bos and tid != eos
-                ]
+                bos = self._sp.bos_id()
+                eos = self._sp.eos_id()
+                special_ids = set()
+                if bos is not None and bos >= 0:
+                    special_ids.add(bos)
+                if eos is not None and eos >= 0:
+                    special_ids.add(eos)
+                if special_ids:
+                    ids_to_decode = [
+                        tid for tid in ids_to_decode
+                        if tid not in special_ids
+                    ]
             return self._sp.decode(ids_to_decode)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"SentencePiece decode failed for {self._name}: {e}")
             return None
 
     def can_pretokenize(self) -> bool:
@@ -588,7 +610,14 @@ class SentencePieceTokenizer(TokenizerWrapper):
 
     def convert_ids_to_tokens(self, token_ids: List[int]) -> List[str]:
         """Convert token IDs using SentencePiece id_to_piece."""
-        return [self._sp.id_to_piece(tid) for tid in token_ids]
+        vocab_size = self._sp.get_piece_size()
+        result = []
+        for tid in token_ids:
+            if 0 <= tid < vocab_size:
+                result.append(self._sp.id_to_piece(tid))
+            else:
+                result.append(f"<UNK_{tid}>")
+        return result
 
     def get_unk_token_id(self) -> Optional[int]:
         """Get the UNK token ID from SentencePiece tokenizer."""
@@ -741,7 +770,8 @@ class CustomBPETokenizer(TokenizerWrapper):
     def decode(self, token_ids: List[int], skip_special_tokens: bool = True) -> Optional[str]:
         try:
             return self._tokenizer.decode(token_ids, skip_special_tokens=skip_special_tokens)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"CustomBPE decode failed for {self._name}: {e}")
             return None
 
     def can_pretokenize(self) -> bool:

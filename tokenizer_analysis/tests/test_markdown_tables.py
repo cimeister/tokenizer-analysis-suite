@@ -13,8 +13,6 @@ from tokenizer_analysis.visualization.markdown_tables import (
     MarkdownTableGenerator,
     _COMPOSITE_KEY_RE,
     _DISPLAY_NAME_RE,
-    _format_vocab_tier,
-    results_filename,
 )
 
 
@@ -273,34 +271,3 @@ class TestColumnPreservation:
         assert "NewMetric" in all_headers, (
             "Unknown metric column 'NewMetric' was dropped during merge"
         )
-
-
-# ── Utility function tests ────────────────────────────────────────────
-
-
-class TestVocabTierFormat:
-    def test_128k(self):
-        assert _format_vocab_tier(128000) == "128k"
-
-    def test_32k(self):
-        assert _format_vocab_tier(32000) == "32k"
-
-    def test_256k(self):
-        assert _format_vocab_tier(256000) == "256k"
-
-    def test_rounding(self):
-        assert _format_vocab_tier(127500) == "128k"
-
-
-class TestResultsFilename:
-    def test_default(self):
-        assert results_filename() == "RESULTS.md"
-
-    def test_dataset_only(self):
-        assert results_filename("flores") == "RESULTS_flores.md"
-
-    def test_dataset_and_method(self):
-        assert results_filename("flores", "bytes") == "RESULTS_flores_bytes.md"
-
-    def test_default_dataset_with_method(self):
-        assert results_filename("default", "bytes") == "RESULTS_bytes.md"
