@@ -97,12 +97,19 @@ class DigitBoundaryMetrics(BaseMetrics):
         input_provider: InputProvider,
         math_data_path: Optional[str] = None,
         use_builtin_math_data: bool = False,
+        code_texts: Optional[Dict[str, List[str]]] = None,
     ):
         super().__init__(input_provider)
         self._math_data_path = math_data_path
         self._math_texts: List[str] = []
         if math_data_path:
             self._math_texts = load_math_data(math_data_path)
+            if not self._math_texts:
+                raise ValueError(
+                    f"math_data_path {math_data_path!r} loaded 0 texts. Refusing to "
+                    "fall back to the bundled samples: the run would silently measure "
+                    "a different corpus than the one asked for."
+                )
             logger.info(
                 "Loaded %d math texts from %s", len(self._math_texts), math_data_path
             )
@@ -111,6 +118,28 @@ class DigitBoundaryMetrics(BaseMetrics):
             logger.info(
                 "Loaded %d built-in math samples", len(self._math_texts)
             )
+
+        # Corpora for the per-domain operator-isolation split. Prose is the
+        # corpus the metric already ran on; math and code use the caller's
+        # datasets when given and the bundled samples otherwise. The corpus
+        # actually used is recorded and reported, so a fallback is never silent.
+        if self._math_texts:
+            self._op_math_texts = self._math_texts
+            self._op_math_source = math_data_path or BUILTIN_MATH_SAMPLES_PATH
+        else:
+            self._op_math_texts = load_math_data(BUILTIN_MATH_SAMPLES_PATH)
+            self._op_math_source = BUILTIN_MATH_SAMPLES_PATH
+        if code_texts:
+            self._op_code_texts = {k: v for k, v in code_texts.items() if v}
+            self._op_code_source = "code-ast dataset"
+        else:
+            from ..loaders.code_data import CodeDataLoader
+            self._op_code_texts = CodeDataLoader.generate_synthetic_samples()
+            self._op_code_source = CodeDataLoader._BUILTIN_CODE_SAMPLES_PATH
+        logger.info(
+            "Operator isolation domains: prose=multilingual, math=%s, code=%s",
+            self._op_math_source, self._op_code_source,
+        )
 
     # ------------------------------------------------------------------
     # Digit-span boundary extraction
@@ -307,37 +336,35 @@ class DigitBoundaryMetrics(BaseMetrics):
         """Compute digit boundary alignment, digit split variability,
         numeric magnitude consistency, and operator isolation rate.
 
-        When *math_data_path* was provided at construction time, this method
-        tokenizes the loaded math texts with each tokenizer and uses that
-        data **instead of** the ``tokenized_data`` parameter.
+        When *math_data_path* was provided at construction time, the digit
+        metrics tokenize the loaded math texts and use that data **instead of**
+        the ``tokenized_data`` parameter.
+
+        Operator isolation is reported separately for **prose**, **code** and
+        **math** under ``operator_isolation_rate["by_domain"]``; the top-level
+        ``summary`` pools all three. Each domain records the corpus it used.
 
         Returns a dict with four top-level keys:
         ``three_digit_boundary_alignment``, ``digit_split_variability``,
         ``numeric_magnitude_consistency``, and ``operator_isolation_rate``.
         """
+        # Prose is whatever corpus the caller (or the provider) supplies. It is
+        # kept separate so operator isolation can still report on prose even
+        # when dedicated math texts replace the corpus for the digit metrics.
+        prose_data = (
+            tokenized_data
+            if tokenized_data is not None
+            else self.input_provider.get_tokenized_data()
+        )
+
         if self._math_texts:
-            # Build tokenized data from the dedicated math texts.
-            tokenized_data = {}
-            for tok_name in self.tokenizer_names:
-                tokenizer_obj = self.input_provider.get_tokenizer(tok_name)
-                items: List[TokenizedData] = []
-                for text in self._math_texts:
-                    tokens = tokenizer_obj.encode(text)
-                    items.append(
-                        TokenizedData(
-                            tokenizer_name=tok_name,
-                            language="math",
-                            tokens=tokens,
-                            text=text,
-                        )
-                    )
-                tokenized_data[tok_name] = items
+            tokenized_data = self._tokenize_texts({"math": self._math_texts})
             logger.info(
                 "Using %d dedicated math texts for digit boundary metrics",
                 len(self._math_texts),
             )
-        elif tokenized_data is None:
-            tokenized_data = self.input_provider.get_tokenized_data()
+        else:
+            tokenized_data = prose_data
 
         # ---- accumulators ----
         # alignment: tok -> lang -> digit_length_str -> list of per-number dicts
@@ -348,8 +375,221 @@ class DigitBoundaryMetrics(BaseMetrics):
         entropy_acc: Dict[str, Dict[str, Dict[str, list]]] = defaultdict(
             lambda: defaultdict(lambda: defaultdict(list))
         )
-        # operator: tok -> lang -> category -> {isolated, total, compound_ok, compound_total}
-        operator_acc: Dict[str, Dict[str, Dict[str, Dict[str, int]]]] = defaultdict(
+
+        for tok_name in self.tokenizer_names:
+            if tok_name not in tokenized_data:
+                continue
+
+            tokenizer_obj = self.input_provider.get_tokenizer(tok_name)
+            self._char_decode_table = self._build_char_decode_table(tokenizer_obj)
+            lang_groups = TokenizedDataProcessor.group_by_language(
+                tokenized_data[tok_name]
+            )
+
+            for lang, data_list in lang_groups.items():
+                for item in data_list:
+                    if item.text is None or not item.text.strip():
+                        continue
+
+                    # Quick check: any digits at all? (Operator isolation is
+                    # accumulated separately, per domain, further below.)
+                    has_digits = bool(self._DIGIT_SPAN.search(item.text))
+                    if not has_digits:
+                        continue
+
+                    token_strings = self._convert_ids_to_tokens(
+                        tokenizer_obj, item.tokens
+                    )
+                    recon_text, char_to_token = self._build_char_to_token_map(
+                        token_strings
+                    )
+
+                    # Map original source positions → reconstructed-text positions
+                    # so we can find spans on the original (whitespace-preserving)
+                    # text and still look up token indices via char_to_token.
+                    source_to_recon = self._build_source_to_recon_map(
+                        item.text, recon_text
+                    )
+
+                    # Find digit spans on the *original* text to avoid
+                    # merging adjacent numbers separated by whitespace.
+                    spans = self._find_number_spans(item.text)
+
+                    for src_start, src_end, digit_str in spans:
+                        num_digits = len(digit_str)
+                        if num_digits == 0:
+                            continue
+
+                        # Map source span to reconstructed-text positions
+                        recon_positions = [
+                            source_to_recon[i]
+                            for i in range(src_start, src_end)
+                            if source_to_recon[i] is not None
+                        ]
+                        if len(recon_positions) != num_digits:
+                            # Not all digits mapped — skip this span
+                            continue
+                        span_start = recon_positions[0]
+                        span_end = recon_positions[-1] + 1
+
+                        bucket = self._digit_length_bucket(num_digits)
+
+                        boundaries = self._get_digit_span_boundaries(
+                            char_to_token, span_start, span_end,
+                        )
+                        if boundaries is None:
+                            continue
+
+                        actual = set(boundaries)
+                        ideal = self._ideal_boundaries(num_digits)
+                        scores = self._score_boundaries(actual, ideal)
+
+                        # Uniform-chunk: all token pieces have same digit count
+                        # Reconstruct chunk lengths from boundaries
+                        bnd_list = sorted(boundaries)
+                        chunk_lengths = []
+                        prev = 0
+                        for b in bnd_list:
+                            chunk_lengths.append(b - prev)
+                            prev = b
+                        chunk_lengths.append(num_digits - prev)
+                        uniform_chunk = 1.0 if len(set(chunk_lengths)) <= 1 else 0.0
+
+                        single_token = 1 if len(bnd_list) == 0 else 0
+
+                        num_tokens = len(bnd_list) + 1
+                        fertility_per_digit = num_tokens / num_digits
+
+                        alignment_acc[tok_name][lang][bucket].append({
+                            "precision": scores["precision"],
+                            "recall": scores["recall"],
+                            "f1": scores["f1"],
+                            "uniform_chunk": uniform_chunk,
+                            "single_token": single_token,
+                            "fertility_per_digit": fertility_per_digit,
+                        })
+
+                        pattern = tuple(sorted(boundaries))
+                        entropy_acc[tok_name][lang][bucket].append(pattern)
+
+        self._char_decode_table = None
+
+        # ---- operator isolation: prose / code / math, reported separately ----
+        domain_accs = {
+            "prose": self._accumulate_operators(prose_data),
+            "code": self._accumulate_operators(
+                self._tokenize_texts(self._op_code_texts)
+            ),
+            "math": self._accumulate_operators(
+                self._tokenize_texts({"math": self._op_math_texts})
+            ),
+        }
+        domain_sources = {
+            "prose": "multilingual corpus",
+            "code": self._op_code_source,
+            "math": self._op_math_source,
+        }
+
+        # The top-level per_tokenizer/summary pool all three domains, so the
+        # single-number view is no longer prose-only. The pool is a micro-average
+        # over operator instances, so it is weighted by how many operators each
+        # corpus contributes: with a real code dataset, code dominates. The
+        # per-domain denominators are published in ``domain_operator_counts`` so
+        # that weighting is visible rather than implicit.
+        operator_results = self._build_operator_results(
+            self._merge_operator_accs(domain_accs)
+        )
+        operator_results["by_domain"] = {
+            domain: dict(
+                self._build_operator_results(acc), source=domain_sources[domain]
+            )
+            for domain, acc in domain_accs.items()
+        }
+        operator_results["domain_operator_counts"] = {
+            tok_name: {
+                domain: (
+                    operator_results["by_domain"][domain]["summary"]
+                    .get(tok_name, {})
+                    .get("total_operators", 0)
+                )
+                for domain in domain_accs
+            }
+            for tok_name in operator_results["summary"]
+        }
+
+        # ---- build result structures ----
+        alignment_results = self._build_alignment_results(alignment_acc)
+        entropy_results = self._build_entropy_results(entropy_acc)
+        magnitude_results = self._build_magnitude_results(alignment_acc)
+
+        return {
+            "three_digit_boundary_alignment": alignment_results,
+            "digit_split_variability": entropy_results,
+            "numeric_magnitude_consistency": magnitude_results,
+            "operator_isolation_rate": operator_results,
+        }
+
+    # ------------------------------------------------------------------
+    # Operator-isolation helpers (per-domain)
+    # ------------------------------------------------------------------
+
+    def _tokenize_texts(
+        self, texts_by_lang: Dict[str, List[str]]
+    ) -> Dict[str, List[TokenizedData]]:
+        """Tokenize a ``{language: [text, ...]}`` corpus with every tokenizer.
+
+        The code and math domains are derived corpora, so they have to be
+        encoded here. A tokenizer that cannot encode raw text (a provider that
+        only supplies pre-tokenized data) is omitted from the returned corpus
+        and logged; it then simply has no code/math domain rather than crashing
+        the whole metric.
+
+        ``can_encode()`` is the predicate, not ``hasattr(tok, "encode")``:
+        ``PreTokenizedDataTokenizer`` *defines* ``encode`` and raises from it.
+        """
+        out: Dict[str, List[TokenizedData]] = {}
+        for tok_name in self.tokenizer_names:
+            try:
+                tokenizer_obj = self.input_provider.get_tokenizer(tok_name)
+            except (ValueError, KeyError, AttributeError) as exc:
+                logger.warning(
+                    "No tokenizer available for %r (%s); it gets no code/math "
+                    "operator-isolation domain (prose only).", tok_name, exc,
+                )
+                continue
+            can_encode = getattr(tokenizer_obj, "can_encode", None)
+            encode = getattr(tokenizer_obj, "encode", None)
+            if (callable(can_encode) and not can_encode()) or not callable(encode):
+                logger.warning(
+                    "Tokenizer %r cannot encode raw text; it gets no code/math "
+                    "operator-isolation domain (prose only).", tok_name,
+                )
+                continue
+            items: List[TokenizedData] = []
+            for lang, texts in texts_by_lang.items():
+                for text in texts:
+                    if not text or not text.strip():
+                        continue
+                    items.append(
+                        TokenizedData(
+                            tokenizer_name=tok_name,
+                            language=lang,
+                            tokens=encode(text),
+                            text=text,
+                        )
+                    )
+            out[tok_name] = items
+        return out
+
+    def _accumulate_operators(
+        self, tokenized_data: Dict[str, List[TokenizedData]]
+    ) -> Dict[str, Dict[str, Dict[str, Dict[str, int]]]]:
+        """Accumulate operator isolation counts over one corpus.
+
+        Returns tok -> lang -> category -> {isolated, total, compound_ok,
+        compound_total}.
+        """
+        acc: Dict[str, Dict[str, Dict[str, Dict[str, int]]]] = defaultdict(
             lambda: defaultdict(lambda: defaultdict(
                 lambda: {"isolated": 0, "total": 0, "compound_ok": 0, "compound_total": 0}
             ))
@@ -369,11 +609,7 @@ class DigitBoundaryMetrics(BaseMetrics):
                 for item in data_list:
                     if item.text is None or not item.text.strip():
                         continue
-
-                    # Quick check: any digits or operators at all?
-                    has_digits = bool(self._DIGIT_SPAN.search(item.text))
-                    has_operators = bool(self._OPERATOR_SPAN.search(item.text))
-                    if not has_digits and not has_operators:
+                    if not self._OPERATOR_SPAN.search(item.text):
                         continue
 
                     token_strings = self._convert_ids_to_tokens(
@@ -383,130 +619,77 @@ class DigitBoundaryMetrics(BaseMetrics):
                         token_strings
                     )
 
-                    # Map original source positions → reconstructed-text positions
-                    # so we can find spans on the original (whitespace-preserving)
-                    # text and still look up token indices via char_to_token.
-                    source_to_recon = self._build_source_to_recon_map(
-                        item.text, recon_text
-                    )
+                    # Reverse map: token_index -> set of char positions
+                    token_to_chars: Dict[int, Set[int]] = defaultdict(set)
+                    for ci, ti in enumerate(char_to_token):
+                        token_to_chars[ti].add(ci)
 
-                    if has_digits:
-                        # Find digit spans on the *original* text to avoid
-                        # merging adjacent numbers separated by whitespace.
-                        spans = self._find_number_spans(item.text)
+                    for m in self._OPERATOR_SPAN.finditer(recon_text):
+                        op_str = m.group()
+                        op_start = m.start()
+                        op_end = m.end()
+                        category = self._OPERATOR_TO_CATEGORY.get(op_str)
+                        if category is None:
+                            continue
 
-                        for src_start, src_end, digit_str in spans:
-                            num_digits = len(digit_str)
-                            if num_digits == 0:
-                                continue
+                        # Token indices covering this operator
+                        op_token_indices = set()
+                        for i in range(op_start, op_end):
+                            if i < len(char_to_token):
+                                op_token_indices.add(char_to_token[i])
 
-                            # Map source span to reconstructed-text positions
-                            recon_positions = [
-                                source_to_recon[i]
-                                for i in range(src_start, src_end)
-                                if source_to_recon[i] is not None
-                            ]
-                            if len(recon_positions) != num_digits:
-                                # Not all digits mapped — skip this span
-                                continue
-                            span_start = recon_positions[0]
-                            span_end = recon_positions[-1] + 1
+                        if not op_token_indices:
+                            continue
 
-                            bucket = self._digit_length_bucket(num_digits)
+                        cat_acc = acc[tok_name][lang][category]
+                        cat_acc["total"] += 1
 
-                            boundaries = self._get_digit_span_boundaries(
-                                char_to_token, span_start, span_end,
-                            )
-                            if boundaries is None:
-                                continue
+                        # Isolated = every char of those tokens falls inside the
+                        # operator span (the operator is not glued to an operand)
+                        op_char_set = set(range(op_start, op_end))
+                        all_token_chars: Set[int] = set()
+                        for ti in op_token_indices:
+                            all_token_chars |= token_to_chars[ti]
+                        if all_token_chars.issubset(op_char_set):
+                            cat_acc["isolated"] += 1
 
-                            actual = set(boundaries)
-                            ideal = self._ideal_boundaries(num_digits)
-                            scores = self._score_boundaries(actual, ideal)
-
-                            # Uniform-chunk: all token pieces have same digit count
-                            # Reconstruct chunk lengths from boundaries
-                            bnd_list = sorted(boundaries)
-                            chunk_lengths = []
-                            prev = 0
-                            for b in bnd_list:
-                                chunk_lengths.append(b - prev)
-                                prev = b
-                            chunk_lengths.append(num_digits - prev)
-                            uniform_chunk = 1.0 if len(set(chunk_lengths)) <= 1 else 0.0
-
-                            single_token = 1 if len(bnd_list) == 0 else 0
-
-                            num_tokens = len(bnd_list) + 1
-                            fertility_per_digit = num_tokens / num_digits
-
-                            alignment_acc[tok_name][lang][bucket].append({
-                                "precision": scores["precision"],
-                                "recall": scores["recall"],
-                                "f1": scores["f1"],
-                                "uniform_chunk": uniform_chunk,
-                                "single_token": single_token,
-                                "fertility_per_digit": fertility_per_digit,
-                            })
-
-                            pattern = tuple(sorted(boundaries))
-                            entropy_acc[tok_name][lang][bucket].append(pattern)
-
-                    if has_operators:
-                        # Build reverse map: token_index -> set of char positions
-                        token_to_chars: Dict[int, Set[int]] = defaultdict(set)
-                        for ci, ti in enumerate(char_to_token):
-                            token_to_chars[ti].add(ci)
-
-                        for m in self._OPERATOR_SPAN.finditer(recon_text):
-                            op_str = m.group()
-                            op_start = m.start()
-                            op_end = m.end()
-                            category = self._OPERATOR_TO_CATEGORY.get(op_str)
-                            if category is None:
-                                continue
-
-                            # Get token indices covering this operator
-                            op_token_indices = set()
-                            for i in range(op_start, op_end):
-                                if i < len(char_to_token):
-                                    op_token_indices.add(char_to_token[i])
-
-                            if not op_token_indices:
-                                continue
-
-                            cat_acc = operator_acc[tok_name][lang][category]
-                            cat_acc["total"] += 1
-
-                            # Isolated = all chars of those tokens fall within the operator span
-                            op_char_set = set(range(op_start, op_end))
-                            all_token_chars: Set[int] = set()
-                            for ti in op_token_indices:
-                                all_token_chars |= token_to_chars[ti]
-                            isolated = all_token_chars.issubset(op_char_set)
-                            if isolated:
-                                cat_acc["isolated"] += 1
-
-                            # Compound preservation: multi-char operator maps to exactly 1 token
-                            if len(op_str) > 1:
-                                cat_acc["compound_total"] += 1
-                                if len(op_token_indices) == 1:
-                                    cat_acc["compound_ok"] += 1
+                        # Compound preservation: multi-char operator -> 1 token
+                        if len(op_str) > 1:
+                            cat_acc["compound_total"] += 1
+                            if len(op_token_indices) == 1:
+                                cat_acc["compound_ok"] += 1
 
         self._char_decode_table = None
+        return acc
 
-        # ---- build result structures ----
-        alignment_results = self._build_alignment_results(alignment_acc)
-        entropy_results = self._build_entropy_results(entropy_acc)
-        magnitude_results = self._build_magnitude_results(alignment_acc)
-        operator_results = self._build_operator_results(operator_acc)
+    @staticmethod
+    def _merge_operator_accs(
+        domain_accs: Dict[str, Dict[str, Dict[str, Dict[str, Dict[str, int]]]]]
+    ) -> Dict[str, Dict[str, Dict[str, Dict[str, int]]]]:
+        """Sum the per-domain accumulators into the pooled accumulator.
 
-        return {
-            "three_digit_boundary_alignment": alignment_results,
-            "digit_split_variability": entropy_results,
-            "numeric_magnitude_consistency": magnitude_results,
-            "operator_isolation_rate": operator_results,
-        }
+        The three domains do not share a language namespace: prose is keyed by
+        FLORES code, code by programming language, math by the literal "math".
+        Prose keys are kept bare so existing per-language consumers and the
+        language-group filter keep matching FLORES codes. Code and math keys are
+        namespaced ("code:python", "math:math") so the pooled ``by_language``
+        cannot silently sum a code language into a prose one, and a reader can
+        tell which domain a row came from.
+        """
+        merged: Dict[str, Dict[str, Dict[str, Dict[str, int]]]] = defaultdict(
+            lambda: defaultdict(lambda: defaultdict(
+                lambda: {"isolated": 0, "total": 0, "compound_ok": 0, "compound_total": 0}
+            ))
+        )
+        for domain, acc in domain_accs.items():
+            for tok_name, langs in acc.items():
+                for lang, categories in langs.items():
+                    key = lang if domain == "prose" else f"{domain}:{lang}"
+                    for category, counts in categories.items():
+                        target = merged[tok_name][key][category]
+                        for count_key in ("isolated", "total", "compound_ok", "compound_total"):
+                            target[count_key] += counts[count_key]
+        return merged
 
     # ------------------------------------------------------------------
     # Result builders
@@ -915,6 +1098,9 @@ class DigitBoundaryMetrics(BaseMetrics):
                         "compound_preservation_rate": cok / ctot if ctot > 0 else 0.0,
                         "total": t,
                         "compound_total": ctot,
+                        # raw counts so a filtered subset can be re-aggregated exactly
+                        "isolated": iso,
+                        "compound_ok": cok,
                     }
 
                     lang_isolated += iso
@@ -934,6 +1120,10 @@ class DigitBoundaryMetrics(BaseMetrics):
                         if lang_compound_total > 0 else 0.0
                     )
                     lang_data["total"] = lang_total
+                    # raw counts so a filtered subset can be re-aggregated exactly
+                    lang_data["isolated"] = lang_isolated
+                    lang_data["compound_total"] = lang_compound_total
+                    lang_data["compound_ok"] = lang_compound_ok
                     tok_data["by_language"][lang] = lang_data
 
                 total_isolated += lang_isolated

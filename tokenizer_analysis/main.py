@@ -133,11 +133,13 @@ class UnifiedTokenizerAnalyzer:
             except (ImportError, ValueError) as e:
                 logger.warning(f"MorphScore metrics disabled: {e}")
 
-        # Initialize digit boundary metrics (always available -- no external data)
+        # Initialize digit boundary metrics (always available -- no external data).
+        # code_texts feeds the code domain of the operator-isolation split.
         self.digit_boundary_metrics = DigitBoundaryMetrics(
             input_provider,
             math_data_path=math_data_path,
             use_builtin_math_data=use_builtin_math_data,
+            code_texts=code_texts,
         )
 
         # Initialize UTF-8 integrity metrics (always available -- no external data)
@@ -473,31 +475,75 @@ class UnifiedTokenizerAnalyzer:
         return filtered
 
     def _filter_operator_results(self, op_results: Dict[str, Any], target_languages: List[str]) -> Dict[str, Any]:
-        """Filter operator isolation results to specified languages."""
+        """Filter operator isolation results to specified languages.
+
+        The top-level ``summary``/``by_category`` pool prose+code+math, so they
+        must NOT be copied into a language-group result: a language group is a
+        subset of the prose corpus, and inheriting the pooled (code-dominated)
+        number would report a figure that has nothing to do with the group. Both
+        are therefore recomputed from the group's own languages, using the raw
+        counts carried on each ``by_language`` entry.
+
+        Code and math rows are namespaced ("code:python", "math:math") in the
+        pooled ``by_language``, so matching against FLORES codes selects the
+        prose rows only, which is exactly the intended scope.
+
+        The prose/code/math ``by_domain`` split is a corpus-level view, not a
+        per-language-group one; it is reported once in the top-level results.
+        """
         filtered: Dict[str, Any] = {
             "per_tokenizer": {},
             "summary": {},
         }
 
         for tok_name, tok_data in op_results.get("per_tokenizer", {}).items():
-            ftok: Dict[str, Any] = {}
+            fbl = {
+                l: d for l, d in tok_data.get("by_language", {}).items()
+                if l in target_languages
+            }
+            if not fbl:
+                continue
 
-            # by_category is language-independent — copy as-is
-            if "by_category" in tok_data:
-                ftok["by_category"] = tok_data["by_category"]
+            # Re-aggregate this group's categories and totals from its languages.
+            cat_totals: Dict[str, Dict[str, int]] = {}
+            tot_iso = tot_ops = tot_cok = tot_ctot = 0
+            for lang_data in fbl.values():
+                tot_iso += lang_data.get("isolated", 0)
+                tot_ops += lang_data.get("total", 0)
+                tot_cok += lang_data.get("compound_ok", 0)
+                tot_ctot += lang_data.get("compound_total", 0)
+                for category, cdata in lang_data.get("by_category", {}).items():
+                    acc = cat_totals.setdefault(
+                        category,
+                        {"isolated": 0, "total": 0, "compound_ok": 0, "compound_total": 0},
+                    )
+                    for key in ("isolated", "total", "compound_ok", "compound_total"):
+                        acc[key] += cdata.get(key, 0)
 
-            # Filter by_language
-            if "by_language" in tok_data:
-                fbl = {l: d for l, d in tok_data["by_language"].items() if l in target_languages}
-                if fbl:
-                    ftok["by_language"] = fbl
+            ftok: Dict[str, Any] = {"by_language": fbl, "by_category": {
+                category: {
+                    "isolation_rate": (c["isolated"] / c["total"]) if c["total"] else 0.0,
+                    "compound_preservation_rate": (
+                        (c["compound_ok"] / c["compound_total"]) if c["compound_total"] else 0.0
+                    ),
+                    "total": c["total"],
+                    "compound_total": c["compound_total"],
+                    "isolated": c["isolated"],
+                    "compound_ok": c["compound_ok"],
+                }
+                for category, c in sorted(cat_totals.items())
+            }}
+            filtered["per_tokenizer"][tok_name] = ftok
 
-            if ftok:
-                filtered["per_tokenizer"][tok_name] = ftok
-
-        # Copy summary as-is
-        if "summary" in op_results:
-            filtered["summary"] = op_results["summary"]
+            if tot_ops > 0:
+                filtered["summary"][tok_name] = {
+                    "overall_isolation_rate": tot_iso / tot_ops,
+                    "overall_compound_preservation_rate": (
+                        (tot_cok / tot_ctot) if tot_ctot else 0.0
+                    ),
+                    "total_operators": tot_ops,
+                    "total_compound_operators": tot_ctot,
+                }
 
         return filtered
 

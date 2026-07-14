@@ -1216,3 +1216,143 @@ class TestAdjacentNumbersNotMerged:
         assert "2" in by_dl
         assert "3" in by_dl
         assert "4" in by_dl
+
+
+class _CharTokenizer:
+    """Char-level tokenizer: every character is its own token.
+
+    Every operator is therefore perfectly isolated, which makes the per-domain
+    expectations deterministic.
+    """
+
+    def __init__(self):
+        self._vocab = {}
+        self._rev = {}
+
+    def _id(self, ch):
+        if ch not in self._vocab:
+            idx = len(self._vocab)
+            self._vocab[ch] = idx
+            self._rev[idx] = ch
+        return self._vocab[ch]
+
+    def encode(self, text):
+        return [self._id(c) for c in text]
+
+    def convert_ids_to_tokens(self, ids):
+        return [self._rev[i] for i in ids]
+
+
+class TestOperatorIsolationDomains:
+    """Operator isolation is reported separately for prose, code and math."""
+
+    TOK = "dom_tok"
+    PROSE = "The total is 12 + 34 = 46 today."
+
+    def _prose_data(self, tokenizer):
+        return {
+            self.TOK: [
+                TokenizedData(
+                    tokenizer_name=self.TOK,
+                    language="eng_Latn",
+                    tokens=tokenizer.encode(self.PROSE),
+                    text=self.PROSE,
+                )
+            ]
+        }
+
+    def test_reports_prose_code_and_math_each_with_its_corpus(self):
+        """All three domains appear, each recording the corpus it used."""
+        tok = _CharTokenizer()
+        metrics = DigitBoundaryMetrics(_MockProvider(self.TOK, tok))
+        ops = metrics.compute(self._prose_data(tok))["operator_isolation_rate"]
+
+        assert set(ops["by_domain"]) == {"prose", "code", "math"}
+        for domain in ("prose", "code", "math"):
+            assert ops["by_domain"][domain]["source"], f"{domain} records no corpus"
+            # a char-level tokenizer isolates every operator
+            assert ops["by_domain"][domain]["summary"][self.TOK][
+                "overall_isolation_rate"] == pytest.approx(1.0)
+        # code and math fall back to the bundled samples, and say so
+        assert ops["by_domain"]["code"]["source"].endswith("code_samples.json")
+        assert ops["by_domain"]["math"]["source"].endswith("math_samples.json")
+
+    def test_pooled_summary_is_the_sum_of_the_domains(self):
+        """The top-level summary pools prose+code+math rather than prose only."""
+        tok = _CharTokenizer()
+        metrics = DigitBoundaryMetrics(_MockProvider(self.TOK, tok))
+        ops = metrics.compute(self._prose_data(tok))["operator_isolation_rate"]
+
+        pooled = ops["summary"][self.TOK]["total_operators"]
+        per_domain = sum(
+            ops["by_domain"][d]["summary"][self.TOK]["total_operators"]
+            for d in ("prose", "code", "math")
+        )
+        assert pooled == per_domain
+        # the code/math samples contribute operators, so pooling is not a no-op
+        assert pooled > ops["by_domain"]["prose"]["summary"][self.TOK]["total_operators"]
+
+    def test_pretokenized_tokenizer_gets_prose_and_does_not_crash(self):
+        """A real pre-tokenized provider has no code/math domain, and must not crash.
+
+        The code and math domains are derived corpora that have to be encoded.
+        ``PreTokenizedDataTokenizer`` *defines* ``encode`` and raises from it, so
+        the guard has to test ``can_encode()``; a ``hasattr(tok, "encode")``
+        check would sail past this and blow up. This test uses the real wrapper
+        rather than a mock precisely so that mistake cannot pass.
+        """
+        from tokenizer_analysis.core.tokenizer_wrapper import PreTokenizedDataTokenizer
+
+        tokens = ["1", " ", "+", " ", "2", " ", "=", " ", "3"]
+        token_to_id = {t: i for i, t in enumerate(dict.fromkeys(tokens))}
+        tok_name = "pretok_only"
+        tokenizer = PreTokenizedDataTokenizer(
+            tok_name, vocab_size=len(token_to_id), vocab_dict=token_to_id
+        )
+        assert not tokenizer.can_encode()
+        assert callable(getattr(tokenizer, "encode", None))  # it exists, and raises
+
+        metrics = DigitBoundaryMetrics(_MockProvider(tok_name, tokenizer))
+        data = {
+            tok_name: [
+                TokenizedData(
+                    tokenizer_name=tok_name,
+                    language="eng_Latn",
+                    tokens=[token_to_id[t] for t in tokens],
+                    text="1 + 2 = 3",
+                )
+            ]
+        }
+        ops = metrics.compute(data)["operator_isolation_rate"]
+
+        assert tok_name in ops["by_domain"]["prose"]["summary"]
+        assert tok_name not in ops["by_domain"]["code"]["summary"]
+        assert tok_name not in ops["by_domain"]["math"]["summary"]
+        # with no code/math contribution the pooled view equals prose
+        assert (ops["summary"][tok_name]["total_operators"]
+                == ops["by_domain"]["prose"]["summary"][tok_name]["total_operators"])
+
+    def test_pooled_by_language_namespaces_code_and_math(self):
+        """Code/math rows must not silently merge into the prose language namespace."""
+        tok = _CharTokenizer()
+        metrics = DigitBoundaryMetrics(_MockProvider(self.TOK, tok))
+        ops = metrics.compute(self._prose_data(tok))["operator_isolation_rate"]
+
+        langs = ops["per_tokenizer"][self.TOK]["by_language"]
+        assert "eng_Latn" in langs                       # prose stays a bare FLORES code
+        assert any(k.startswith("code:") for k in langs)  # code is marked
+        assert "math:math" in langs                       # math is marked
+        # no bare code language leaked into the prose namespace
+        assert "python" not in langs
+
+    def test_domain_operator_counts_expose_the_pooled_weighting(self):
+        """The pooled summary is a micro-average, so its denominators must be visible."""
+        tok = _CharTokenizer()
+        metrics = DigitBoundaryMetrics(_MockProvider(self.TOK, tok))
+        ops = metrics.compute(self._prose_data(tok))["operator_isolation_rate"]
+
+        counts = ops["domain_operator_counts"][self.TOK]
+        assert set(counts) == {"prose", "code", "math"}
+        assert sum(counts.values()) == ops["summary"][self.TOK]["total_operators"]
+        # the bundled code corpus really does dominate the pool
+        assert counts["code"] > counts["prose"] + counts["math"]
