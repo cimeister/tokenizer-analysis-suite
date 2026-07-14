@@ -136,10 +136,32 @@ class DigitBoundaryMetrics(BaseMetrics):
             from ..loaders.code_data import CodeDataLoader
             self._op_code_texts = CodeDataLoader.generate_synthetic_samples()
             self._op_code_source = CodeDataLoader._BUILTIN_CODE_SAMPLES_PATH
+
+        # Encoding the derived corpora is the expensive part, and compute() can be
+        # called once per language group. Cache per corpus and per tokenizer.
+        self._encoded_corpus_cache: Dict[str, Dict[str, List[TokenizedData]]] = {}
+        self._decode_table_cache: Dict[str, Any] = {}
+
         logger.info(
             "Operator isolation domains: prose=multilingual, math=%s, code=%s",
             self._op_math_source, self._op_code_source,
         )
+
+    @staticmethod
+    def _corpus_stats(texts_by_lang: Dict[str, List[str]]) -> Dict[str, Any]:
+        """Size of a corpus, so a reported domain can be traced to what it measured.
+
+        The pooled summary is a micro-average, so the domain that contributes the
+        most operators sets it. Publishing each domain's size is what lets a reader
+        see which corpus is doing the work.
+        """
+        per_lang = {lang: len(texts) for lang, texts in texts_by_lang.items()}
+        return {
+            "n_texts": sum(per_lang.values()),
+            "n_chars": sum(len(t) for texts in texts_by_lang.values() for t in texts),
+            "n_languages": len(per_lang),
+            "texts_per_language": dict(sorted(per_lang.items())),
+        }
 
     # ------------------------------------------------------------------
     # Digit-span boundary extraction
@@ -358,7 +380,11 @@ class DigitBoundaryMetrics(BaseMetrics):
         )
 
         if self._math_texts:
-            tokenized_data = self._tokenize_texts({"math": self._math_texts})
+            # _op_math_texts IS _math_texts whenever math texts were supplied, so
+            # the digit corpus and the math operator domain share one encoding.
+            tokenized_data = self._tokenize_texts_cached(
+                "math", {"math": self._math_texts}
+            )
             logger.info(
                 "Using %d dedicated math texts for digit boundary metrics",
                 len(self._math_texts),
@@ -381,7 +407,7 @@ class DigitBoundaryMetrics(BaseMetrics):
                 continue
 
             tokenizer_obj = self.input_provider.get_tokenizer(tok_name)
-            self._char_decode_table = self._build_char_decode_table(tokenizer_obj)
+            self._char_decode_table = self._decode_table_for(tok_name, tokenizer_obj)
             lang_groups = TokenizedDataProcessor.group_by_language(
                 tokenized_data[tok_name]
             )
@@ -478,16 +504,23 @@ class DigitBoundaryMetrics(BaseMetrics):
         domain_accs = {
             "prose": self._accumulate_operators(prose_data),
             "code": self._accumulate_operators(
-                self._tokenize_texts(self._op_code_texts)
+                self._tokenize_texts_cached("code", self._op_code_texts)
             ),
             "math": self._accumulate_operators(
-                self._tokenize_texts({"math": self._op_math_texts})
+                self._tokenize_texts_cached("math", {"math": self._op_math_texts})
             ),
         }
         domain_sources = {
             "prose": "multilingual corpus",
             "code": self._op_code_source,
             "math": self._op_math_source,
+        }
+        # Size of each domain's corpus, so the pooled micro-average can be traced
+        # back to which corpus supplied the operators.
+        domain_corpora = {
+            "prose": self._corpus_stats(self._texts_by_language(prose_data)),
+            "code": self._corpus_stats(self._op_code_texts),
+            "math": self._corpus_stats({"math": self._op_math_texts}),
         }
 
         # The top-level per_tokenizer/summary pool all three domains, so the
@@ -501,7 +534,9 @@ class DigitBoundaryMetrics(BaseMetrics):
         )
         operator_results["by_domain"] = {
             domain: dict(
-                self._build_operator_results(acc), source=domain_sources[domain]
+                self._build_operator_results(acc),
+                source=domain_sources[domain],
+                corpus=domain_corpora[domain],
             )
             for domain, acc in domain_accs.items()
         }
@@ -532,6 +567,48 @@ class DigitBoundaryMetrics(BaseMetrics):
     # ------------------------------------------------------------------
     # Operator-isolation helpers (per-domain)
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _texts_by_language(
+        tokenized_data: Dict[str, List[TokenizedData]]
+    ) -> Dict[str, List[str]]:
+        """Recover a ``{language: [text, ...]}`` view of an already-tokenized corpus.
+
+        Every tokenizer sees the same texts, so one tokenizer's items describe the
+        corpus. Used only to report the prose corpus size.
+        """
+        for items in tokenized_data.values():
+            by_lang: Dict[str, List[str]] = defaultdict(list)
+            for item in items:
+                if item.text:
+                    by_lang[item.language].append(item.text)
+            return dict(by_lang)
+        return {}
+
+    def _decode_table_for(self, tok_name: str, tokenizer_obj) -> Any:
+        """``_build_char_decode_table`` memoized per tokenizer.
+
+        ``_accumulate_operators`` runs once per domain, so without this the table
+        is rebuilt three times for every tokenizer.
+        """
+        if tok_name not in self._decode_table_cache:
+            self._decode_table_cache[tok_name] = self._build_char_decode_table(
+                tokenizer_obj
+            )
+        return self._decode_table_cache[tok_name]
+
+    def _tokenize_texts_cached(
+        self, key: str, texts_by_lang: Dict[str, List[str]]
+    ) -> Dict[str, List[TokenizedData]]:
+        """``_tokenize_texts`` memoized per corpus.
+
+        ``compute()`` is called once per language group, and the code/math corpora
+        do not change between those calls, so they are encoded once rather than
+        re-encoded for every group.
+        """
+        if key not in self._encoded_corpus_cache:
+            self._encoded_corpus_cache[key] = self._tokenize_texts(texts_by_lang)
+        return self._encoded_corpus_cache[key]
 
     def _tokenize_texts(
         self, texts_by_lang: Dict[str, List[str]]
@@ -600,7 +677,7 @@ class DigitBoundaryMetrics(BaseMetrics):
                 continue
 
             tokenizer_obj = self.input_provider.get_tokenizer(tok_name)
-            self._char_decode_table = self._build_char_decode_table(tokenizer_obj)
+            self._char_decode_table = self._decode_table_for(tok_name, tokenizer_obj)
             lang_groups = TokenizedDataProcessor.group_by_language(
                 tokenized_data[tok_name]
             )

@@ -1356,3 +1356,41 @@ class TestOperatorIsolationDomains:
         assert sum(counts.values()) == ops["summary"][self.TOK]["total_operators"]
         # the bundled code corpus really does dominate the pool
         assert counts["code"] > counts["prose"] + counts["math"]
+
+    def test_each_domain_records_the_corpus_it_measured(self):
+        """Provenance: the pooled number is corpus-weighted, so each domain's size is reported."""
+        tok = _CharTokenizer()
+        code = {"python": ["x = a + b\n"], "javascript": ["const z = p !== q;\n"]}
+        metrics = DigitBoundaryMetrics(_MockProvider(self.TOK, tok), code_texts=code)
+        ops = metrics.compute(self._prose_data(tok))["operator_isolation_rate"]
+
+        code_corpus = ops["by_domain"]["code"]["corpus"]
+        assert code_corpus["n_languages"] == 2
+        assert code_corpus["texts_per_language"] == {"javascript": 1, "python": 1}
+        assert code_corpus["n_chars"] > 0
+        # the caller's dataset was used, not the bundled samples
+        assert not ops["by_domain"]["code"]["source"].endswith("code_samples.json")
+        for domain in ("prose", "code", "math"):
+            assert ops["by_domain"][domain]["corpus"]["n_texts"] > 0
+
+    def test_derived_corpora_are_encoded_once_across_compute_calls(self):
+        """compute() runs once per language group; the code/math corpora must not be re-encoded."""
+        tok = _CharTokenizer()
+        metrics = DigitBoundaryMetrics(_MockProvider(self.TOK, tok))
+        # build the prose corpus once: _prose_data() itself encodes, and we only
+        # want to count the encodes that compute() does on the derived corpora
+        prose = self._prose_data(tok)
+
+        calls = {"n": 0}
+        original = tok.encode
+
+        def counting(text):
+            calls["n"] += 1
+            return original(text)
+
+        tok.encode = counting
+        metrics.compute(prose)
+        after_first = calls["n"]
+        assert after_first > 0, "the code/math corpora should have been encoded once"
+        metrics.compute(prose)
+        assert calls["n"] == after_first, "derived corpora were re-encoded on the second call"
