@@ -1,8 +1,9 @@
 """Tests for tokenizer wrapper consistency across wrapper types.
 
-Verifies that HuggingFaceTokenizer, SentencePieceTokenizer, and
-CustomBPETokenizer behave consistently for the operations that
-intrinsic metrics depend on: encode, encode_with_offsets, decode,
+Verifies that HuggingFaceTokenizer, SentencePieceTokenizer,
+CustomBPETokenizer, and the script_bpe wrappers (ScriptBPETokenizer,
+MinGramTokenizer) behave consistently for the operations that intrinsic
+metrics depend on: encode, encode_with_offsets, decode,
 convert_ids_to_tokens, get_vocab, and get_vocab_size.
 """
 
@@ -14,7 +15,13 @@ from tokenizer_analysis.core.tokenizer_wrapper import (
     HuggingFaceTokenizer,
     SentencePieceTokenizer,
     CustomBPETokenizer,
+    ScriptBPETokenizer,
+    MinGramTokenizer,
+    _ScriptTokTokenizer,
+    create_tokenizer_wrapper,
 )
+
+FIXTURE_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
 
 # Shared corpus for training tiny tokenizers
 _CORPUS = [
@@ -127,7 +134,34 @@ def sp_wrapper_with_bos_eos(sp_processor):
     )
 
 
-ALL_WRAPPER_FIXTURES = ["hf_wrapper", "sp_wrapper", "custom_bpe_wrapper"]
+@pytest.fixture(scope="module")
+def script_bpe_wrapper():
+    """Load the committed tiny SCRIPT BPE fixture through the registry.
+
+    Skips when ``script_bpe`` is not installed (it is an optional, non-PyPI
+    dependency; the wrapper imports it lazily in from_config).
+    """
+    pytest.importorskip("script_bpe")
+    path = os.path.join(FIXTURE_DIR, "scriptbpe_tiny.json.gz")
+    return create_tokenizer_wrapper(
+        "test-scriptbpe", {"class": "script_bpe", "path": path}
+    )
+
+
+@pytest.fixture(scope="module")
+def mingram_wrapper():
+    """Load the committed tiny MinGram fixture through the registry."""
+    pytest.importorskip("script_bpe")
+    path = os.path.join(FIXTURE_DIR, "mingram_tiny.json.gz")
+    return create_tokenizer_wrapper(
+        "test-mingram", {"class": "mingram", "path": path}
+    )
+
+
+ALL_WRAPPER_FIXTURES = [
+    "hf_wrapper", "sp_wrapper", "custom_bpe_wrapper",
+    "script_bpe_wrapper", "mingram_wrapper",
+]
 
 
 # ── Tests ─────────────────────────────────────────────────────────────
@@ -256,17 +290,28 @@ class TestDecodeRoundtrip:
 
 
 class TestVocabConsistency:
-    """get_vocab_size() should equal len(get_vocab())."""
+    """get_vocab_size() bounds the number of distinct tokens.
+
+    For gapless id spaces (HF/SP/custom_bpe) it equals len(get_vocab()).
+    The script_bpe wrappers reserve id 0 (SCRIPT BPE) or leave gaps from
+    MinGram's pruning, so vocab_size (the id-space bound) exceeds the token
+    count; get_vocab() still holds one entry per real token.
+    """
 
     @pytest.mark.parametrize("wrapper_name", ALL_WRAPPER_FIXTURES)
     def test_size_matches_dict(self, wrapper_name, request):
         wrapper = request.getfixturevalue(wrapper_name)
         vocab = wrapper.get_vocab()
         if vocab is not None:
-            assert wrapper.get_vocab_size() == len(vocab), (
+            assert wrapper.get_vocab_size() >= len(vocab), (
                 f"{wrapper.get_name()}: get_vocab_size()={wrapper.get_vocab_size()} "
-                f"but len(get_vocab())={len(vocab)}"
+                f"< len(get_vocab())={len(vocab)}"
             )
+            if not isinstance(wrapper, _ScriptTokTokenizer):
+                assert wrapper.get_vocab_size() == len(vocab), (
+                    f"{wrapper.get_name()}: get_vocab_size()={wrapper.get_vocab_size()} "
+                    f"!= len(get_vocab())={len(vocab)}"
+                )
 
 
 class TestOffsetsCoverText:
@@ -332,3 +377,236 @@ class TestBatchEncoding:
     def test_empty_batch(self, wrapper_name, request):
         wrapper = request.getfixturevalue(wrapper_name)
         assert wrapper.encode_batch_with_offsets([]) == []
+
+
+# ── script_bpe wrappers (SCRIPT BPE + MinGram) ────────────────────────
+
+_SCRIPT_TOK_FIXTURES = ["script_bpe_wrapper", "mingram_wrapper"]
+
+
+class TestScriptTokWrappers:
+    """Behaviour specific to the script_bpe wrappers.
+
+    These tokenizers have no special tokens, expose no HuggingFace-style
+    underlying object, and (under the SCRIPT pretokenizer) normalize text, so
+    their contract differs from the HF/SP wrappers in ways the shared
+    parametrized tests do not cover.
+    """
+
+    def test_registry_dispatches_to_correct_class(
+        self, script_bpe_wrapper, mingram_wrapper
+    ):
+        assert isinstance(script_bpe_wrapper, ScriptBPETokenizer)
+        assert isinstance(mingram_wrapper, MinGramTokenizer)
+
+    @pytest.mark.parametrize("wrapper_name", _SCRIPT_TOK_FIXTURES)
+    def test_no_special_or_unk_tokens(self, wrapper_name, request):
+        wrapper = request.getfixturevalue(wrapper_name)
+        assert wrapper.get_special_token_ids() == set()
+        assert wrapper.get_unk_token_id() is None
+        assert wrapper.has_unk_token() is False
+
+    @pytest.mark.parametrize("wrapper_name", _SCRIPT_TOK_FIXTURES)
+    def test_underlying_tokenizer_is_none(self, wrapper_name, request):
+        # None so MorphScore and the HF-internal sanity checks skip cleanly.
+        wrapper = request.getfixturevalue(wrapper_name)
+        assert wrapper.get_underlying_tokenizer() is None
+
+    @pytest.mark.parametrize("wrapper_name", _SCRIPT_TOK_FIXTURES)
+    def test_encode_returns_plain_int_list(self, wrapper_name, request):
+        wrapper = request.getfixturevalue(wrapper_name)
+        ids = wrapper.encode(_TEST_TEXT)
+        assert isinstance(ids, list)
+        assert all(isinstance(i, int) for i in ids)
+
+    @pytest.mark.parametrize("wrapper_name", _SCRIPT_TOK_FIXTURES)
+    def test_no_offsets_provided(self, wrapper_name, request):
+        # The bundled pretokenizer normalizes, so true source offsets are not
+        # recoverable; the wrapper reports None rather than guessing.
+        wrapper = request.getfixturevalue(wrapper_name)
+        ids, offsets = wrapper.encode_with_offsets(_TEST_TEXT)
+        assert offsets is None
+        assert ids == wrapper.encode(_TEST_TEXT)
+
+    @pytest.mark.parametrize("wrapper_name", _SCRIPT_TOK_FIXTURES)
+    def test_pretokenize_returns_strings(self, wrapper_name, request):
+        wrapper = request.getfixturevalue(wrapper_name)
+        pretokens = wrapper.pretokenize("Hello 12 世界")
+        assert isinstance(pretokens, list)
+        assert pretokens
+        assert all(isinstance(p, str) for p in pretokens)
+
+    @pytest.mark.parametrize("wrapper_name", _SCRIPT_TOK_FIXTURES)
+    def test_get_vocab_is_faithful(self, wrapper_name, request):
+        # tokens_repr is distinct per token for these fixtures, so get_vocab
+        # holds exactly one entry per real token (no collisions collapse it).
+        wrapper = request.getfixturevalue(wrapper_name)
+        vocab = wrapper.get_vocab()
+        assert len(vocab) == len(wrapper._backend.tokens)
+
+    @pytest.mark.parametrize("wrapper_name", _SCRIPT_TOK_FIXTURES)
+    def test_id_space_is_compacted(self, wrapper_name, request):
+        # The wrapper remaps the back end's (possibly sparse) ids to a gap-free
+        # range, so vocab_size is the token count (plus one for a reserved id 0),
+        # never the sparse max-native-id+1. This is what keeps the
+        # vocabulary-utilization denominator from being inflated by MinGram's
+        # pruning gaps. (On the tiny MinGram fixture the sparse bound is 2031 for
+        # 1993 tokens; compaction must bring it to 1994.)
+        wrapper = request.getfixturevalue(wrapper_name)
+        n_tokens = len(wrapper._backend.tokens)
+        assert n_tokens <= wrapper.get_vocab_size() <= n_tokens + 1
+        # The compacted id space is contiguous (no holes) and vocab_size bounds it.
+        dense_ids = sorted(wrapper._dense_to_native)
+        assert dense_ids == list(range(dense_ids[0], dense_ids[0] + len(dense_ids)))
+        assert wrapper.get_vocab_size() == dense_ids[-1] + 1
+        # Every id encode can emit stays below the reported vocab size.
+        ids = wrapper.encode("The quick brown fox 42 café 世界 x >= 10")
+        assert all(0 <= i < wrapper.get_vocab_size() for i in ids)
+
+    @pytest.mark.parametrize("wrapper_name", _SCRIPT_TOK_FIXTURES)
+    def test_decode_reencode_is_stable(self, wrapper_name, request):
+        # decode(encode(text)) yields the normalized form, which re-encodes to
+        # the same ids (a normalization-robust round-trip invariant).
+        wrapper = request.getfixturevalue(wrapper_name)
+        for text in [_TEST_TEXT, "世界 123 café", "def f(): return 1 + 2"]:
+            ids = wrapper.encode(text)
+            decoded = wrapper.decode(ids)
+            assert isinstance(decoded, str)
+            assert wrapper.encode(decoded) == ids
+
+    def test_missing_path_raises_value_error(self):
+        pytest.importorskip("script_bpe")
+        with pytest.raises(ValueError):
+            create_tokenizer_wrapper("bad", {"class": "script_bpe"})
+
+    def test_missing_file_raises_file_not_found(self):
+        pytest.importorskip("script_bpe")
+        with pytest.raises(FileNotFoundError):
+            create_tokenizer_wrapper(
+                "bad", {"class": "mingram", "path": "/no/such/file.json.gz"}
+            )
+
+    def test_unknown_class_lists_new_keys(self):
+        # The factory's error enumerates available classes, now including ours.
+        with pytest.raises(ValueError) as exc:
+            create_tokenizer_wrapper("x", {"class": "does_not_exist", "path": "p"})
+        msg = str(exc.value)
+        assert "script_bpe" in msg and "mingram" in msg
+
+
+class TestScriptTokEdgeCases:
+    """Edge cases that distinguish these wrappers from the dense HF/SP ones.
+
+    The interesting properties: a non-contiguous id space (1-based, with
+    reserved/pruned gaps), a bundled pretokenizer whose normalization makes
+    the decode round-trip non-identity, token strings that come from
+    ``tokens_repr`` (not per-id decode), the ``reindex`` load knob, and
+    loading that must fail loudly when the class does not match the file.
+    """
+
+    # ── id space ──────────────────────────────────────────────────────
+
+    @pytest.mark.parametrize("wrapper_name", _SCRIPT_TOK_FIXTURES)
+    def test_encoded_ids_are_within_vocab_size(self, wrapper_name, request):
+        # The input validator and id-indexed metrics require id < vocab_size.
+        # These tokenizers have a sparse/1-based id space, so vocab_size must be
+        # the id-space bound (max id + 1), not the token count; this guards that.
+        wrapper = request.getfixturevalue(wrapper_name)
+        vocab_size = wrapper.get_vocab_size()
+        text = ("The quick brown fox 42 café Zürich Πολύγλωσσο 世界 "
+                "x >= 10 and 3 + 4 * 5 = 23; def f(): return 1 + 2")
+        ids = wrapper.encode(text)
+        assert ids, "expected a non-empty encoding for a rich sample"
+        assert all(0 <= i < vocab_size for i in ids), (
+            f"{wrapper.get_name()}: encoded ids outside [0, {vocab_size}): "
+            f"{[i for i in ids if not (0 <= i < vocab_size)][:5]}"
+        )
+
+    @pytest.mark.parametrize("wrapper_name", _SCRIPT_TOK_FIXTURES)
+    def test_reserved_and_out_of_range_ids_map_to_unk(self, wrapper_name, request):
+        # Id 0 is reserved (absent from the token table) and vocab_size is one
+        # past the end; convert must fall back to a sentinel rather than raise
+        # or return a real token string.
+        wrapper = request.getfixturevalue(wrapper_name)
+        vocab_size = wrapper.get_vocab_size()
+        assert wrapper.convert_ids_to_tokens([0]) == ["<UNK_0>"]
+        assert wrapper.convert_ids_to_tokens([vocab_size]) == [f"<UNK_{vocab_size}>"]
+
+    # ── normalization / round-trip ────────────────────────────────────
+
+    @pytest.mark.parametrize("wrapper_name", _SCRIPT_TOK_FIXTURES)
+    def test_normalization_is_not_identity(self, wrapper_name, request):
+        # The bundled pretokenizer applies NFC, so a decomposed (NFD) input
+        # comes back composed (NFC). This is why reconstruction exact-match is
+        # below 1.0 for normalizing inputs; it is expected, not a decode bug.
+        import unicodedata
+        wrapper = request.getfixturevalue(wrapper_name)
+        nfd = "café"                      # 'e' + combining acute
+        nfc = unicodedata.normalize("NFC", nfd)  # 'é'
+        assert nfd != nfc
+        decoded = wrapper.decode(wrapper.encode(nfd))
+        assert decoded == nfc
+        assert decoded != nfd
+
+    @pytest.mark.parametrize("wrapper_name", _SCRIPT_TOK_FIXTURES)
+    def test_empty_and_whitespace_inputs(self, wrapper_name, request):
+        wrapper = request.getfixturevalue(wrapper_name)
+        assert wrapper.encode("") == []
+        assert wrapper.decode([]) == ""
+        # Whitespace is not normalized away, so it round-trips exactly.
+        ws = "  \t \n  "
+        assert wrapper.decode(wrapper.encode(ws)) == ws
+
+    # ── vocab views agree ─────────────────────────────────────────────
+
+    @pytest.mark.parametrize("wrapper_name", _SCRIPT_TOK_FIXTURES)
+    def test_vocab_and_convert_match_the_backend(self, wrapper_name, request):
+        # Independent check against the back end: for real tokens, the compacted
+        # id must render (via convert_ids_to_tokens and via get_vocab) to the back
+        # end's own tokens_repr string, and the native->compacted remap must land
+        # on that id. This catches a wrong remap or wrong rendering, which a plain
+        # get_vocab-vs-convert comparison cannot (both share one code path).
+        wrapper = request.getfixturevalue(wrapper_name)
+        vocab = wrapper.get_vocab()
+        backend = wrapper._backend
+        native_ids = sorted(backend.tokens)
+        mid = len(native_ids) // 2
+        # A spread of base atomic tokens (low ids) and merged tokens (high ids).
+        sample = native_ids[:3] + native_ids[mid:mid + 3] + native_ids[-3:]
+        for nid in sample:
+            expected = backend.pretokenizer.tokens_repr(backend.tokens[nid].atomic_tokens)
+            dense = wrapper._native_to_dense[nid]
+            assert wrapper.convert_ids_to_tokens([dense]) == [expected]
+            assert vocab[expected] == dense
+
+    # ── load knobs and failure modes ──────────────────────────────────
+
+    def test_mingram_reindex_changes_origin_not_density(self):
+        # The wrapper compacts gaps either way, so both loads give a dense id
+        # space; reindex only changes the origin. Reindex packs ids 0-based, so
+        # vocab_size == token count; the default keeps the reserved id 0, so
+        # vocab_size == token count + 1. Neither is inflated by MinGram's gaps.
+        pytest.importorskip("script_bpe")
+        path = os.path.join(FIXTURE_DIR, "mingram_tiny.json.gz")
+        default = create_tokenizer_wrapper("mg", {"class": "mingram", "path": path})
+        reindexed = create_tokenizer_wrapper(
+            "mg-ri", {"class": "mingram", "path": path, "reindex": True}
+        )
+        n = len(default._backend.tokens)
+        assert len(reindexed._backend.tokens) == n
+        assert reindexed.get_vocab_size() == n          # 0-based dense
+        assert default.get_vocab_size() == n + 1        # 1-based dense (reserved id 0)
+        # Renumbering ids does not change what either tokenizer represents.
+        assert reindexed.decode(reindexed.encode("Hello world 42")) == "Hello world 42"
+        assert default.decode(default.encode("Hello world 42")) == "Hello world 42"
+
+    def test_wrong_class_for_file_fails_loudly(self):
+        # Pointing the wrong class at a file must raise, not silently build a
+        # broken tokenizer (the on-disk formats are class-specific).
+        pytest.importorskip("script_bpe")
+        bpe_file = os.path.join(FIXTURE_DIR, "scriptbpe_tiny.json.gz")
+        mingram_file = os.path.join(FIXTURE_DIR, "mingram_tiny.json.gz")
+        with pytest.raises(Exception):
+            create_tokenizer_wrapper("x", {"class": "mingram", "path": bpe_file})
+        with pytest.raises(Exception):
+            create_tokenizer_wrapper("x", {"class": "script_bpe", "path": mingram_file})

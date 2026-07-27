@@ -160,7 +160,9 @@ Specify tokenizers via `--tokenizer-config`:
 }
 ```
 
-Available classes: `"huggingface"` (aliases `"hf"`, `"transformers"`), `"sentencepiece"`, `"custom_bpe"` (requires `vocab.json` + `merges.txt`), `"unimixlm"`, and `"pretokenized"` (for pre-tokenized data).
+Available classes: `"huggingface"` (aliases `"hf"`, `"transformers"`), `"sentencepiece"`, `"custom_bpe"` (requires `vocab.json` + `merges.txt`), `"unimixlm"`, `"pretokenized"` (for pre-tokenized data), and `"script_bpe"` / `"mingram"` for the SCRIPT BPE and MinGram tokenizers.
+
+The `"script_bpe"` and `"mingram"` classes require the external `script_bpe` package, which is not a dependency of this library (install it with `pip install -e /path/to/script_tok` or put its repo on `PYTHONPATH`). Each `path` is a single saved tokenizer file (`.json` or `.json.gz`); `"mingram"` accepts an optional `reindex` flag (default `false`). These tokenizers have no special tokens. Under the SCRIPT pretokenizer a token string is its rendered form, with `<|BLOCK_...|>` / `<|SCRIPT_INDEX_...|>` markers for sub-character pieces, and reflects NFC normalization and digit regrouping, so the token-string metrics (byte coverage, junk and dead-vocab) describe that rendered form. MorphScore is not available for these two classes.
 
 ### Data Configuration
 

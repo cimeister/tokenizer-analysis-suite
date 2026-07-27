@@ -1,0 +1,10 @@
+{
+  "SCRIPT-BPE": {
+    "class": "script_bpe",
+    "path": "tokenizer_analysis/tests/fixtures/scriptbpe_tiny.json.gz"
+  },
+  "MinGram": {
+    "class": "mingram",
+    "path": "tokenizer_analysis/tests/fixtures/mingram_tiny.json.gz"
+  }
+}
