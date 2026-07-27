@@ -45,6 +45,8 @@ from ..constants import (
 from ..core.tokenizer_wrapper import (
     CustomBPETokenizer,
     HuggingFaceTokenizer,
+    MinGramTokenizer,
+    ScriptBPETokenizer,
     SentencePieceTokenizer,
     TokenizerWrapper,
     UniMixLMTokenizer,
@@ -218,6 +220,13 @@ def get_normalizer_view(wrapper: TokenizerWrapper) -> NormalizerView:
             "SentencePiece normalization is internal and not introspectable",
             "SentencePiece(internal)", "SentencePiece(internal)",
             "SentencePiece(internal)",
+        )
+    if isinstance(wrapper, (ScriptBPETokenizer, MinGramTokenizer)):
+        return NormalizerView(
+            None, False,
+            "script_bpe normalization and pretokenization are internal and not introspectable",
+            "script_bpe(internal)", "script_bpe(internal)",
+            "script_bpe(internal)",
         )
     if isinstance(wrapper, (HuggingFaceTokenizer, CustomBPETokenizer)):
         if underlying is None:

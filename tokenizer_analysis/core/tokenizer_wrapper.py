@@ -914,6 +914,209 @@ class PreTokenizedDataTokenizer(TokenizerWrapper):
         return cls(name, vocab_size, vocab_dict)
 
 
+class _ScriptTokTokenizer(TokenizerWrapper):
+    """Shared wrapper for ``script_bpe`` tokenizers (SCRIPT BPE and MinGram).
+
+    Both back ends (``script_bpe.BPETokenizer`` and ``script_bpe.MinGramModel``)
+    share one contract: a ``.tokens`` dict mapping ``int`` id -> token object, a
+    bundled ``.pretokenizer`` that mediates encode/decode, and no bos/eos/unk/pad
+    special tokens. The concrete subclasses differ only in how ``from_config``
+    loads the back end, so all shared behaviour lives here.
+
+    The back end's native ids are not a dense range. Both tokenizers reserve id 0
+    (pad); SCRIPT BPE is then dense from 1, but MinGram's EM pruning leaves gaps,
+    so ``max(id)`` can far exceed the token count. Reporting native ids would
+    inflate ``vocab_size`` (and the vocabulary-utilization denominator) by the gap
+    count and make the size tokenizer-dependent. This wrapper therefore remaps
+    native ids to a gap-free, origin-preserving range (see :meth:`__init__`):
+    ``encode`` emits compacted ids, ``decode`` maps them back, and ``vocab_size``
+    is the compacted bound. The remap is order-preserving but is not the id
+    assignment of any downstream model.
+
+    Token strings come from ``pretokenizer.tokens_repr`` rather than per-id
+    ``decode``: a lone SCRIPT block/index token is not independently decodable,
+    so ``decode([id])`` collapses most ids to the same empty/fragment string,
+    whereas ``tokens_repr`` renders each token distinctly. Under the SCRIPT
+    pretokenizer those strings carry ``<|BLOCK_...|>`` / ``<|SCRIPT_INDEX_...|>``
+    markers for pieces that are not whole characters, so a token string is the
+    token's rendered form, not always literal source text (this also reflects
+    NFC normalization and digit regrouping applied by the pretokenizer). Metrics
+    that read token strings (byte coverage, junk/dead-vocab, whitespace) describe
+    this rendered form. Full-sequence :meth:`decode` uses the back end's own
+    decoder and round-trips at the character level, except that the pretokenizer
+    normalizes (NFC), regroups digits, and drops code points it cannot encode
+    (unassigned or noncharacter), so inputs with those do not round-trip exactly.
+    """
+
+    def __init__(self, name: str, backend, config: Dict[str, Any]):
+        """
+        Args:
+            name: Tokenizer name.
+            backend: A loaded ``script_bpe`` tokenizer (BPETokenizer/MinGramModel).
+            config: Original configuration dict.
+        """
+        self._name = name
+        self._backend = backend
+        self._config = config or {}
+        self._pretokenizer = backend.pretokenizer
+        # Remap the back end's (possibly sparse) native ids to a gap-free range,
+        # preserving the origin: the smallest native id maps to itself and the
+        # rest follow contiguously. A 1-based (id-0-reserved) tokenizer stays
+        # 1-based, a 0-based (reindexed) one stays 0-based, and MinGram's pruning
+        # gaps are removed. This keeps vocab_size at the token count (not the
+        # sparse max-id) so the vocabulary-utilization denominator is not
+        # inflated. The map is order-preserving but is not any downstream model's
+        # id assignment; it only gives metrics a dense id space.
+        native_ids = sorted(backend.tokens.keys())
+        base = native_ids[0] if native_ids else 0
+        self._native_to_dense: Dict[int, int] = {
+            nid: base + rank for rank, nid in enumerate(native_ids)
+        }
+        self._dense_to_native: Dict[int, int] = {
+            dense: nid for nid, dense in self._native_to_dense.items()
+        }
+        # Compacted id-space bound (== max dense id + 1 == base + token count).
+        self._vocab_size: int = base + len(native_ids)
+        self._id_to_str_cache: Optional[Dict[int, str]] = None
+        self._vocab_cache: Optional[Dict[str, int]] = None
+
+    def get_name(self) -> str:
+        return self._name
+
+    def get_vocab_size(self) -> int:
+        # The compacted (gap-free) id-space bound: the token count, plus one for
+        # a reserved id 0. The input validator and id-indexed metrics treat
+        # vocab_size as a bound on emitted ids (id < vocab_size); encode emits
+        # compacted ids, so this holds without the gap inflation that would bias
+        # vocabulary utilization and make the size depend on the tokenizer.
+        return self._vocab_size
+
+    def _ensure_str_cache(self) -> Dict[int, str]:
+        """Build once the compacted-id -> token-string map, and return it."""
+        if self._id_to_str_cache is None:
+            cache: Dict[int, str] = {}
+            for nid, tok in self._backend.tokens.items():
+                dense = self._native_to_dense[nid]
+                try:
+                    cache[dense] = self._pretokenizer.tokens_repr(tok.atomic_tokens)
+                except Exception:
+                    cache[dense] = f"<TOK_{dense}>"
+            self._id_to_str_cache = cache
+        return self._id_to_str_cache
+
+    def get_vocab(self) -> Dict[str, int]:
+        if self._vocab_cache is None:
+            # tokens_repr is distinct per token for these tokenizers, so this is
+            # a faithful full-vocabulary map (one entry per compacted id). Were
+            # two ids to ever render alike, the later id would win here.
+            self._vocab_cache = {s: d for d, s in self._ensure_str_cache().items()}
+        # Return a copy so a caller mutating the result cannot corrupt the cache
+        # (the HF/SP/custom_bpe wrappers likewise hand back a fresh dict).
+        return dict(self._vocab_cache)
+
+    def can_encode(self) -> bool:
+        return True
+
+    def encode(self, text: str) -> List[int]:
+        # BPETokenizer.encode returns array.array; MinGramModel.encode returns
+        # list[int]. Remap each native id to its compacted id (plain Python int).
+        to_dense = self._native_to_dense
+        return [to_dense[i] for i in self._backend.encode(text)]
+
+    def can_decode(self) -> bool:
+        return True
+
+    def decode(self, token_ids: List[int], skip_special_tokens: bool = True) -> Optional[str]:
+        # Inputs are compacted ids (what encode emits); map them back to native
+        # ids for the back end. skip_special_tokens is a no-op (no special
+        # tokens). BPETokenizer.decode defaults errors="replace"; MinGramModel
+        # .decode takes no errors kwarg, so passing only ids works for both.
+        try:
+            native = [self._dense_to_native[i] for i in token_ids]
+            return self._backend.decode(native)
+        except Exception as e:
+            logger.warning(f"script_bpe decode failed for {self._name}: {e}")
+            return None
+
+    def convert_ids_to_tokens(self, token_ids: List[int]) -> List[str]:
+        cache = self._ensure_str_cache()
+        return [cache.get(i, f"<UNK_{i}>") for i in token_ids]
+
+    def can_pretokenize(self) -> bool:
+        return True
+
+    def pretokenize(self, text: str) -> List[str]:
+        # pretokenizer.pretokenize returns a list of atomic-token chunks
+        # (array.array); decode each chunk back to its rendered substring.
+        return [self._pretokenizer.decode(chunk)
+                for chunk in self._pretokenizer.pretokenize(text)]
+
+    def get_underlying_tokenizer(self):
+        # Deliberately None: these are not HuggingFace tokenizers, so MorphScore
+        # and the HF-internal sanity checks skip cleanly instead of misreading a
+        # foreign object.
+        return None
+
+
+class ScriptBPETokenizer(_ScriptTokTokenizer):
+    """Wrapper for SCRIPT BPE tokenizers (``script_bpe.BPETokenizer``, ``sebpe-v1``)."""
+
+    @classmethod
+    def from_config(cls, name: str, config: Dict[str, Any]) -> 'ScriptBPETokenizer':
+        """
+        Expected config keys:
+          - path: path to a saved script_bpe BPE tokenizer (.json or .json.gz).
+        """
+        if "path" not in config:
+            raise ValueError(
+                "ScriptBPETokenizer requires 'path' to a script_bpe tokenizer "
+                "file (.json or .json.gz)")
+        try:
+            from script_bpe import BPETokenizer
+        except ImportError as e:
+            raise RuntimeError(
+                "The 'script_bpe' package is required for the 'script_bpe' "
+                "tokenizer class. Install it with `pip install -e "
+                "/path/to/script_tok` or add its repo to PYTHONPATH."
+            ) from e
+        path = config["path"]
+        if not os.path.isfile(path):
+            raise FileNotFoundError(f"script_bpe tokenizer file not found: {path}")
+        backend = BPETokenizer.load(path)
+        return cls(name, backend, config)
+
+
+class MinGramTokenizer(_ScriptTokTokenizer):
+    """Wrapper for MinGram tokenizers (``script_bpe.MinGramModel``, ``semingram-v1``)."""
+
+    @classmethod
+    def from_config(cls, name: str, config: Dict[str, Any]) -> 'MinGramTokenizer':
+        """
+        Expected config keys:
+          - path: path to a saved script_bpe MinGram tokenizer (.json or .json.gz).
+          - (optional) reindex: if True, densify token ids to 0..n-1 on load
+            (default False; passed to MinGramModel.load).
+        """
+        if "path" not in config:
+            raise ValueError(
+                "MinGramTokenizer requires 'path' to a script_bpe tokenizer "
+                "file (.json or .json.gz)")
+        try:
+            from script_bpe import MinGramModel
+        except ImportError as e:
+            raise RuntimeError(
+                "The 'script_bpe' package is required for the 'mingram' "
+                "tokenizer class. Install it with `pip install -e "
+                "/path/to/script_tok` or add its repo to PYTHONPATH."
+            ) from e
+        path = config["path"]
+        if not os.path.isfile(path):
+            raise FileNotFoundError(f"script_bpe tokenizer file not found: {path}")
+        reindex = bool(config.get("reindex", False))
+        backend = MinGramModel.load(path, reindex=reindex)
+        return cls(name, backend, config)
+
+
 # Registry for custom tokenizer classes
 _TOKENIZER_REGISTRY: Dict[str, type] = {
     'huggingface': HuggingFaceTokenizer,
@@ -923,7 +1126,9 @@ _TOKENIZER_REGISTRY: Dict[str, type] = {
     'pretokenized': PreTokenizedDataTokenizer,
     'unimixlm': UniMixLMTokenizer,
     'custom_bpe': CustomBPETokenizer,
-    'sentencepiece': SentencePieceTokenizer
+    'sentencepiece': SentencePieceTokenizer,
+    'script_bpe': ScriptBPETokenizer,
+    'mingram': MinGramTokenizer
 }
 
 
