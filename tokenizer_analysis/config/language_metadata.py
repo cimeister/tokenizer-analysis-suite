@@ -46,18 +46,33 @@ class LanguageMetadata:
         except json.JSONDecodeError as e:
             raise ValueError(f"Invalid JSON in language metadata configuration: {e}")
     
+    # Group-type names accepted in `analysis_groups`, most-preferred first.
+    # Every config shipped in configs/ uses the singular form, but the accessors
+    # here originally read only the plural, so get_script_family() returned
+    # 'Unknown' for every language and get_script_families() returned []. Accept
+    # both rather than breaking existing configs either way.
+    _SCRIPT_GROUP_KEYS = ('script_family', 'script_families')
+    _RESOURCE_GROUP_KEYS = ('resource_level', 'resource_levels')
+
+    def _group(self, keys) -> Dict[str, List[str]]:
+        """Return the first present group mapping among *keys*, else empty."""
+        for key in keys:
+            group = self.analysis_groups.get(key)
+            if group:
+                return group
+        return {}
+
     def _build_reverse_mappings(self):
         """Build reverse mappings from language codes to groups."""
         self.lang_to_script_family = {}
         self.lang_to_resource_level = {}
-        
-        # Build script family mappings - ONLY from analysis_groups
-        for script_family, languages in self.analysis_groups.get('script_families', {}).items():
+
+        # Built ONLY from analysis_groups, never inferred from the language code.
+        for script_family, languages in self._group(self._SCRIPT_GROUP_KEYS).items():
             for lang in languages:
                 self.lang_to_script_family[lang] = script_family
-        
-        # Build resource level mappings - ONLY from analysis_groups
-        for resource_level, languages in self.analysis_groups.get('resource_levels', {}).items():
+
+        for resource_level, languages in self._group(self._RESOURCE_GROUP_KEYS).items():
             for lang in languages:
                 self.lang_to_resource_level[lang] = resource_level
     
@@ -78,12 +93,15 @@ class LanguageMetadata:
     
     # Language information methods
     def get_language_info(self, language_code: str) -> Dict[str, Any]:
-        """Get full language information."""
-        return self.languages.get(language_code, {})
-    
+        """Get full language information, normalized to the dict form."""
+        info = self.languages.get(language_code, {})
+        if isinstance(info, str):
+            return {'data_path': info}
+        return info if isinstance(info, dict) else {}
+
     def get_language_name(self, language_code: str) -> str:
-        """Get the display name for a language."""
-        return self.languages.get(language_code, {}).get('name', language_code)
+        """Get the display name for a language, falling back to its code."""
+        return self.get_language_info(language_code).get('name', language_code)
     
     def get_available_languages(self) -> List[str]:
         """Get list of all available language codes."""
@@ -92,11 +110,11 @@ class LanguageMetadata:
     # Script family methods
     def get_script_families(self) -> List[str]:
         """Get list of all script families."""
-        return list(self.analysis_groups.get('script_families', {}).keys())
+        return list(self._group(self._SCRIPT_GROUP_KEYS).keys())
     
     def get_languages_by_script_family(self, script_family: str) -> List[str]:
         """Get languages belonging to a specific script family."""
-        return self.analysis_groups.get('script_families', {}).get(script_family, [])
+        return self._group(self._SCRIPT_GROUP_KEYS).get(script_family, [])
     
     def get_script_family(self, language_code: str) -> str:
         """Get script family for a language from analysis_groups."""
@@ -105,11 +123,11 @@ class LanguageMetadata:
     # Resource level methods
     def get_resource_levels(self) -> List[str]:
         """Get list of all resource levels."""
-        return list(self.analysis_groups.get('resource_levels', {}).keys())
+        return list(self._group(self._RESOURCE_GROUP_KEYS).keys())
     
     def get_languages_by_resource_level(self, resource_level: str) -> List[str]:
         """Get languages belonging to a specific resource level."""
-        return self.analysis_groups.get('resource_levels', {}).get(resource_level, [])
+        return self._group(self._RESOURCE_GROUP_KEYS).get(resource_level, [])
     
     def get_resource_level(self, language_code: str) -> str:
         """Get resource level for a language from analysis_groups."""
@@ -138,14 +156,14 @@ class LanguageMetadata:
         }
         
         # Script family statistics
-        for script_family, languages in self.analysis_groups.get('script_families', {}).items():
+        for script_family, languages in self._group(self._SCRIPT_GROUP_KEYS).items():
             stats['script_families'][script_family] = {
                 'count': len(languages),
                 'languages': languages
             }
         
         # Resource level statistics
-        for resource_level, languages in self.analysis_groups.get('resource_levels', {}).items():
+        for resource_level, languages in self._group(self._RESOURCE_GROUP_KEYS).items():
             stats['resource_levels'][resource_level] = {
                 'count': len(languages),
                 'languages': languages
@@ -154,16 +172,31 @@ class LanguageMetadata:
         return stats
     
     # Data path methods
+    @staticmethod
+    def _data_path_of(lang_info: Any) -> Optional[str]:
+        """Extract the corpus path from one `languages` entry.
+
+        Two shapes are accepted. The full form is a dict carrying `data_path`
+        alongside `name` and `iso_code`. The short form maps the code straight
+        to a path string, `{"en": "/path/to/data"}`, which the README has always
+        documented; before this it raised `AttributeError: 'str' object has no
+        attribute 'get'`, so the documented form did not work.
+        """
+        if isinstance(lang_info, str):
+            return lang_info or None
+        if isinstance(lang_info, dict):
+            return lang_info.get('data_path')
+        return None
+
     def get_data_path(self, language_code: str) -> Optional[str]:
         """Get data path for a specific language."""
-        lang_info = self.languages.get(language_code, {})
-        return lang_info.get('data_path')
-    
+        return self._data_path_of(self.languages.get(language_code))
+
     def get_language_paths(self) -> Dict[str, str]:
         """Get all language code to data path mappings."""
         paths = {}
         for lang_code, lang_info in self.languages.items():
-            data_path = lang_info.get('data_path')
+            data_path = self._data_path_of(lang_info)
             if data_path:
                 paths[lang_code] = data_path
         return paths

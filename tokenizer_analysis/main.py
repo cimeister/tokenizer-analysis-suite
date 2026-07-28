@@ -285,7 +285,7 @@ class UnifiedTokenizerAnalyzer:
         return results
     
     def run_grouped_analysis(self,
-                           group_by: Union[str, List[str]] = ['script_families', 'resource_levels'],
+                           group_by: Optional[Union[str, List[str]]] = None,
                            save_plots: bool = True,
                            base_results: Optional[Dict[str, Any]] = None,
                            reference_line_method: str = 'macro',
@@ -295,7 +295,12 @@ class UnifiedTokenizerAnalyzer:
         Run analysis grouped by language categories.
         
         Args:
-            group_by: Group type(s) to analyze by
+            group_by: Group type(s) to analyze by. Defaults to every group type
+                present in the language metadata. The previous default was the
+                literal list ['script_families', 'resource_levels'], which no
+                shipped config uses (they write the singular form), so an API
+                caller relying on the default got "group type not found" for
+                both and an empty result.
             save_plots: Whether to generate grouped plots
             base_results: Optional pre-computed results to filter instead of recomputing
             reference_line_method: Method for reference lines ('macro' for average across groups, 'micro' for overall global)
@@ -307,17 +312,33 @@ class UnifiedTokenizerAnalyzer:
         """
         if not self.language_metadata:
             raise ValueError("Language metadata required for grouped analysis")
-        
-        if isinstance(group_by, str):
+
+        if group_by is None:
+            group_by = list(self.language_metadata.analysis_groups.keys())
+        elif isinstance(group_by, str):
             group_by = [group_by]
-        
+
+        if not group_by:
+            raise ValueError(
+                "Grouped analysis needs at least one group type, but the language "
+                f"config {self.language_metadata.config_path!r} defines no "
+                "'analysis_groups'. Add a group type (for example 'script_family' "
+                "mapping a family name to a list of language codes), or skip "
+                "grouped analysis."
+            )
+
         grouped_results = {}
-        
+
         for group_type in group_by:
             logger.info(f"Running grouped analysis by {group_type}")
-            
+
             if group_type not in self.language_metadata.analysis_groups:
-                logger.warning(f"Group type {group_type} not found in language metadata")
+                available = sorted(self.language_metadata.analysis_groups)
+                logger.warning(
+                    "Group type %r not found in %s; available group types: %s",
+                    group_type, self.language_metadata.config_path,
+                    ", ".join(available) if available else "(none)",
+                )
                 continue
             
             group_results = {}
@@ -930,9 +951,35 @@ class UnifiedTokenizerAnalyzer:
         config_file_path = save_path.replace('.pkl', '_config.json')
         with open(config_file_path, 'w', encoding='utf-8') as f:
             json.dump(config_data, f, indent=2)
-        
+
         logger.info(f"Tokenized data saved to {save_path}")
         logger.info(f"Configuration file saved to {config_file_path}")
+
+        # Copy the language metadata next to the cache so replaying it is
+        # self-sufficient. The pickle holds token ids and language labels but no
+        # groupings, and replaying against a different language config silently
+        # relabels the data, so the cache has to carry its own.
+        if self.language_metadata is None:
+            logger.warning(
+                "No language metadata to save alongside %s. Replaying this cache "
+                "will require --language-config.", save_path,
+            )
+            return
+
+        lang_config_path = save_path.replace('.pkl', '_language_config.json')
+        with open(lang_config_path, 'w', encoding='utf-8') as f:
+            json.dump(
+                {
+                    "languages": self.language_metadata.languages,
+                    "analysis_groups": self.language_metadata.analysis_groups,
+                },
+                f, indent=2, ensure_ascii=False,
+            )
+        logger.info(
+            "Language config saved to %s; replay with "
+            "--tokenized-data-file %s --tokenized-data-config %s --language-config %s",
+            lang_config_path, save_path, config_file_path, lang_config_path,
+        )
 
 
 # Convenience functions for creating analyzers from different input types

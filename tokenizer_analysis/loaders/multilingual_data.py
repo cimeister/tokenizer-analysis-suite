@@ -113,9 +113,13 @@ def load_language_data(data_path: str, max_texts: int) -> List[str]:
         texts = load_single_file(data_path, max_texts)
     elif os.path.isdir(data_path):
         # Handle directory - look for JSON, Parquet, and text files
-        json_files = glob.glob(os.path.join(data_path, "*.json"))
-        parquet_files = glob.glob(os.path.join(data_path, "*.parquet"))
-        text_files = glob.glob(os.path.join(data_path, "*.txt"))
+        # Sorted, because max_texts truncates: with bare glob.glob the files
+        # arrive in filesystem order, so *which* texts get analyzed would depend
+        # on the directory layout and the same corpus could give different
+        # numbers on two machines.
+        json_files = sorted(glob.glob(os.path.join(data_path, "*.json")))
+        parquet_files = sorted(glob.glob(os.path.join(data_path, "*.parquet")))
+        text_files = sorted(glob.glob(os.path.join(data_path, "*.txt")))
         
         # Process JSON files first
         for json_file in json_files:

@@ -618,6 +618,22 @@ Examples:
         help="JSON file with LanguageMetadata configuration (languages + analysis groups)"
     )
     parser.add_argument(
+        "--input",
+        type=str,
+        metavar="PATH",
+        help="Analyze a single corpus: a file (.txt/.json/.jsonl/.parquet) or a "
+             "directory of them. Takes exactly one path; for several corpora use "
+             "--language-config. Cannot be combined with --language-config or "
+             "--use-sample-data."
+    )
+    parser.add_argument(
+        "--input-label",
+        type=str,
+        metavar="NAME",
+        help="Name for the --input corpus in the results (default: the file or "
+             "directory stem). Appears as the single key under per_language."
+    )
+    parser.add_argument(
         "--morphscore-config",
         type=str,
         help="JSON file with MorphScore configuration (requires raw tokenization)"
@@ -647,7 +663,11 @@ Examples:
     parser.add_argument(
         "--use-sample-data",
         action="store_true",
-        help="Use sample/demo data for testing"
+        help="Run the built-in demo: two bundled tokenizers over five FLORES+ "
+             "languages. Supplies its own tokenizers and corpus, so it cannot be "
+             "combined with --tokenizer-config, --language-config, --input or "
+             "--measurement-config. Requires a source checkout (the demo data "
+             "lives in parallel/ and tokenizers/, not in the installed package)."
     )
     
     # NEW: Pre-tokenized data support
@@ -829,16 +849,101 @@ Examples:
     return parser
 
 
+def _corpus_source_from_input(input_path: str, label: Optional[str]) -> str:
+    """Write a one-language config for --input and return its path.
+
+    Reuses the LanguageMetadata path rather than adding a second corpus-loading
+    route, so a single corpus goes through exactly the same loader, measurement
+    and metric code as a multilingual run. The only difference is that there is
+    one group instead of several.
+    """
+    import tempfile
+
+    path = Path(input_path)
+    if not path.exists():
+        raise ValueError(
+            f"--input path does not exist: {input_path}. Pass a text file "
+            "(.txt/.json/.jsonl/.parquet) or a directory containing them."
+        )
+
+    corpus_label = label or path.stem or path.name
+    if not corpus_label:
+        raise ValueError(
+            f"Could not derive a corpus label from --input {input_path!r}; "
+            "pass --input-label explicitly."
+        )
+
+    config = {"languages": {corpus_label: {"data_path": str(path)}}}
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        json.dump(config, f, indent=2)
+        logger.info(
+            "Single-corpus mode: analyzing %s under the label %r.",
+            path, corpus_label,
+        )
+        return f.name
+
+
+def _validate_corpus_source(args: argparse.Namespace) -> None:
+    """Reject ambiguous or absent corpus sources before any work happens.
+
+    Three flags can supply a corpus and they are mutually exclusive.
+    --use-sample-data used to win silently: it overwrote --tokenizer-config,
+    --language-config and --measurement-config with the demo values, so a run
+    that named the user's tokenizers and corpus produced a complete, plausible
+    results file describing the bundled demo instead. Nothing in the output said
+    so. Refuse the combination rather than pick one.
+    """
+    if args.tokenized_data_file is not None:
+        return  # Pre-tokenized mode supplies its own data; validated separately.
+
+    overridden = [
+        flag for flag, value in (
+            ("--tokenizer-config", args.tokenizer_config),
+            ("--language-config", args.language_config),
+            ("--input", args.input),
+            ("--measurement-config", args.measurement_config),
+        ) if value
+    ]
+    if args.use_sample_data and overridden:
+        raise ValueError(
+            "--use-sample-data supplies its own tokenizers, corpus and "
+            "measurement settings, so it conflicts with "
+            + ", ".join(overridden)
+            + ". Earlier versions accepted this and silently ignored those flags, "
+            "reporting demo numbers under your configuration. Drop "
+            "--use-sample-data to analyze your own data, or drop the other flags "
+            "to run the demo."
+        )
+
+    if args.input and args.language_config:
+        raise ValueError(
+            "--input analyzes a single corpus and --language-config analyzes a "
+            "set of them; pass one or the other. To analyze several corpora, list "
+            "them under 'languages' in the --language-config file."
+        )
+
+    if not (args.use_sample_data or args.input or args.language_config):
+        raise ValueError(
+            "No corpus given. Pass --input PATH for a single corpus, "
+            "--language-config FILE for several, or --use-sample-data for the "
+            "bundled demo. Earlier versions fell back to the bundled five-language "
+            "FLORES+ sample here, which meant results could describe demo data "
+            "rather than yours."
+        )
+
+
 def run_from_args(args: argparse.Namespace):
     """Run tokenizer analysis from a parsed CLI namespace."""
-    
+
+    _validate_corpus_source(args)
+
     # Create output directory if it doesn't exist
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # Determine input mode based on provided arguments
     use_tokenized_data = args.tokenized_data_file is not None
-    
+
     # Load configurations
     if args.use_sample_data and not use_tokenized_data:
         logger.info("Using sample data for demonstration")
@@ -874,12 +979,18 @@ def run_from_args(args: argparse.Namespace):
         if not vocabularies:
             logger.warning("No vocabulary files loaded, will estimate vocabulary sizes from tokenized data")
         
-        # Still need language config for metadata
-        if args.language_config:
-            language_config_path = args.language_config
-        else:
-            language_config_path = create_sample_language_metadata()
-            logger.warning("No language config specified, using sample metadata")
+        # Language metadata is still needed for grouping and per-language labels.
+        # It is not inferable from a pickle of token ids, so require it rather
+        # than substituting the bundled five-language sample, which would label
+        # the user's data with FLORES+ language codes it has nothing to do with.
+        if not args.language_config:
+            raise ValueError(
+                "--tokenized-data-file needs --language-config: the pickle holds "
+                "token ids, not the language labels or groupings the metrics "
+                "report against. Pass the same language config used when the "
+                "data was tokenized."
+            )
+        language_config_path = args.language_config
         
         # Load text measurement configuration
         measurement_config = None
@@ -901,17 +1012,22 @@ def run_from_args(args: argparse.Namespace):
     else:
         # Raw tokenizer mode
         if not args.tokenizer_config:
-            raise ValueError("Must specify --tokenizer-config or use --use-sample-data")
-        
+            raise ValueError(
+                "Must specify --tokenizer-config (a JSON file mapping tokenizer "
+                "names to {\"class\": ..., \"path\": ...}), or --use-sample-data "
+                "to run the bundled demo."
+            )
+
         tokenizer_configs = load_config_from_file(args.tokenizer_config)
-        
-        if args.language_config:
+
+        if args.input:
+            language_config_path = _corpus_source_from_input(
+                args.input, args.input_label
+            )
+        else:
             # Load language configuration (supports both directory and file paths)
             language_config_path = args.language_config
-        else:
-            language_config_path = create_sample_language_metadata()
-            logger.warning("No language config specified, using sample metadata")
-        
+
         # Load text measurement configuration
         measurement_config = None
         if args.measurement_config:
