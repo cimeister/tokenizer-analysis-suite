@@ -4,6 +4,30 @@ All notable changes to this project are recorded here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Removed
+- The cumulative Markdown leaderboard, along with the `--update-results-md`,
+  `--dataset` and `--sort-results-by` flags, the generated `RESULTS.md` and its
+  per-dataset plot directories, `tokenizer_analysis/visualization/markdown_tables.py`,
+  and the `MarkdownTableGenerator` / `results_filename` exports from
+  `tokenizer_analysis.visualization`. It was built for one internal tokenizer
+  project rather than for general use. Read `analysis_results.json` directly, or
+  use `--generate-latex-tables`, which draws on the same per-tokenizer
+  aggregates.
+- `UnifiedTokenizerAnalyzer.generate_markdown_table()`.
+
+### Fixed
+- The test suite aborted partway through with `malloc(): mismatching
+  next->prev_size` (SIGABRT), so 86% of it never ran. All tree-sitter parsing,
+  including `ASTBoundaryMetrics.compute_per_text()` and the tests, now goes
+  through the same one-subprocess-per-language fence that `compute()` already
+  used. A language whose grammar crashes the worker is reported as unmeasured
+  with the grammar and pack version named, rather than being absent from the
+  results with no explanation.
+- `--update-results-md` without `--dataset` blocked on `input()` from stdin,
+  which hung batch and SLURM runs. The flag is gone.
+
 ## [1.0.0] - 2026-07-04
 
 First release under the consolidated repository

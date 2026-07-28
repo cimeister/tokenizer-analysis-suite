@@ -116,26 +116,9 @@ uv sync --extra parquet
 | `--no-utf8-integrity` | Skip UTF-8 character boundary metrics |
 | `--no-reconstruction` | Skip reconstruction fidelity analysis (see [Performance](#performance)) |
 | `--generate-latex-tables` | Generate LaTeX tables |
-| `--update-results-md [PATH]` | Generate/update cumulative Markdown leaderboard |
-| `--dataset NAME` | Dataset label for the results table |
-| `--sort-results-by METRIC` | Sort results table by metric key |
 | `--samples-per-lang N` | Text samples per language |
 | `--save-tokenized-data` | Cache tokenized data for reuse |
 | `--no-global-lines` | Hide global average lines in plots |
-
-### Markdown Results Table
-
-Generate a cumulative Markdown leaderboard that grows across successive runs. Each run merges new tokenizer rows into the existing table — previously evaluated tokenizers are preserved, re-evaluated ones are updated.
-
-```bash
-# Generate / update a local RESULTS.md
-uv run tokenizer-analysis --use-sample-data --update-results-md --dataset flores
-
-# Custom output path
-uv run tokenizer-analysis --use-sample-data --update-results-md my_results.md
-```
-
-Each row is keyed by `tokenizer_name (user, dataset)` — different users or datasets produce separate rows, while re-running the same combination updates in place.
 
 ## Configuration Files
 
@@ -272,7 +255,6 @@ results/
 ├── grouped_plots/                   # Cross-tokenizer comparisons
 ├── per-language/                    # Language-specific analysis
 ├── latex_tables/                    # Academic publication tables
-├── RESULTS.md                       # Cumulative Markdown leaderboard
 ├── analysis_results.json            # Key metrics summary
 ├── analysis_results_full.json       # Detailed results (--save-full-results)
 └── tokenized_data.pkl               # Cached data (--save-tokenized-data)
@@ -299,7 +281,7 @@ results/
 
 - **`global`**: Aggregate score for this tokenizer. Stats dicts contain `mean`, `std`, `median`, `count`; structured dicts vary by metric.
 - **`per_language`** (inside `per_tokenizer`): Per-language breakdown for this tokenizer.
-- **`per_language`** (top-level): Cross-tokenizer leaderboard keyed by language, where present in raw data.
+- **`per_language`** (top-level): Per-language values keyed by language then tokenizer, where present in raw data.
 - **`metadata`**: Metric configuration and data provenance, where present.
 
 The slimmed file omits `pairwise_comparisons`, `summary`, `per_category` breakdowns, and derivable stat fields (`sum`, `std_err`, `min`, `max`). The full results file includes `per_category` for metrics that have category breakdowns (e.g. AST node types, operator types). Some metrics use additional keys (e.g. `by_digit_length`, `scaling` for digit metrics; `character_length`/`byte_length` for token length).
@@ -547,7 +529,6 @@ tokenizer_analysis/
     ├── plots.py                  # Core plotting functions
     ├── data_extraction.py        # Data extraction for plotting
     ├── latex_tables.py           # LaTeX table generation
-    ├── markdown_tables.py        # Markdown table generation
     └── visualization_config.py   # Visualization configuration
 
 scripts/

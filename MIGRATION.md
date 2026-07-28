@@ -27,6 +27,9 @@ replacements.
 |---------|-------------|
 | `--morphological-config FILE` | `--morphscore` (defaults) or `--morphscore-config FILE` |
 | `--latex-table-types morphological` | Use MorphScore; valid types are `basic`, `information`, `comprehensive` |
+| `--update-results-md [PATH]` | Read `analysis_results.json`, or `--generate-latex-tables` |
+| `--dataset NAME` | No replacement; it only labelled leaderboard rows |
+| `--sort-results-by METRIC` | No replacement; sort when reading the JSON |
 
 Both removed options now exit with a message pointing to MorphScore rather than
 a generic argparse error.
@@ -44,6 +47,12 @@ a generic argparse error.
 
 - `MorphologicalMetrics` and `MorphologicalDataLoader` were removed from
   `tokenizer_analysis`. Use MorphScore instead.
+- `MarkdownTableGenerator` and `results_filename` were removed from
+  `tokenizer_analysis.visualization`, along with
+  `UnifiedTokenizerAnalyzer.generate_markdown_table()`. The cumulative Markdown
+  leaderboard they produced was built for one internal tokenizer project. Read
+  `analysis_results.json`, or use `generate_latex_tables()`, which reads the
+  same per-tokenizer aggregates.
 - `UnifiedTokenizerAnalyzer(...)` no longer accepts `morphological_config`, and
   `run_analysis(...)` no longer accepts `include_morphological`.
 - Constants moved from namespace classes to module-level names. Replace imports

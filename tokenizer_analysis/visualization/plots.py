@@ -203,8 +203,8 @@ def plot_metric_bar_chart(results: Dict[str, Any], save_path: str, tokenizer_nam
             val, std = extracted, None
         # Skip tokenizers with a missing/None metric value (e.g. the
         # cross-lingual utilization CoV is None for <2-language
-        # tokenizers). A visible omission, not a fabricated 0.0/nan —
-        # consistent with the markdown '---' convention.
+        # tokenizers). A visible omission, not a fabricated 0.0 or nan, which
+        # matches how latex_tables renders a missing value as '---'.
         if val is None:
             continue
         stds.append(std)

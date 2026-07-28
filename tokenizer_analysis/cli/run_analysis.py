@@ -745,23 +745,6 @@ Examples:
         help="JSON configuration file for custom LaTeX tables"
     )
     
-    # Markdown results table
-    parser.add_argument(
-        "--update-results-md",
-        nargs='?',
-        const='__default__',
-        default=None,
-        metavar='PATH',
-        help="Generate/update a cumulative Markdown results table. "
-             "Optionally provide a file path (default: <output-dir>/RESULTS.md)"
-    )
-    parser.add_argument(
-        "--dataset",
-        type=str,
-        default=None,
-        help="Dataset label for the RESULTS.md composite key and Dataset column. "
-             "If not provided, you will be prompted when using --update-results-md."
-    )
     # Plot generation options
     parser.add_argument(
         "--per-language-plots",
@@ -824,17 +807,6 @@ Examples:
              "exceeds this budget, CER and whitespace fidelity are skipped "
              "for that tokenizer. 0 disables the budget (default: 10.0)"
     )
-    parser.add_argument(
-        "--sort-results-by",
-        type=str,
-        default=None,
-        metavar="METRIC",
-        help="Sort the Markdown results table by this metric key "
-             "(e.g. fertility, gini, compression_rate). "
-             "Rows are sorted ascending for lower-is-better metrics, "
-             "descending otherwise."
-    )
-
     # Tokenized data saving options
     parser.add_argument(
         "--save-tokenized-data",
@@ -1176,44 +1148,6 @@ def run_from_args(args: argparse.Namespace):
         except Exception as e:
             logger.error(f"Error generating custom LaTeX tables: {e}")
     
-    # Generate / update Markdown results table if requested
-    if args.update_results_md is not None:
-        # Prompt for dataset name if not provided via --dataset
-        dataset = args.dataset
-        if dataset is None:
-            dataset = input("Enter dataset name (or press Enter for 'default'): ").strip()
-            if not dataset:
-                dataset = "default"
-
-        # Derive the normalization method from the measurement config
-        norm_method = None
-        if measurement_config is not None:
-            norm_method = measurement_config.method.value
-
-        # Determine output path: explicit path, or auto-generated from
-        # dataset + normalization method
-        if args.update_results_md != '__default__':
-            md_path = args.update_results_md
-        else:
-            from tokenizer_analysis.visualization.markdown_tables import results_filename
-            md_path = os.path.join(
-                args.output_dir, results_filename(dataset, norm_method)
-            )
-
-        logger.info(f"Updating Markdown results table at {md_path}")
-        try:
-            analyzer.generate_markdown_table(
-                results=results,
-                output_path=md_path,
-                update_existing=True,
-                dataset=dataset,
-                normalization_method=norm_method,
-                sort_by=args.sort_results_by,
-            )
-            print(f"Markdown results table: {md_path}")
-        except Exception as e:
-            logger.error(f"Error generating Markdown results table: {e}")
-
     logger.info("Analysis complete!")
     print(f"\nResults saved to: {args.output_dir}")
     if not args.no_plots:

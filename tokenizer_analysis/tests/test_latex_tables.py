@@ -1,7 +1,7 @@
 """Tests for LaTeX table generation, focused on the metric registry that reads
 the per-tokenizer ``summary`` aggregates (math, code-AST, UTF-8, reconstruction,
-entropy). These metrics share the canonical key_paths used by the markdown
-leaderboard, so the two tables report the same numbers."""
+entropy). The key_paths here are the canonical ones, so a drift between the
+registry and a metric's actual output shape shows up as a missing table cell."""
 from tokenizer_analysis.visualization.latex_tables import LaTeXTableGenerator
 
 
