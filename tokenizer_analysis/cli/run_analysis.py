@@ -136,10 +136,26 @@ def create_sample_morphscore_config(data_dir: str = "morphscore_data") -> Dict[s
     }
 
 def _resolve_code_ast_config(args) -> Optional[Dict]:
-    """Return the code-AST config dict from CLI args, or None if disabled."""
+    """Return the code-AST config dict from CLI args, or None if disabled.
+
+    SILENT-FALLBACK HAZARD (fixed 2026-07-13). Omitting --code-ast-config does NOT disable the
+    code metrics: it runs them on SYNTHETIC generated code. That produced a whole intrinsic run
+    whose code metrics (AST boundary alignment, identifier fragmentation, indentation
+    consistency) looked plausible but were computed on toy samples rather than real StarCoder
+    data. AST full-alignment differed by 14% (0.562 synthetic vs 0.493 StarCoder) and silently
+    corrupted every downstream correlation that used it. Warn loudly.
+    """
     if args.code_ast_config:
         return load_config_from_file(args.code_ast_config)
     if not args.no_code_ast:
+        logger.warning(
+            "=" * 78 + "\n"
+            "NO --code-ast-config GIVEN: the code metrics (AST alignment, identifier "
+            "fragmentation, indentation consistency) will be computed on SYNTHETIC sample code, "
+            "NOT on real code. These numbers are NOT comparable to a run that passed "
+            "--code-ast-config starcoder_ast_config.json. Pass --no-code-ast to disable them "
+            "outright, or --code-ast-config to use real data.\n" + "=" * 78
+        )
         return {}  # Empty dict triggers synthetic sample generation
     return None
 
@@ -426,6 +442,24 @@ def slim_results_for_json(results: Dict) -> Dict:
         # Keep metadata
         if 'metadata' in metric_data:
             out['metadata'] = metric_data['metadata']
+
+        # Operator isolation: keep the per-domain split (prose / code / math).
+        #
+        # It is NOT derivable from the slimmed per_tokenizer block, because that block POOLS the
+        # three corpora. The corpus decides the answer (a matched pretokenizer pair differs by 0.60
+        # on prose and 0.01 on math), so dropping by_domain here would leave the summary file
+        # carrying only the pooled number, and any consumer reading it would silently get a
+        # different quantity than the one it asked for. Keep each domain's per-tokenizer summary and
+        # the source corpus it was computed on; the bulky per-tokenizer/per-language detail stays in
+        # analysis_results_full.json.
+        if 'by_domain' in metric_data:
+            out['by_domain'] = {
+                domain: {
+                    'summary': dom_data.get('summary', {}),
+                    'source': dom_data.get('source'),
+                }
+                for domain, dom_data in metric_data['by_domain'].items()
+            }
 
         # Deliberately drop: pairwise_comparisons, summary
         slimmed[metric_name] = out
