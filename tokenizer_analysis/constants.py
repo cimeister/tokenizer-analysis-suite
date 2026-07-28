@@ -7,6 +7,13 @@ the tokenizer analysis codebase to improve maintainability and reduce errors.
 
 from typing import List
 
+from ._migration import make_module_getattr
+
+# Constants used to live on namespace classes (TextProcessing, DataProcessing,
+# Statistics, Validation). They are module-level names now, so an old
+# `from ... import DataProcessing` would otherwise fail with a bare ImportError.
+__getattr__ = make_module_getattr(__name__, ())
+
 
 # --- Text Processing ---
 

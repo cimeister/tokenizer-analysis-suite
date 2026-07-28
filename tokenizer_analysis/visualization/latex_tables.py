@@ -87,15 +87,6 @@ class LaTeXTableGenerator:
                 'format': '{:.3f}',
                 'lower_is_better': True
             },
-            'morphological_alignment': {
-                'title': 'Morphological F1',
-                'key_path': ['morphological_alignment', 'summary'],
-                'value_key': 'avg_boundary_f1',
-                'stat_key': None,
-                'err_key': 'avg_boundary_f1_std_err',
-                'format': '{:.3f}',
-                'lower_is_better': False
-            },
             'morphscore_recall': {
                 'title': 'MorphScore Recall',
                 'key_path': ['morphscore', 'per_tokenizer'],
@@ -523,21 +514,6 @@ class LaTeXTableGenerator:
         """
         if metrics is None:
             metrics = ['renyi_1.0', 'avg_token_rank']
-        
-        return self.generate_basic_metrics_table(metrics)
-    
-    def generate_morphological_table(self, metrics: List[str] = None) -> str:
-        """
-        Generate LaTeX table for morphological metrics.
-        
-        Args:
-            metrics: List of metrics to include. If None, uses default set.
-            
-        Returns:
-            LaTeX table string
-        """
-        if metrics is None:
-            metrics = ['morphological_alignment', 'morphscore_recall', 'morphscore_precision']
         
         return self.generate_basic_metrics_table(metrics)
     

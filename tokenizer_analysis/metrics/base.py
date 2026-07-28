@@ -25,7 +25,7 @@ class BaseMetrics(ABC):
     """Base class for tokenizer metrics using TokenizedData interface."""
 
     # Pre-compiled regex patterns for subword marker handling.
-    # Shared by DigitBoundaryMetrics, ASTBoundaryMetrics, and MorphologicalMetrics.
+    # Shared by DigitBoundaryMetrics, ASTBoundaryMetrics and MorphScoreMetrics.
     _SPACE_PREFIX = re.compile(r'^[Ġ▁ ]')
     _CONTINUATION = re.compile(r'^##')
     _END_WORD = re.compile(r'</w>$')

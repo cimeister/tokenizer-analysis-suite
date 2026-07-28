@@ -29,19 +29,27 @@ from tokenizer_analysis.constants import (
 )
 from tokenizer_analysis.visualization.visualization_config import LaTeXFormatting
 
-# Setup environment
-setup_environment()
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("tokenizer_analysis.log"),
-        logging.StreamHandler()
-    ]
-)
 logger = logging.getLogger(__name__)
+
+
+def _configure_cli_logging(log_file: str = "tokenizer_analysis.log") -> None:
+    """Configure root logging for the console script.
+
+    Called from ``main()``, never at import. Doing this at module scope meant
+    that merely importing ``tokenizer_analysis.cli.run_analysis`` from another
+    program reconfigured that program's root logger and created a log file in
+    whatever directory it happened to be running in. A library must leave
+    logging configuration to the application.
+    """
+    setup_environment()
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_file),
+            logging.StreamHandler(),
+        ],
+    )
 
 
 def load_config_from_file(config_path: str) -> Dict:
@@ -475,7 +483,7 @@ _MIGRATION_HINT = "See MIGRATION.md for the full list of changes."
 
 _REMOVED_FLAG_MESSAGES = {
     "--morphological-config": (
-        "--morphological-config was removed in tokenizer-analysis 1.0.0. The standalone "
+        "--morphological-config was removed in tokenizer-intrinsic-evals 1.0.0. The standalone "
         "morphological boundary metric no longer exists; use MorphScore instead via "
         "--morphscore (defaults) or --morphscore-config <file>. " + _MIGRATION_HINT
     ),
@@ -496,7 +504,7 @@ class _RemovedFlagAction(argparse.Action):
     def __call__(self, parser, namespace, values, option_string=None):
         parser.error(_REMOVED_FLAG_MESSAGES.get(
             option_string,
-            f"{option_string} was removed in tokenizer-analysis 1.0.0. " + _MIGRATION_HINT,
+            f"{option_string} was removed in tokenizer-intrinsic-evals 1.0.0. " + _MIGRATION_HINT,
         ))
 
 
@@ -1161,6 +1169,7 @@ def main(argv: Optional[List[str]] = None):
     """Parse CLI arguments and run tokenizer analysis."""
     parser = build_parser()
     args = parser.parse_args(argv)
+    _configure_cli_logging()
     run_from_args(args)
 
 if __name__ == "__main__":

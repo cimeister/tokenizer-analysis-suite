@@ -24,3 +24,7 @@ __all__ = [
     "ASTBoundaryMetrics",
     "UTF8IntegrityMetrics",
 ]
+
+from .._migration import make_module_getattr
+
+__getattr__ = make_module_getattr(__name__, __all__)

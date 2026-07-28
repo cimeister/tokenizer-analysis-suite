@@ -6,6 +6,7 @@ Attempts to import from parent codebase first, falls back to standalone versions
 import math
 import json
 import os
+import warnings
 from typing import Dict, List, Tuple, Any, Optional, Union
 from pathlib import Path
 
@@ -31,7 +32,12 @@ def load_tokenizer_from_config(config, name: str = "tokenizer"):
         TokenizerWrapper instance
     """
     from ..core.tokenizer_wrapper import create_tokenizer_wrapper
-    logger.warning("Deprecated function; Use `create_tokenizer_wrapper` in core.tokenizer_wrapper instead")
+    warnings.warn(
+        "load_tokenizer_from_config() is deprecated; use "
+        "tokenizer_analysis.core.tokenizer_wrapper.create_tokenizer_wrapper() instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     return create_tokenizer_wrapper(name, config)
 
 

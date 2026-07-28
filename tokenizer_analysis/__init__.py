@@ -26,3 +26,7 @@ __all__ = [
     "create_analyzer_from_raw_inputs",
     "create_analyzer_from_tokenized_data"
 ]
+
+from ._migration import make_module_getattr
+
+__getattr__ = make_module_getattr(__name__, __all__)

@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import glob
+import warnings
 
 from ..constants import UNK_CANDIDATES
 
@@ -1162,8 +1163,12 @@ def create_tokenizer_wrapper(name: str, config: Dict[str, Any]) -> TokenizerWrap
     """
     tokenizer_class_name = config.get('class', 'huggingface')  # Default to HF
     if tokenizer_class_name == 'standard':
-        logger.warning("The 'standard' tokenizers class is deprecated. Tokenizers labelled as such class "
-                       "are assumed to be 'huggingface' tokenizers.")
+        warnings.warn(
+            "The 'standard' tokenizer class is deprecated; use 'huggingface' "
+            f"instead. Tokenizer {name!r} will be loaded as 'huggingface'.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
     
     if tokenizer_class_name not in _TOKENIZER_REGISTRY:
         available_classes = list(_TOKENIZER_REGISTRY.keys())
