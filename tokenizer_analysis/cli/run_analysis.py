@@ -438,6 +438,12 @@ def slim_results_for_json(results: Dict) -> Dict:
             slimmed[metric_name] = metric_data
             continue
 
+        # Provenance is not a metric; it has no per_tokenizer block and must
+        # survive verbatim, so the slimming branches below never see it.
+        if metric_name == 'run_metadata':
+            slimmed[metric_name] = metric_data
+            continue
+
         out = {}
 
         # Normalize per-tokenizer entries
@@ -858,6 +864,99 @@ Examples:
     return parser
 
 
+def _file_digest(path: str) -> Optional[str]:
+    """Short SHA-256 of a file, or None if it cannot be read.
+
+    Truncated to 16 hex characters: enough to tell two artifacts apart in a
+    provenance record, short enough to read in a diff.
+    """
+    import hashlib
+
+    try:
+        digest = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                digest.update(chunk)
+        return digest.hexdigest()[:16]
+    except OSError:
+        return None
+
+
+def _git_commit() -> Optional[str]:
+    """Current commit of the repo this package is running from, if any."""
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["git", "-C", os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+             "rev-parse", "HEAD"],
+            capture_output=True, timeout=5,
+        )
+        if out.returncode == 0:
+            return out.stdout.decode().strip()
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return None
+
+
+def _build_run_metadata(args: argparse.Namespace, tokenizer_configs: Dict) -> Dict:
+    """Describe the run, so a results file can be traced back to what made it.
+
+    Without this a results file is untraceable: nothing recorded the package
+    version, the code revision, which configs were read, or which tokenizer
+    files were measured. Two files with different numbers gave no way to tell
+    whether the tokenizer changed, the corpus changed, or the library did.
+
+    Hashes cover the inputs that decide the numbers, so a rerun that produces
+    different values can be attributed.
+    """
+    from tokenizer_analysis import __version__
+
+    tokenizers = {}
+    for name, cfg in (tokenizer_configs or {}).items():
+        entry = {"class": cfg.get("class", "huggingface")}
+        path = cfg.get("path")
+        if path:
+            entry["path"] = path
+            digest = _file_digest(path)
+            if digest:
+                entry["sha256_16"] = digest
+        tokenizers[name] = entry
+
+    configs = {}
+    for flag, value in (
+        ("tokenizer_config", args.tokenizer_config),
+        ("language_config", args.language_config),
+        ("measurement_config", args.measurement_config),
+        ("code_ast_config", args.code_ast_config),
+        ("morphscore_config", args.morphscore_config),
+    ):
+        if value:
+            configs[flag] = {"path": value, "sha256_16": _file_digest(value)}
+
+    return {
+        "package_version": __version__,
+        "git_commit": _git_commit(),
+        "configs": configs,
+        "tokenizers": tokenizers,
+        "corpus": {
+            "input": args.input,
+            "input_label": args.input_label,
+            "use_sample_data": bool(args.use_sample_data),
+            "tokenized_data_file": args.tokenized_data_file,
+            "samples_per_lang": args.samples_per_lang,
+        },
+        "metrics_disabled": sorted(
+            flag for flag, off in (
+                ("code_ast", args.no_code_ast),
+                ("digit_boundary", args.no_digit_boundary),
+                ("utf8_integrity", args.no_utf8_integrity),
+                ("reconstruction", args.no_reconstruction),
+            ) if off
+        ),
+    }
+
+
 def _corpus_source_from_input(input_path: str, label: Optional[str]) -> str:
     """Write a one-language config for --input and return its path.
 
@@ -1177,6 +1276,9 @@ def run_from_args(args: argparse.Namespace):
             # Add grouped results to main results
             results['grouped_analysis'] = grouped_results
     
+    # Record what produced this file, before writing it.
+    results['run_metadata'] = _build_run_metadata(args, tokenizer_configs)
+
     # Save results to JSON (slimmed version)
     results_file = Path(args.output_dir) / "analysis_results.json"
     logger.info(f"Saving slimmed results to {results_file}")

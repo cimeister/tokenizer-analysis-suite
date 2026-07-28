@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "TokEval: intrinsic evaluation metrics for tokenizers"
+abstract: >-
+  A toolkit for computing intrinsic quality metrics for tokenizers across
+  natural language, code, and math: compression, fertility, vocabulary
+  utilization, information-theoretic measures, digit and operator handling,
+  code AST boundary alignment, UTF-8 integrity, reconstruction fidelity, and
+  cross-lingual fairness.
+type: software
+authors:
+  - family-names: Meister
+    given-names: Clara
+repository-code: "https://github.com/cimeister/tokenizer-intrinsic-evals"
+license: MIT
+version: 1.0.0
+date-released: "2026-07-04"
+keywords:
+  - tokenization
+  - subword
+  - evaluation
+  - multilingual
+  - natural language processing

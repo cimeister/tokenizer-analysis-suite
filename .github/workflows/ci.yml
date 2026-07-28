@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor and the ceiling of the supported range. requires-python is
+        # >=3.10, and until this job existed the floor had never been executed.
+        python-version: ["3.10", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install
+        run: uv sync --extra parquet
+
+      - name: Run tests
+        # -W error::DeprecationWarning so the library's own deprecations stay
+        # visible rather than decaying into log noise nobody reads.
+        run: uv run pytest tokenizer_analysis/tests -q -W error::DeprecationWarning
+
+      - name: Run the demo end to end
+        # The quickstart is the first thing a new user runs; a green unit suite
+        # does not tell us it still works.
+        run: uv run tokenizer-analysis --use-sample-data --samples-per-lang 20 --no-plots --output-dir /tmp/ci
+
+      - name: Check the results file is strict JSON
+        run: |
+          uv run python -c "
+          import json, sys
+          def reject(c):
+              raise ValueError(f'non-standard JSON token: {c}')
+          d = json.load(open('/tmp/ci/analysis_results.json'), parse_constant=reject)
+          assert 'run_metadata' in d, 'results file has no provenance block'
+          print(f'{len(d) - 1} metrics, strict JSON, provenance present')
+          "
+
+      - name: Failure paths must exit non-zero
+        run: |
+          set +e
+          uv run tokenizer-analysis --tokenizer-config configs/sample_tokenizers.json --output-dir /tmp/ci2
+          test $? -ne 0 || { echo "no corpus flag should have failed"; exit 1; }
+          uv run tokenizer-analysis --use-sample-data --tokenizer-config configs/sample_tokenizers.json --output-dir /tmp/ci3
+          test $? -ne 0 || { echo "conflicting flags should have failed"; exit 1; }
+          uv run tokenizer-analysis --use-sample-data --morphological-config x
+          test $? -ne 0 || { echo "removed flag should have failed"; exit 1; }
+          echo "all failure paths exited non-zero"
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Build the wheel
+        run: uv build --wheel -o dist
+      - name: The wheel must carry its license and no tests
+        run: |
+          uv run python -c "
+          import glob, zipfile
+          names = zipfile.ZipFile(glob.glob('dist/*.whl')[0]).namelist()
+          assert not any('/tests/' in n for n in names), 'tests shipped in the wheel'
+          assert any(n.endswith('py.typed') for n in names), 'py.typed missing'
+          assert any('LICENSE' in n for n in names), 'LICENSE missing'
+          assert any('NOTICE' in n for n in names), 'NOTICE missing (FLORES+ attribution)'
+          print('wheel contents OK')
+          "
