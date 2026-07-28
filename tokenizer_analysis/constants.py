@@ -35,7 +35,10 @@ ARRAY_SAMPLING_POINTS = 50
 DEFAULT_RENYI_ALPHAS: List[float] = [1.0, 2.0, 2.5, 3.0]
 SHANNON_ENTROPY_ALPHA = 1.0
 
-DEFAULT_SAFE_DIVIDE_VALUE = 0.0
+# Value published when a rate has no denominator, i.e. nothing was measured.
+# None, not 0.0: a zero here is indistinguishable from a measured zero, and the
+# JSON is the artifact people read. Changed in 1.0; see CHANGELOG.
+DEFAULT_SAFE_DIVIDE_VALUE = None
 
 PERCENTAGE_MULTIPLIER = 100
 DEFAULT_PRECISION = 4

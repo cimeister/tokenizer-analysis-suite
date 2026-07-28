@@ -396,8 +396,23 @@ class BaseMetrics(ABC):
         }
     
     @staticmethod
-    def safe_divide(numerator: float, denominator: float, default: float = DEFAULT_SAFE_DIVIDE_VALUE) -> float:
-        """Safely divide two numbers, returning default if denominator is zero."""
+    def safe_divide(
+        numerator: float,
+        denominator: float,
+        default: Optional[float] = DEFAULT_SAFE_DIVIDE_VALUE,
+    ) -> Optional[float]:
+        """Divide, returning *default* when the denominator is zero.
+
+        *default* is ``None`` package-wide as of 1.0. It used to be ``0.0``,
+        which made "there was nothing to measure" indistinguishable from "the
+        measured value is zero" in every rate the pipeline publishes. A reader
+        of the JSON could not tell a tokenizer that never emitted an UNK from
+        one with no UNK token at all, or a domain with perfect whitespace
+        fidelity from a domain containing no whitespace.
+
+        Callers that genuinely want a number for the empty case must pass one
+        explicitly, which makes the choice visible at the call site.
+        """
         return numerator / denominator if denominator != 0 else default
     
     def compute_pairwise_comparisons(self, values: Dict[str, float], metric_name: str = "metric") -> Dict[str, Dict[str, Any]]:
@@ -423,17 +438,24 @@ class BaseMetrics(ABC):
         return comparisons
     
     @staticmethod
-    def empty_stats() -> Dict[str, float]:
-        """Return empty statistics dictionary with zero values."""
+    def empty_stats() -> Dict[str, Optional[float]]:
+        """Statistics dict for the case where nothing could be measured.
+
+        Every statistic is ``None``, not ``0.0``. ``count: 0`` is the tell that
+        the entry is empty, but it sat beside six zeros that read as measured
+        values, and consumers that charted `mean` drew a real-looking bar at
+        the origin. ``count`` and ``sum`` stay numeric because zero of
+        something is a true statement about the sample size.
+        """
         return {
-            'mean': 0.0,
-            'median': 0.0,
-            'std': 0.0,
-            'std_err': 0.0,
-            'min': 0.0,
-            'max': 0.0,
+            'mean': None,
+            'median': None,
+            'std': None,
+            'std_err': None,
+            'min': None,
+            'max': None,
             'count': 0,
-            'sum': 0
+            'sum': 0,
         }
     
     @staticmethod

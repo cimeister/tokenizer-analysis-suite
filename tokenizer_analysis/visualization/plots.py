@@ -318,13 +318,28 @@ def plot_gini_coefficient(results: Dict[str, Any], save_path: str, tokenizer_nam
 
 
 def plot_lorenz_curves(results: Dict[str, Any], save_path: str, tokenizer_names: List[str]):
-    """Plot Lorenz curves for fairness analysis."""
-    if 'lorenz_curve_data' not in results:
+    """Plot Lorenz curves for fairness analysis.
+
+    The curve data lives under ``tokenizer_fairness_gini`` since 1.0, because
+    ``1 - 2*area(lorenz)`` equals the Gini coefficient exactly and the two were
+    published as separate metrics. The old top-level key is still accepted so a
+    results file written before the merge still plots.
+    """
+    lorenz_data = None
+    if 'lorenz_curve_data' in results:
+        lorenz_data = results['lorenz_curve_data'].get('per_tokenizer', {})
+    elif 'tokenizer_fairness_gini' in results:
+        gini_per_tok = results['tokenizer_fairness_gini'].get('per_tokenizer', {})
+        lorenz_data = {
+            tok: entry['lorenz_curve']
+            for tok, entry in gini_per_tok.items()
+            if isinstance(entry, dict) and 'lorenz_curve' in entry
+        }
+    if not lorenz_data:
         return
-        
+
     fig, ax = plt.subplots()
-    lorenz_data = results['lorenz_curve_data']['per_tokenizer']
-    
+
     for tok_name in tokenizer_names:
         if tok_name in lorenz_data:
             data = lorenz_data[tok_name]

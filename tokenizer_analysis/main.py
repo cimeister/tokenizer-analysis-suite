@@ -20,6 +20,7 @@ from .metrics.morphscore import MorphScoreMetrics
 from .metrics.math import DigitBoundaryMetrics
 from .metrics.code_ast import ASTBoundaryMetrics
 from .metrics.utf8_integrity import UTF8IntegrityMetrics
+from .metrics.redundancy import merge_redundant_metrics
 from .visualization import TokenizerVisualizer
 from .visualization.latex_tables import LaTeXTableGenerator
 from .config import TextMeasurementConfig, DEFAULT_TEXT_MEASUREMENT_CONFIG
@@ -269,6 +270,12 @@ class UnifiedTokenizerAnalyzer:
 
             if verbose:
                 self.utf8_integrity_metrics.print_results(utf8_results)
+
+        # Fold metrics that restate one another into the metric that owns the
+        # measurement, so the results file does not present one number twice as
+        # if it were two pieces of evidence. See metrics/redundancy.py for the
+        # correlation and identity behind each merge.
+        results = merge_redundant_metrics(results)
 
         # Save tokenized data if requested
         if save_tokenized_data:

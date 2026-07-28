@@ -100,7 +100,16 @@ class TokenizerGiniMetrics(BaseMetrics):
                 'description': 'Tokenizer Fairness Gini coefficient measures equitable treatment across languages',
                 'formula': 'TFG = Σᵢ Σⱼ |c_i - c_j| / (2 * n² * μ)',
                 'interpretation': 'Lower values indicate more equitable treatment (0 = perfect equality)',
+                'max_attainable': '(n-1)/n for n languages, not 1',
+                'aggregation': 'macro_languages',
+                'std_ddof': 1,
                 'normalization_method': self.measurement_config.method.value,
+                'comparability': (
+                    'Comparable only across runs using the same language set and the '
+                    'same normalization method. Latin-only and full-13-language '
+                    'subsets of the same corpus rank tokenizers at Spearman 0.28, '
+                    'and line-normalized against byte-normalized at -0.11.'
+                ),
             }
         }
 
@@ -123,12 +132,26 @@ class TokenizerGiniMetrics(BaseMetrics):
             total_costs = list(language_costs.values())
 
             if len(language_costs) < MIN_LANGUAGES_FOR_GINI:
-                logger.warning(f"Insufficient language data for TFG calculation for {tok_name}")
+                # Inequality across languages is undefined for fewer than two of
+                # them. This used to publish gini_coefficient 0.0 and mean_cost
+                # 0.0, which read as perfect fairness and zero cost; mean_cost
+                # was also contradicted by the language_costs entry sitting
+                # beside it. Both are None now, and the warning stays.
+                logger.warning(
+                    "Tokenizer fairness Gini needs at least %d languages; %s has %d, "
+                    "so the coefficient is reported as null rather than 0.0.",
+                    MIN_LANGUAGES_FOR_GINI, tok_name, len(language_costs),
+                )
                 results['per_tokenizer'][tok_name] = {
-                    'gini_coefficient': 0.0,
-                    'mean_cost': 0.0,
+                    'gini_coefficient': None,
+                    'mean_cost': (float(np.mean(list(language_costs.values())))
+                                  if language_costs else None),
                     'language_costs': language_costs,
-                    'warning': 'Insufficient language data for meaningful TFG calculation'
+                    'num_languages': len(language_costs),
+                    'warning': (
+                        f'Undefined for fewer than {MIN_LANGUAGES_FOR_GINI} languages '
+                        f'(got {len(language_costs)})'
+                    ),
                 }
                 continue
             
@@ -148,15 +171,23 @@ class TokenizerGiniMetrics(BaseMetrics):
             if mu > 0 and n > 0:
                 tfg = sum_absolute_differences / (2 * n * n * mu)
             else:
-                tfg = 0.0
+                # A zero mean cost means no tokens were produced for any
+                # language, so there is no inequality to report, not equality.
+                tfg = None
             
             # Additional statistics for analysis
             min_cost = min(total_costs)
             max_cost = max(total_costs)
-            std_cost = np.std(total_costs)
+            # ddof=1 to match BaseMetrics.compute_basic_stats and
+            # vocabulary_utilization's per_language_std, which both use the
+            # sample convention. At 13 languages the population form understated
+            # this by 4.1%. It is echoed into metadata so old files stay readable.
+            std_cost = np.std(total_costs, ddof=1) if len(total_costs) > 1 else None
             
             # Compute cost ratios (max/min)
-            cost_ratio = max_cost / min_cost if min_cost > 0 else float('inf')
+            # None, not inf: json.dump writes bare Infinity, which is not valid
+            # JSON and fails strict parsers such as JavaScript's JSON.parse.
+            cost_ratio = max_cost / min_cost if min_cost > 0 else None
             
             # Identify most and least efficient languages
             sorted_langs = sorted(language_costs.items(), key=lambda x: x[1])

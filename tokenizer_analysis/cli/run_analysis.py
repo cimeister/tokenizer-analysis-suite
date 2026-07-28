@@ -21,6 +21,7 @@ from tokenizer_analysis.utils import setup_environment
 from tokenizer_analysis.config.language_metadata import LanguageMetadata
 from tokenizer_analysis.loaders.multilingual_data import load_multilingual_data
 from tokenizer_analysis.core.input_utils import InputLoader
+from tokenizer_analysis.metrics.redundancy import MERGES as _MERGES
 from tokenizer_analysis.constants import (
     LARGE_ARRAY_THRESHOLD,
     ARRAY_SAMPLING_POINTS,
@@ -200,6 +201,14 @@ def _slim_tokenizer_entry(metric_name: str, tok_data: dict) -> dict:
         return tok_data
 
     out = {}
+
+    # Fields folded in from a redundant metric (see metrics/redundancy.py) are
+    # carried through unchanged. Every branch below rebuilds `out` from a
+    # per-metric whitelist, so without this they would be dropped and the merge
+    # would silently delete the secondary metric rather than relocate it.
+    for _sec, _pri, _field, _ in _MERGES:
+        if metric_name == _pri and _field in tok_data:
+            out[_field] = tok_data[_field]
 
     # --- Metrics with a standard 'global' stats dict ---
     if metric_name in ('fertility', 'avg_tokens_per_line'):
