@@ -6,6 +6,69 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed (output format, breaking)
+- A value that could not be measured is now `null`, not `0.0`. This affects
+  every rate the pipeline publishes, via `BaseMetrics.safe_divide` and
+  `BaseMetrics.empty_stats()`. A tokenizer that never emitted an UNK and one
+  with no UNK token at all both reported `unk_token_rate: 0.0`; a domain
+  containing no whitespace reported `whitespace_fidelity: 1.0` beside domains
+  that genuinely preserved it. `count` and `sum` stay numeric.
+- Six metrics are folded into the metric that owns the measurement, so the
+  results file no longer publishes one number twice. Four are algebraic
+  identities that hold for every tokenizer, not empirical correlations.
+
+  | Was a top-level metric | Now reported under | Field | Evidence |
+  |---|---|---|---|
+  | `avg_tokens_per_line` | `compression_rate` | `tokens_per_line` | product = 1.000000 |
+  | `type_token_ratio` | `vocabulary_utilization` | `type_token_ratio` | identity = 1.000000 |
+  | `unigram_distribution_metrics` | `renyi_efficiency` | `unigram_distribution` | identity, zero relative error |
+  | `utf8_char_split` | `utf8_token_integrity` | `char_split` | Spearman -0.954 |
+  | `lorenz_curve_data` | `tokenizer_fairness_gini` | `lorenz_curve` | identity to 1e-6 |
+  | `digit_split_variability` | `three_digit_boundary_alignment` | `split_variability` | Spearman -0.992 |
+
+  Measured across 37 tokenizers on 13 FLORES+ languages. Each primary records
+  the merge and its evidence under `metadata.merged_metrics`.
+- `tokenizer_fairness_gini` with fewer than two languages reports
+  `gini_coefficient: null` and the real `mean_cost`, instead of `0.0` for both,
+  which read as perfect fairness and zero cost.
+- `cost_ratio` returns `null` rather than `float('inf')` when the minimum cost
+  is zero. `json.dump` wrote that as the bare token `Infinity`, which is not
+  valid JSON and is rejected by strict parsers.
+- `tokenizer_fairness_gini.std_cost` uses `ddof=1`, matching
+  `compute_basic_stats` and `vocabulary_utilization`. The population form
+  understated it by 4.1% at 13 languages.
+- `identifier_fragmentation` excludes identifier spans that could not be mapped
+  into the reconstructed text, and reports them as `unmappable`, instead of
+  counting them as fragmented with a token count of -1.
+
+### Fixed (metric correctness)
+- `_build_source_to_recon_map` advanced only on a match, so one character the
+  reconstruction added (a byte-level vocabulary renders `é` as `Ã©`) left it
+  stuck and unmapped the rest of the document. Consumers score an unmappable
+  span as a miss, so this dropped digit spans and marked AST nodes misaligned.
+  Digit spans measured on the demo corpus went from 358 to 456; English from 116
+  to 143 of the 143 present.
+- UTF-8 byte-level detection counted vocabulary marker characters against a
+  threshold of 50 of 68. A byte-level tokenizer whose training corpus never
+  exercised the control bytes fell below it, was read as not byte-level, and
+  could then only report a completeness of 1.0. `gpt4o-english-bpe` reported
+  1.0000, best of 37 tokenizers, against a true 0.6688, worst of 37. Detection
+  now reads the tokenizer's own ByteLevel components.
+- `CodeDataLoader` strips a leading byte-order mark and normalizes CRLF. Two of
+  the three bundled C# samples carry a BOM, which a byte-level tokenizer
+  re-encodes as three visible characters, making 63% of C# AST spans unmappable
+  and giving C# 0.13 to 0.19 alignment against a 0.51 to 0.70 median for every
+  tokenizer alike.
+- `LanguageMetadata` accessors read `analysis_groups['script_families']`
+  (plural) while every shipped config writes `script_family`, so
+  `get_script_families()` returned `[]` and `get_script_family()` returned
+  `'Unknown'` for every language. Both spellings now resolve.
+- `LanguageMetadata` accepts the `{"en": "/path/to/data"}` short form the README
+  has always documented; it previously raised `AttributeError`.
+- Directory input globs are sorted. They feed a `--samples-per-lang`
+  truncation, so filesystem order decided which texts were analyzed.
+- `scipy.stats` is imported explicitly in `metrics/base.py`.
+
 ### Removed
 - The cumulative Markdown leaderboard, along with the `--update-results-md`,
   `--dataset` and `--sort-results-by` flags, the generated `RESULTS.md` and its
