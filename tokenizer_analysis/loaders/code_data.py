@@ -156,6 +156,35 @@ class CodeDataLoader:
                 f", capped at {cap}" if cap_active else "",
             )
 
+    # U+FEFF as a leading character is a byte-order mark, not content.
+    _BOM = "﻿"
+
+    @classmethod
+    def _normalize_source(cls, text: str) -> str:
+        """Strip a leading BOM and normalize line endings to LF.
+
+        Files are read in binary and decoded per line, so Python's
+        universal-newline translation does not apply and plain ``utf-8`` leaves
+        a BOM in place. Both then reach the metrics as if they were part of the
+        code's layout.
+
+        The BOM is the more damaging of the two. A byte-level tokenizer
+        re-encodes U+FEFF as three visible characters, so the reconstructed text
+        starts with characters the source does not contain. The greedy scan in
+        ``BaseMetrics._build_source_to_recon_map`` stalls at index 0 and maps the
+        whole snippet to None, and every AST span in it is then charged to the
+        tokenizer as misaligned. Two of the three bundled C# samples carry a BOM,
+        which is why C# scored 0.13 to 0.19 against a 0.51 to 0.70 median for
+        every tokenizer alike, and why identifier_fragmentation reported a
+        negative tokens-per-identifier for C#.
+
+        CRLF matters for the indentation metrics, which measure leading
+        whitespace per line; a trailing ``\\r`` is not indentation.
+        """
+        if text.startswith(cls._BOM):
+            text = text[len(cls._BOM):]
+        return text.replace("\r\n", "\n").replace("\r", "\n")
+
     @classmethod
     def _read_file(cls, path: str, max_chars: Optional[int] = None) -> Optional[str]:
         """Read a text file, returning ``None`` on failure or empty content.
@@ -184,6 +213,7 @@ class CodeDataLoader:
                     lines.append(line)
                     chars_read += len(line)
             text = "".join(lines)
+            text = cls._normalize_source(text)
             if not text or not text.strip():
                 return None
             return text.rstrip()
@@ -239,7 +269,7 @@ class CodeDataLoader:
         for raw in df[content_column]:
             if not isinstance(raw, str) or not raw.strip():
                 continue
-            text = cls._strip_starcoder_metadata(raw)
+            text = cls._normalize_source(cls._strip_starcoder_metadata(raw))
             text = text[:max_chars].rstrip()
             if not text.strip():
                 continue
@@ -279,8 +309,16 @@ class CodeDataLoader:
         Each snippet exercises all five AST node categories: identifiers,
         keywords, operators, literals, and delimiters.
 
-        Samples are loaded from ``sample_data/code_samples.json``.
+        Samples are loaded from ``sample_data/code_samples.json``. They are real
+        scraped files, so they carry real artifacts: two of the three C# samples
+        begin with a byte-order mark and several use CRLF. Both are normalized
+        here for the same reason they are normalized on the file and parquet
+        paths, see :meth:`_normalize_source`.
         """
         path = CodeDataLoader._BUILTIN_CODE_SAMPLES_PATH
         with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
+            samples = json.load(f)
+        return {
+            lang: [CodeDataLoader._normalize_source(s) for s in snippets]
+            for lang, snippets in samples.items()
+        }

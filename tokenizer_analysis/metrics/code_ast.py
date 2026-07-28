@@ -63,6 +63,36 @@ def _treesitter_pack_version() -> str:
         return "unknown"
 
 
+def _identifier_stats(items: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Summarize identifier records, excluding spans that could not be mapped.
+
+    An identifier whose span could not be located in the reconstructed text has
+    ``num_tokens is None``. That is a failure to measure, so it is counted and
+    reported under ``unmappable`` but kept out of both rates. Treating it as a
+    fragmented identifier with a token count of -1 made
+    ``avg_tokens_per_identifier`` negative for C# under every tokenizer, which
+    is not a possible token count.
+
+    Returns None when nothing was measurable, so the caller can omit the entry
+    rather than publish a zero.
+    """
+    total = len(items)
+    mapped = [it for it in items if it["num_tokens"] is not None]
+    unmappable = total - len(mapped)
+    if not mapped:
+        return None
+    return {
+        "fragmentation_rate": float(
+            sum(1 for it in mapped if it["fragmented"]) / len(mapped)
+        ),
+        "avg_tokens_per_identifier": float(
+            sum(it["num_tokens"] for it in mapped) / len(mapped)
+        ),
+        "count": len(mapped),
+        "unmappable": unmappable,
+    }
+
+
 def parse_snippets_fenced(
     code_snippets: Dict[str, List[str]],
     lang_to_treesitter: Dict[str, str],
@@ -865,10 +895,21 @@ class ASTBoundaryMetrics(BaseMetrics):
                                 num_tokens = self._count_identifier_tokens_fast(
                                     c_start, c_end, s2r_arr, c2t_arr, c2t_len
                                 )
+                                # num_tokens is None when the identifier span
+                                # could not be mapped into the reconstructed
+                                # text. That is a measurement failure, not a
+                                # fragmented identifier, so it is recorded as
+                                # unmappable and excluded from both rates rather
+                                # than counted as fragmented with a -1 token
+                                # count. Averaging that sentinel produced a
+                                # negative avg_tokens_per_identifier for C# in
+                                # every tokenizer.
                                 ident_acc[tok_name][code_lang].append({
                                     "text": ident_texts[span_idx],
-                                    "num_tokens": num_tokens if num_tokens is not None else -1,
-                                    "fragmented": num_tokens is None or num_tokens > 1,
+                                    "num_tokens": num_tokens,
+                                    "fragmented": (
+                                        None if num_tokens is None else num_tokens > 1
+                                    ),
                                 })
 
                     # Indentation consistency (whitespace-significant languages)
@@ -1034,33 +1075,27 @@ class ASTBoundaryMetrics(BaseMetrics):
                 if not items:
                     continue
 
-                frag_rate = sum(1 for it in items if it["fragmented"]) / len(items)
-                avg_tokens = sum(it["num_tokens"] for it in items) / len(items)
-
-                tok_data["by_language"][code_lang] = {
-                    "fragmentation_rate": float(frag_rate),
-                    "avg_tokens_per_identifier": float(avg_tokens),
-                    "count": len(items),
-                }
+                stats = _identifier_stats(items)
+                if stats is None:
+                    continue
+                tok_data["by_language"][code_lang] = stats
                 all_items.extend(items)
                 languages_seen.add(code_lang)
 
-            if all_items:
-                overall_frag = sum(1 for it in all_items if it["fragmented"]) / len(all_items)
-                overall_avg = sum(it["num_tokens"] for it in all_items) / len(all_items)
-                tok_data["overall"] = {
-                    "fragmentation_rate": float(overall_frag),
-                    "avg_tokens_per_identifier": float(overall_avg),
-                    "count": len(all_items),
-                }
+            overall_stats = _identifier_stats(all_items) if all_items else None
+            if overall_stats is not None:
+                tok_data["overall"] = overall_stats
+                overall_frag = overall_stats["fragmentation_rate"]
+                overall_avg = overall_stats["avg_tokens_per_identifier"]
 
             results["per_tokenizer"][tok_name] = tok_data
 
-            if all_items:
+            if overall_stats is not None:
                 results["summary"][tok_name] = {
                     "fragmentation_rate": float(overall_frag),
                     "avg_tokens_per_identifier": float(overall_avg),
-                    "identifiers_analyzed": len(all_items),
+                    "identifiers_analyzed": overall_stats["count"],
+                    "identifiers_unmappable": overall_stats["unmappable"],
                     "languages_analyzed": len(languages_seen),
                 }
 
