@@ -429,12 +429,35 @@ def test_18_emoji_control_smoke(byte_level_hf_wrapper):
 
 def test_19_cli_positional_and_unknown_class(tmp_path):
     """CLI: positional builds wrapper; unknown class -> exit 3;
-    a loaded-but-failing tokenizer -> exit 2; --exit-zero -> 0."""
+    a loaded-but-failing tokenizer -> exit 2; --exit-zero -> 0.
+
+    The failing tokenizer is trained here rather than loaded from
+    ``test_tokenizers/``, which is gitignored and untracked: this test could not
+    pass in a fresh clone or in CI. It is trained without
+    ``initial_alphabet=ByteLevel.alphabet()`` so its vocabulary covers only the
+    bytes the corpus exercised, which is what makes it fail the byte-coverage
+    check.
+    """
+    from tokenizers import Tokenizer
+    from tokenizers.models import BPE
+    from tokenizers.trainers import BpeTrainer
+    from tokenizers.pre_tokenizers import ByteLevel
+    from tokenizers.decoders import ByteLevel as ByteLevelDecoder
+
+    tok = Tokenizer(BPE(unk_token="<unk>"))
+    tok.pre_tokenizer = ByteLevel(add_prefix_space=False)
+    tok.decoder = ByteLevelDecoder()
+    tok.train_from_iterator(
+        _CORPUS,
+        trainer=BpeTrainer(vocab_size=200, special_tokens=["<unk>"]),
+    )
+    incomplete = tmp_path / "incomplete_byte_coverage.json"
+    tok.save(str(incomplete))
+
     code = cli_main(["bogus:foo"])
     assert code == 3
-    code = cli_main(["huggingface:test_tokenizers/test_bpe_tok-gpt4.json",
-                     "--quiet"])
-    assert code in (1, 2)            # this small tokenizer fails C1
+    code = cli_main([f"huggingface:{incomplete}", "--quiet"])
+    assert code in (1, 2), "a tokenizer with partial byte coverage should not pass"
     assert cli_main(["bogus:foo", "--exit-zero"]) == 0
 
 
