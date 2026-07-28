@@ -43,7 +43,7 @@ writes `avg_morphscore_recall: 0.0`, `avg_morphscore_precision: 0.0`,
 is recorded as scoring zero on morphological alignment. The only tell is
 `languages_evaluated: 0` beside four zeros that read as scores.
 
-### S5. A single corpus reports perfect fairness: **open**
+### S5. A single corpus reports perfect fairness: **fixed**
 `metrics/gini.py:125-133`. One corpus gives `{"gini_coefficient": 0.0,
 "mean_cost": 0.0, "std_cost": null, "num_languages": null, "warning": "..."}`
 while the sibling `per_language` block in the same object records a cost of
@@ -51,7 +51,7 @@ while the sibling `per_language` block in the same object records a cost of
 neighbouring field. `--input` makes this the common case rather than an edge
 case.
 
-### S6. `empty_stats()` and `safe_divide` return 0.0 for absent data: **open**
+### S6. `empty_stats()` and `safe_divide` return 0.0 for absent data: **fixed**
 Plot rendering was fixed first (a null was drawn as a zero-height bar, and the
 grouped plotter substituted 0 on any extractor failure), so the metric-side
 change can now land without breaking the figures.
@@ -91,6 +91,7 @@ call sites catch it, log, and return `[]`. A user without the `parquet` extra
 gets a run that completes with silently zero data for every parquet source.
 
 ### S12. `include_empty_splits` is ignored for two counting methods: **open**
+
 `config/text_measurement.py`. The flag is honoured by `python_split`,
 `regex_whitespace` and `custom_regex` line counting, but not by
 `hf_whitespace` word counting or `newline_split` line counting. Setting it
@@ -356,6 +357,21 @@ this purpose: at n=9, 110 of 153 pairs exceed |rho| 0.95, which is noise.
 ---
 
 ## Packaging and release
+
+Fixed in this pass: license metadata and `license-files` so the wheel carries
+LICENSE and NOTICE; `py.typed`; tests excluded from the wheel; dependency
+ceilings with the matplotlib and scipy floors raised; `fastparquet` dropped from
+the `parquet` extra; the `Development Status` classifier; a `.github/workflows`
+CI job covering Python 3.10 and 3.12, the quickstart, strict-JSON and provenance
+assertions, three failure paths and the wheel contents; `CITATION.cff`,
+`SECURITY.md` and `CODE_OF_CONDUCT.md`; and the gitignored fixture that made
+`test_sanity_check.py` unpassable in a fresh clone.
+
+Also fixed: several release commits used `git add -A` and swept 40 untracked
+research-scaffolding files into the branch. They were untracked again with
+`git rm --cached` and added to `.gitignore`.
+
+Still open below.
 
 - `pyproject.toml` has no `license` or `license-files` field, so the wheel
   carries no license text. `NOTICE`, which carries the CC-BY-SA 4.0 attribution
