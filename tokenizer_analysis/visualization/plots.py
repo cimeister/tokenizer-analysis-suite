@@ -29,6 +29,27 @@ TOL_COLORS = [
 ]
 
 
+def _plottable(value: Any) -> float:
+    """Map a metric value to something matplotlib can draw, without inventing one.
+
+    Missing data is ``None`` throughout the metrics (see
+    ``BaseMetrics.safe_divide`` and ``UTF8IntegrityMetrics._ratio``). Passing
+    that to matplotlib raises, and substituting 0.0 draws a zero-height bar that
+    a reader cannot tell from a measured zero. NaN is the one value matplotlib
+    renders as absent, so that is what missing data becomes here.
+    """
+    if value is None:
+        return float('nan')
+    if isinstance(value, (int, float)):
+        return float(value)
+    return float('nan')
+
+
+def _finite(values: List[float]) -> List[float]:
+    """Keep only values that are real measurements, for means and guards."""
+    return [v for v in values if v is not None and not np.isnan(v)]
+
+
 def setup_plot_style():
     """Setup consistent plotting style."""
     plt.rcParams.update({
@@ -218,7 +239,8 @@ def plot_metric_bar_chart(results: Dict[str, Any], save_path: str, tokenizer_nam
                color=colors, alpha=0.8)
 
         if show_global_lines:
-            global_mean = np.mean(values)
+            measured = _finite(values)
+            global_mean = np.mean(measured) if measured else float('nan')
             ax.axhline(y=global_mean, color='red', linestyle='--', alpha=0.7,
                        label=f'Global Average: {global_mean:{global_avg_fmt}}')
             ax.legend()
@@ -487,14 +509,14 @@ def plot_grouped_analysis(grouped_results: Dict[str, Dict[str, Any]], save_dir: 
                 tok_name in group_data[group_name][metric_name]['per_tokenizer']):
                 tok_data = group_data[group_name][metric_name]['per_tokenizer'][tok_name]
                 try:
-                    values.append(value_extractor(tok_data))
+                    values.append(_plottable(value_extractor(tok_data)))
                 except (KeyError, TypeError) as e:
                     logger.warning(
                         f"Extractor failed for {metric_name}/{group_name}/{tok_name}: {e}"
                     )
-                    values.append(0)
+                    values.append(float('nan'))
             else:
-                values.append(0)
+                values.append(float('nan'))
 
         ax.bar(x_pos + i * width, values, width, label=tok_name, color=colors[i], alpha=0.8)
     
@@ -638,16 +660,18 @@ def _plot_per_language_combined_subplots(results: Dict[str, Any], save_dir: str,
                         
                         # Handle different data structures based on your changes
                         if metric_key == 'vocabulary_utilization':
-                            value = lang_stats.get('utilization', 0.0) * 100
-                        elif metric_key == 'compression_rate':
-                            # Use your scalar value structure
-                            value = lang_stats if isinstance(lang_stats, (int, float)) else lang_stats.get('mean', 0.0)
-                        elif metric_key == 'tokenizer_fairness_gini':
-                            value = lang_stats if isinstance(lang_stats, (int, float)) else lang_stats.get('mean', 0.0)
+                            util = (lang_stats.get('utilization')
+                                    if isinstance(lang_stats, dict) else None)
+                            value = None if util is None else util * 100
+                        elif metric_key in ('compression_rate', 'tokenizer_fairness_gini'):
+                            value = (lang_stats if isinstance(lang_stats, (int, float))
+                                     else lang_stats.get('mean'))
                         elif metric_key == 'bigram_entropy':
-                            value = lang_stats.get('bigram_entropy', 0.0) if isinstance(lang_stats, dict) else lang_stats
+                            value = (lang_stats.get('bigram_entropy')
+                                     if isinstance(lang_stats, dict) else lang_stats)
                         else:
-                            value = lang_stats.get('mean', 0.0) if isinstance(lang_stats, dict) else lang_stats
+                            value = (lang_stats.get('mean')
+                                     if isinstance(lang_stats, dict) else lang_stats)
                         
                         lang_data[lang][tok_name] = value
         
@@ -693,12 +717,14 @@ def _plot_per_language_combined_subplots(results: Dict[str, Any], save_dir: str,
         width = 0.8 / len(tokenizer_names)
         
         for j, tok_name in enumerate(tokenizer_names):
-            values = [lang_data.get(lang, {}).get(tok_name, 0) for lang in languages]
+            values = [_plottable(lang_data.get(lang, {}).get(tok_name))
+                      for lang in languages]
             ax.bar(x_pos + j * width, values, width, label=tok_name, color=colors[j], alpha=0.8)
 
             # Add global reference line if requested
-            if show_global_lines and values and any(v > 0 for v in values):
-                global_mean = np.mean([v for v in values if v > 0])
+            measured = _finite(values)
+            if show_global_lines and measured:
+                global_mean = np.mean(measured)
                 ax.axhline(y=global_mean, color=colors[j], linestyle='--', alpha=0.6,
                           linewidth=1.5)
         
@@ -741,12 +767,13 @@ def _plot_per_language_grouped_bars(lang_data: Dict[str, Dict[str, float]],
     colors = get_colors(len(tokenizer_names))
 
     for i, tok_name in enumerate(tokenizer_names):
-        values = [lang_data[lang].get(tok_name, 0) for lang in languages]
+        values = [_plottable(lang_data[lang].get(tok_name)) for lang in languages]
         ax.bar(x_pos + i * width, values, width, label=tok_name, color=colors[i], alpha=0.8)
 
         # Add global reference line if requested
         if show_global_lines and values:
-            global_mean = np.mean(values)
+            measured = _finite(values)
+            global_mean = np.mean(measured) if measured else float('nan')
             ax.axhline(y=global_mean, color=colors[i], linestyle='--', alpha=0.6,
                       linewidth=1.5)
     
@@ -804,7 +831,7 @@ def _plot_per_language_fertility(results, save_dir, tokenizer_names, show_global
     """Plot per-language fertility comparison with grouped bars."""
     _plot_per_language_metric(
         results, save_dir, tokenizer_names, 'fertility',
-        lambda s: s.get('mean', 0.0) if isinstance(s, dict) else s,
+        lambda s: s.get('mean') if isinstance(s, dict) else s,
         'fertility_per_language.svg', show_global_lines,
     )
 
@@ -813,7 +840,7 @@ def _plot_per_language_compression_rate(results, save_dir, tokenizer_names, show
     """Plot per-language compression rate comparison with grouped bars."""
     _plot_per_language_metric(
         results, save_dir, tokenizer_names, 'compression_rate',
-        lambda s: s if isinstance(s, (int, float)) else s.get('mean', 0.0),
+        lambda s: s if isinstance(s, (int, float)) else s.get('mean'),
         'compression_rate_per_language.svg', show_global_lines,
     )
 
@@ -822,7 +849,8 @@ def _plot_per_language_vocabulary_utilization(results, save_dir, tokenizer_names
     """Plot per-language vocabulary utilization comparison with grouped bars."""
     _plot_per_language_metric(
         results, save_dir, tokenizer_names, 'vocabulary_utilization',
-        lambda s: s.get('utilization', 0.0) * 100 if isinstance(s, dict) else s,
+        lambda s: (lambda u: None if u is None else u * 100)(s.get('utilization'))
+        if isinstance(s, dict) else s,
         'vocabulary_utilization_per_language.svg', show_global_lines,
     )
 
@@ -831,7 +859,7 @@ def _plot_per_language_gini_coefficient(results, save_dir, tokenizer_names, show
     """Plot per-language Gini coefficient comparison with grouped bars."""
     _plot_per_language_metric(
         results, save_dir, tokenizer_names, 'tokenizer_fairness_gini',
-        lambda s: s if isinstance(s, (int, float)) else s.get('mean', 0.0),
+        lambda s: s if isinstance(s, (int, float)) else s.get('mean'),
         'tokenizer_fairness_gini_per_language.svg', show_global_lines,
     )
 
@@ -889,22 +917,25 @@ def _plot_faceted_metric(results: Dict[str, Any], save_dir: str,
                 if metric_name == 'vocabulary_utilization':
                     # Per-language entry is {'utilization': float, ...};
                     # render as percentage to match the y-label.
-                    values.append(lang_data.get('utilization', 0.0) * 100
-                                  if isinstance(lang_data, dict) else 0)
+                    util = (lang_data.get('utilization')
+                            if isinstance(lang_data, dict) else None)
+                    values.append(float('nan') if util is None
+                                  else _plottable(util) * 100)
                 elif isinstance(lang_data, dict) and 'mean' in lang_data:
-                    values.append(lang_data['mean'])
+                    values.append(_plottable(lang_data['mean']))
                 elif isinstance(lang_data, dict) and 'bigram_entropy' in lang_data:
-                    values.append(lang_data['bigram_entropy'])
+                    values.append(_plottable(lang_data['bigram_entropy']))
                 elif isinstance(lang_data, (int, float)):
-                    values.append(lang_data)
+                    values.append(_plottable(lang_data))
                 else:
-                    values.append(0)
+                    values.append(float('nan'))
             
             if values:
                 # Use single consistent color for all bars
                 ax.bar(range(len(languages)), values, color=single_color, alpha=0.8)
-                if show_global_lines:
-                    global_mean = np.mean(values)
+                measured = _finite(values)
+                if show_global_lines and measured:
+                    global_mean = np.mean(measured)
                     ax.axhline(y=global_mean, color='red', linestyle='--', alpha=0.7)
                 ax.set_xticks(range(len(languages)))
                 # Use smaller font size for faceted plots

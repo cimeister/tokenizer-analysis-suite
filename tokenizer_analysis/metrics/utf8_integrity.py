@@ -88,17 +88,59 @@ class UTF8IntegrityMetrics(BaseMetrics):
     # GPT-2 detection
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _has_bytelevel_component(tokenizer: Any) -> Optional[bool]:
+        """Is this tokenizer byte-level, according to its own components?
+
+        Returns True or False when the components can be read, None when they
+        cannot. This is authoritative where the marker-count heuristic below is
+        circumstantial: a ByteLevel pre-tokenizer or decoder *is* the byte
+        remapping, whereas the marker count only asks whether the training
+        corpus happened to exercise enough of the remapped range.
+        """
+        backend = getattr(tokenizer, 'backend_tokenizer', tokenizer)
+        for attr in ('decoder', 'pre_tokenizer'):
+            component = getattr(backend, attr, None)
+            if component is None:
+                continue
+            # tokenizers exposes component types by class name, and a Sequence
+            # nests them, so match on the repr rather than importing every class.
+            if 'ByteLevel' in type(component).__name__:
+                return True
+            if 'ByteLevel' in repr(component):
+                return True
+        return None if not hasattr(backend, 'decoder') else False
+
     def _detect_gpt2_encoding(self, tokenizer: Any) -> Optional[Dict[str, int]]:
         """Detect whether *tokenizer* uses GPT-2-style byte encoding.
 
         Returns the ``unicode_to_byte`` table if detected, else ``None``.
         Results are cached per tokenizer object identity.
+
+        Component introspection is tried first because the marker-count
+        heuristic is unsound in one direction and the error is always
+        flattering. A byte-level tokenizer trained on a corpus that never
+        exercises the control bytes carries fewer than the threshold's worth of
+        marker characters and is read as not byte-level; every token string is
+        then interpreted as literal text, which always encodes to valid UTF-8,
+        so the metric can only report a completeness of 1.0. Measured on
+        gpt4o-english-bpe: 37 markers of 68, detection missed, reported
+        completeness 1.0000 (best of 37 tokenizers) against a true 0.6688
+        (worst of 37).
         """
         tok_id = id(tokenizer)
         if tok_id in self._gpt2_detection_cache:
             return self._gpt2_detection_cache[tok_id]
 
         result = None
+        component_says = self._has_bytelevel_component(tokenizer)
+        if component_says is True:
+            self._gpt2_detection_cache[tok_id] = _GPT2_UNICODE_TO_BYTE
+            return _GPT2_UNICODE_TO_BYTE
+        if component_says is False:
+            self._gpt2_detection_cache[tok_id] = None
+            return None
+
         try:
             vocab = None
             if hasattr(tokenizer, 'get_vocab'):

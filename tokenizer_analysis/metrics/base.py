@@ -7,6 +7,7 @@ from typing import Dict, List, Optional, Any, Tuple
 import re
 import numpy as np
 import scipy
+import scipy.stats
 from collections import defaultdict
 import logging
 
@@ -26,6 +27,13 @@ class BaseMetrics(ABC):
 
     # Pre-compiled regex patterns for subword marker handling.
     # Shared by DigitBoundaryMetrics, ASTBoundaryMetrics and MorphScoreMetrics.
+    # Bounded re-sync for _build_source_to_recon_map. The window caps how long
+    # a divergence can be and still be recovered; the anchor is how many
+    # characters must agree before the scan trusts the new alignment. A
+    # 1-character anchor re-syncs on any coincidental single match.
+    _RESYNC_WINDOW = 32
+    _RESYNC_ANCHOR = 3
+
     _SPACE_PREFIX = re.compile(r'^[Ġ▁ ]')
     _CONTINUATION = re.compile(r'^##')
     _END_WORD = re.compile(r'</w>$')
@@ -273,21 +281,87 @@ class BaseMetrics(ABC):
         """Map each source-text character position to its position in the
         reconstructed (whitespace-stripped) text.
 
-        Uses a greedy forward scan with exact (case-sensitive) matching.
-        Characters dropped during reconstruction (e.g. whitespace consumed
-        by subword prefixes) get ``None``.
+        Characters that do not survive reconstruction (whitespace consumed by
+        subword prefixes, for instance) get ``None``.
 
-        Returns a list of length ``len(source_text)`` where each entry is
-        either a valid index into *recon_text* or ``None``.
+        This used to be a greedy forward scan that advanced the reconstruction
+        pointer only on a match, so it could never re-synchronize: one character
+        the reconstruction rendered differently left the pointer stuck and every
+        later source character mapped to ``None``. That fires on ordinary input,
+        because a byte-level BPE renders ``é`` as ``Ã©``, so the map died at the
+        first non-ASCII character. Measured on FLORES with the bundled BPE, the
+        share of digit spans that became unmeasurable was 2% for English, 44%
+        for German, 84% for French, 97% for Russian and 100% for Arabic, which
+        made the digit metrics effectively English-only. On the AST side an
+        unmappable span is scored as misaligned, so adding one accented comment
+        to a Python snippet dropped its alignment from 0.93 to 0.00.
+
+        The scan now re-synchronizes after a divergence, by looking for a short
+        run of characters that matches again within a bounded window on both
+        sides. ``difflib.SequenceMatcher`` gives a better alignment but is not
+        affordable here: on a 15,000-character snippet, the size this loader
+        actually produces, it took 66 seconds against 3 milliseconds for the
+        windowed scan, and it runs per snippet per tokenizer.
+
+        The window bounds what can be recovered. A divergence longer than
+        ``_RESYNC_WINDOW`` characters is not re-synchronized, and those source
+        characters stay ``None``, which callers must treat as unmeasured rather
+        than as misaligned.
         """
         source_to_recon: List[Optional[int]] = [None] * len(source_text)
-        recon_idx = 0
-        for src_idx in range(len(source_text)):
-            if recon_idx >= len(recon_text):
-                break
+        src_len, recon_len = len(source_text), len(recon_text)
+        window, anchor = BaseMetrics._RESYNC_WINDOW, BaseMetrics._RESYNC_ANCHOR
+
+        def _agreement(s: int, r: int) -> int:
+            """How many of the next `anchor` source chars match from recon[r].
+
+            Greedy, so source characters the reconstruction drops (whitespace,
+            most often, since recon is whitespace-stripped) do not veto the
+            match. A strict window comparison cannot be used for that reason:
+            with spaces removed from recon, almost no 3-character source window
+            has a literal counterpart.
+            """
+            matched = 0
+            ri = r
+            for si in range(s, min(s + window, src_len)):
+                if matched >= anchor or ri >= recon_len:
+                    break
+                if source_text[si] == recon_text[ri]:
+                    matched += 1
+                    ri += 1
+            return matched
+
+        src_idx = recon_idx = 0
+        while src_idx < src_len and recon_idx < recon_len:
             if source_text[src_idx] == recon_text[recon_idx]:
                 source_to_recon[src_idx] = recon_idx
+                src_idx += 1
                 recon_idx += 1
+                continue
+
+            # Diverged. The old scan advanced only on a match, so it handled a
+            # source character the reconstruction drops but could never step
+            # over a character the reconstruction *adds* (a byte-level vocab
+            # renders `é` as `Ã©`, and some post-processors prepend a token).
+            # One such character left it stuck for the rest of the document.
+            # Look ahead in the reconstruction for a position where the source
+            # picks up again, and require several characters of agreement so a
+            # coincidental single match does not pull the alignment off.
+            limit = min(recon_idx + 1 + window, recon_len)
+            jump = None
+            for r in range(recon_idx + 1, limit):
+                if recon_text[r] != source_text[src_idx]:
+                    continue
+                if _agreement(src_idx, r) >= min(anchor, src_len - src_idx):
+                    jump = r
+                    break
+
+            if jump is not None:
+                recon_idx = jump
+                continue
+            # This source character is absent from the reconstruction.
+            src_idx += 1
+
         return source_to_recon
 
     # ------------------------------------------------------------------
