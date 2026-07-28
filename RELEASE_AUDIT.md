@@ -16,19 +16,19 @@ by execution before being listed.
 
 ## silent
 
-### S1. `--use-sample-data` overrode the user's configs — **fixed**
+### S1. `--use-sample-data` overrode the user's configs: **fixed**
 `cli/run_analysis.py`. `--use-sample-data --tokenizer-config mine.json
 --language-config mine.json` exited 0 and analyzed the two bundled demo
 tokenizers over five FLORES+ languages. The results file was complete and
 described different tokenizers on a different corpus than the ones named, with
 no warning. Now an error naming the conflicting flags.
 
-### S2. Omitting `--language-config` analyzed the demo corpus — **fixed**
+### S2. Omitting `--language-config` analyzed the demo corpus: **fixed**
 `cli/run_analysis.py`. The raw-tokenizer path fell back to the bundled
 five-language sample. Now an error listing `--input`, `--language-config` and
 `--use-sample-data`.
 
-### S3. A missing corpus file dropped the language — **open**
+### S3. A missing corpus file dropped the language: **open**
 `loaders/multilingual_data.py:81-83`. A two-language config with one
 nonexistent `data_path` exits 0, logs two warnings, and writes a
 complete-looking results file containing only the surviving language. On a
@@ -36,14 +36,14 @@ complete-looking results file containing only the surviving language. On a
 finished. Nothing in the JSON records that a language was requested and
 dropped.
 
-### S4. Missing MorphScore data scores 0.0 — **open**
+### S4. Missing MorphScore data scores 0.0: **open**
 `metrics/morphscore.py`. A nonexistent `--morphscore-data-dir` exits 0 and
 writes `avg_morphscore_recall: 0.0`, `avg_morphscore_precision: 0.0`,
 `avg_micro_f1: 0.0`, `avg_macro_f1: 0.0`. A tokenizer that was never evaluated
 is recorded as scoring zero on morphological alignment. The only tell is
 `languages_evaluated: 0` beside four zeros that read as scores.
 
-### S5. A single corpus reports perfect fairness — **open**
+### S5. A single corpus reports perfect fairness: **open**
 `metrics/gini.py:125-133`. One corpus gives `{"gini_coefficient": 0.0,
 "mean_cost": 0.0, "std_cost": null, "num_languages": null, "warning": "..."}`
 while the sibling `per_language` block in the same object records a cost of
@@ -51,50 +51,53 @@ while the sibling `per_language` block in the same object records a cost of
 neighbouring field. `--input` makes this the common case rather than an edge
 case.
 
-### S6. `empty_stats()` and `safe_divide` return 0.0 for absent data — **open**
+### S6. `empty_stats()` and `safe_divide` return 0.0 for absent data: **open**
+Plot rendering was fixed first (a null was drawn as a zero-height bar, and the
+grouped plotter substituted 0 on any extractor failure), so the metric-side
+change can now land without breaking the figures.
 `metrics/base.py:324-327,351-363`. "No data" and "measured zero" are the same
 value throughout the aggregate pipeline. `per_example.py` uses `float("nan")`
 for the same condition and `utf8_integrity.py:703-709` returns `None`, so three
 conventions coexist.
 
-### S7. A malformed `--custom-latex-config` reports success — **open**
+### S7. A malformed `--custom-latex-config` reports success: **open**
 `cli/run_analysis.py:1148`. A file the user named explicitly, containing
 invalid JSON, logs `ERROR - Error generating custom LaTeX tables: ...` and then
 prints `Results saved to: ...`. Exit 0. Same shape at line 1099 for
 `--generate-latex-tables`.
 
-### S8. `tokenizer-visualize` exits 0 when every tokenizer fails — **open**
+### S8. `tokenizer-visualize` exits 0 when every tokenizer fails: **open**
 `cli/visualize_tokenization.py:586`. A config whose tokenizer paths do not
 exist prints `Skipping <name>: ...` per tokenizer, then the source samples with
 no tokenization at all, and exits 0. No count of how many of N tokenizers
 loaded.
 
-### S9. A list-shaped `--code-ast-config` silently drops code data — **open**
+### S9. A list-shaped `--code-ast-config` silently drops code data: **open**
 `main.py:99`. Catches `Exception`, logs `Could not load code data: 'list'
 object has no attribute 'items'`, and continues with `code_texts = {}`. The
 operator-isolation code domain then has zero samples with no further signal.
 See L1 for the other half of this.
 
-### S10. Grouped plots swallow failures, individual plots do not — **open**
+### S10. Grouped plots swallow failures, individual plots do not: **open**
 `visualization/plots.py:579`. The only guarded call among roughly 15 in
 `generate_all_plots`. A malformed grouped result logs `Failed to plot <metric>
 for group type <type>` and returns normally; the same failure in any other plot
 propagates. Same failure class, opposite handling.
 
-### S11. Missing parquet engine yields an empty corpus — **open**
+### S11. Missing parquet engine yields an empty corpus: **open**
 `loaders/code_data.py:225-229`, `loaders/multilingual_data.py:241,269`.
 pandas raises an `ImportError` that names pyarrow and fastparquet, but both
 call sites catch it, log, and return `[]`. A user without the `parquet` extra
 gets a run that completes with silently zero data for every parquet source.
 
-### S12. `include_empty_splits` is ignored for two counting methods — **open**
+### S12. `include_empty_splits` is ignored for two counting methods: **open**
 `config/text_measurement.py`. The flag is honoured by `python_split`,
 `regex_whitespace` and `custom_regex` line counting, but not by
 `hf_whitespace` word counting or `newline_split` line counting. Setting it
 there is a silent no-op. Measured on `"  hello   world  "`: `regex_whitespace`
 gives 2 then 4 as the flag flips; `hf_whitespace` gives 2 both times.
 
-### S13. Config paths resolve against the process CWD — **open**
+### S13. Config paths resolve against the process CWD: **open**
 `config/language_metadata.py`, `loaders/multilingual_data.py`. `data_path` is
 used verbatim, never joined to the config file's own directory. The same
 absolute `--language-config` loads 5 languages from the repo root and 0 from
@@ -102,14 +105,14 @@ absolute `--language-config` loads 5 languages from the repo root and 0 from
 values and `math_data_path` share the behaviour. This is also why
 `--use-sample-data` only works from a source checkout.
 
-### S14. CRLF and BOM are preserved into the AST metrics — **open**
+### S14. CRLF and BOM are preserved into the AST metrics: **fixed**
 `loaders/code_data.py:172-192`. Files are opened in binary and decoded per
 line, so there is no universal-newline translation and `utf-8` does not strip a
 BOM. A Windows-authored source file reaches tree-sitter with embedded `\r`, and
 a BOM-prefixed file with a leading `﻿`, both feeding the AST-boundary and
 indentation-consistency metrics as if they were part of the code's layout.
 
-### S15. `RawTokenizationProvider` mutates the caller's specs — **open**
+### S15. `RawTokenizationProvider` mutates the caller's specs: **open**
 `core/input_providers.py:111-117`. `spec.texts = None` is applied to the dict
 the caller passed in, not a copy. After one `get_tokenized_data()` call the
 caller's `InputSpecification` is neither raw nor pre-tokenized, so its own
@@ -119,24 +122,24 @@ validator reports it invalid and `spec.get_languages()` raises `TypeError`.
 
 ## loud but unhelpful
 
-### L1. A list-shaped `--code-ast-config` crashes with a raw `AttributeError` — **open**
+### L1. A list-shaped `--code-ast-config` crashes with a raw `AttributeError`: **open**
 `main.py:145-151`. The narrow `except (ImportError, ValueError)` does not catch
 the `AttributeError` from `CodeDataLoader.load_all()`. Exit 1 with
 `AttributeError: 'list' object has no attribute 'items'`: no mention of
 `--code-ast-config`, the file path, or that an object was expected. The same
 input is swallowed 50 lines earlier (S9). Validate the shape once, up front.
 
-### L2. `--filter-script-family` with an unknown name — **open**
+### L2. `--filter-script-family` with an unknown name: **open**
 `cli/run_analysis.py`. `--filter-script-family Klingon` exits 1 with `No valid
 language texts loaded`, which never says the group name was unknown or lists
 the valid ones.
 
-### L3. `--language-config` pointed at a directory — **open**
+### L3. `--language-config` pointed at a directory: **open**
 `config/language_metadata.py:39-47`. Raises an unhandled `IsADirectoryError`,
 not one of the two errors `_load_config` handles. A comment at
 `cli/run_analysis.py:1029` claims directories are supported; no code path does.
 
-### L4. MorphScore's ImportError gives no install instruction — **open**
+### L4. MorphScore's ImportError gives no install instruction: **open**
 `metrics/morphscore.py:20,72`. Names the package but not how to get it, unlike
 `sentencepiece` and `script_bpe`, which both name the exact `pip install`.
 
@@ -156,16 +159,98 @@ not one of the two errors `_load_config` handles. A comment at
 
 ---
 
-## Correctness and dead code
+## Correctness
 
-### C1. `metrics/base.py:9,317` uses `scipy.stats` without importing it — **open**
+### X1. Alignment scan could not re-synchronize: **fixed, partly**
+`metrics/base.py`. `_build_source_to_recon_map` advanced its reconstruction
+pointer only on a match, so one character the reconstruction *adds* left it
+stuck for the rest of the document. A byte-level vocabulary renders `é` as `Ã©`,
+so the map died at the first non-ASCII character. Consumers score an unmappable
+span as a miss rather than as unmeasured, so this dropped digit spans and marked
+AST nodes misaligned: adding one accented comment to a Python snippet took its
+alignment from 0.93 to 0.00.
+
+Fixed with a bounded-window re-sync. Digit spans actually measured, demo corpus
+at 200 lines per language: English 116 to 143 of 143 present, German 112 to 145,
+Spanish 89 to 126, total 358 to 456.
+
+**Still open:** entirely non-ASCII scripts barely improve, Arabic 16 of 127
+spans and Russian 26 of 143, because the reconstruction never applies the
+byte-level vocabulary's byte-to-unicode map. The source character has no literal
+counterpart in the reconstruction to re-sync on. The fix is to decode
+byte-level token strings through `_GPT2_UNICODE_TO_BYTE` during reconstruction,
+the way `utf8_integrity` already does, rather than to tune the alignment further.
+Until then the digit metrics are close to Latin-script-only, and any published
+per-language digit number for a non-Latin script is not trustworthy.
+
+### X2. UTF-8 byte-level detection failed in the flattering direction: **fixed**
+`metrics/utf8_integrity.py`. Detection counted single-character vocabulary
+entries against 68 GPT-2 marker characters with a threshold of 50. A byte-level
+tokenizer trained on a corpus that never exercises the control bytes carries
+fewer than 50 and was read as not byte-level. Every token string is then
+interpreted as literal text, which always encodes to valid UTF-8, so the metric
+could only report 1.0. `gpt4o-english-bpe` has 37 markers and reported
+completeness 1.0000, best of 37 tokenizers, against a true 0.6688, worst of 37.
+Detection now reads the tokenizer's own ByteLevel pre-tokenizer or decoder and
+falls back to the marker count only when the components cannot be introspected.
+Any `utf8_token_integrity` or `utf8_char_split` number published for
+`gpt4o-english-bpe` before this is invalid.
+
+### X3. `_crosses_character_boundary` counts continuation bytes as characters: **open**
+`metrics/utf8_integrity.py:233-237`. The branch increments the character count
+once per continuation byte, so a token holding only the tail of one character
+satisfies "more than one character and incomplete" and is counted as crossing a
+boundary. The README's own worked example gives 1/3; the code gives 2/3.
+Measured inflation on FLORES with SuperBPE: Korean 632 crossings reported
+against 584 true, Japanese 159 against 152.
+
+### X4. `pattern_stability_rate` counts the first code token as indentation: **open**
+`metrics/code_ast.py:925-945`. Tokens are selected by overlap with the leading
+whitespace range, and with ByteLevel offsets the first code token absorbs the
+preceding space, so it is always included. Two lines at the same depth with
+different code therefore get different patterns. A four-line snippet all
+indented identically reports 0.25 where the correct value is 1.0.
+
+### X5. `_SPECIAL_TOKEN` deletes ordinary bracket tokens: **open**
+`metrics/base.py:33`. The pattern `^(<\||\[).*(\|>|\])$` matches `[]`, `[0]`,
+`[i]` and `[...]`, not only `[CLS]`. Those tokens are dropped from the
+reconstruction and from the UTF-8 content-token denominator. The marker
+strippers also run for every tokenizer family, so a byte-level BPE token `##`
+becomes empty and `a@@` becomes `a`. Both `##` and `[...]` are in the bundled
+demo vocabulary.
+
+### X6. `numeric_magnitude_consistency` treats the `10+` bucket as exactly 10 digits: **open**
+`metrics/math.py:996-999,1033`. The linear fit reconstructs a token count as
+`mean(tokens/digits) * 10` for that bucket, so a 20-digit number costing 10
+tokens is fitted as `(10, 5.0)`. Measured: slope 0.607 and R-squared 0.794
+against a true 0.587 and 0.980. The rho and R-squared also rest on 4 bucket
+points, and take 3 and 4 distinct values across 37 tokenizers.
+
+### X7. `avg_tokens_per_line` mismatched numerator and denominator: **open**
+`metrics/basic.py:522-531`. Blank lines are filtered from the denominator while
+the numerator keeps the tokens they produced. A 4-line text with 2 non-blank
+lines and 8 tokens reports 4.0 rather than 2.0. No effect on line-per-item
+corpora such as FLORES; it matters for document corpora.
+
+### X8. Digit metrics silently use the prose corpus: **open**
+`metrics/math.py:382-393`. Without `--math-data` or `--use-builtin-math-data`
+the digit metrics run on whatever corpus was loaded, with no log line on that
+branch. On FLORES the observed digit lengths are 1 to 4 only, so the metric
+named for three-digit grouping never exercises a single ideal boundary, and
+74.2% of the sample falls in the vacuous length-3-or-under case. `avg_recall`
+and `avg_uniform_chunk` then equal the corpus short-number share, identically
+for every non-splitting tokenizer.
+
+### X9. Dead code
+
+### C1. `metrics/base.py` used `scipy.stats` without importing it: **fixed**
 Bare `import scipy` at line 9, `scipy.stats.sem(...)` at line 317. This works
 only because `metrics/__init__.py` imports `.math`, which does `from
 scipy.stats import spearmanr` at module scope, before anything can call
 `compute_basic_stats`. scipy gained lazy submodule loading in 1.9.0; the
-declared floor is 1.7.0. Add the explicit import.
+declared floor is 1.7.0. Explicit import added.
 
-### C2. `core/validation.py` is entirely unreachable — **open**
+### C2. `core/validation.py` is entirely unreachable: **open**
 `ValidationResult`, `TokenizedDataValidator`, `InputProviderValidator`,
 `InputSpecificationValidator`, `AnalysisValidator` and `validate_and_report`
 are defined, exported from nowhere, and imported by nothing. The
@@ -173,13 +258,13 @@ are defined, exported from nowhere, and imported by nothing. The
 `core/input_utils.py`. 472 lines of code that never runs, including the only
 logic that handles the single-language case explicitly.
 
-### C3. `InputSpecification.get_vocab_size()` crashes on its own documented shape — **open**
+### C3. `InputSpecification.get_vocab_size()` crashes on its own documented shape: **open**
 `core/input_types.py:177-182`. The pre-tokenized branch reads
 `self.vocabulary.vocab_size`, which is `None` for the `tokenizer +
 tokenized_data` shape that `main.py:create_analyzer_from_tokenized_data`
 constructs. Unreachable through the CLI, reachable by any API caller.
 
-### C4. Dead branches — **partly fixed**
+### C4. Dead branches: **partly fixed**
 `_build_indentation_consistency_results` never writes `overall`, so the slim
 branch testing for it is dead (open, see the schema section). The fertility
 zero-sample guard at `basic.py:171` cannot fire, because `"你好".split()`
