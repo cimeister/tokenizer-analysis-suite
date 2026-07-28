@@ -2,24 +2,62 @@
 A toolkit for computing intrinsic quality metrics for tokenizers across natural language, code, and math.
 
 
-## Quick Start
-
-Get up and running in 30 seconds:
+## Install
 
 ```bash
-# Clone and install
+pip install tokenizer-intrinsic-evals
+```
+
+The import name is `tokenizer_analysis`. For the demo data and the example
+configs, work from a checkout instead:
+
+```bash
 git clone https://github.com/cimeister/tokenizer-intrinsic-evals.git
 cd tokenizer-intrinsic-evals
 uv sync
-
-# Run demo analysis with built-in sample data
-uv run tokenizer-analysis --use-sample-data
-
-# View results
-open results/fertility_individual.svg  # Basic metric comparison chart
 ```
 
-This will analyze two sample tokenizers (BPE and Unigram) across 5 languages and generate comparison plots.
+See [Setup](#setup) for MorphScore and parquet support.
+
+## Quick Start
+
+Analyze your own tokenizers on one corpus. `--input` takes a single file
+(`.txt`, `.json`, `.jsonl`, `.parquet`) or a directory of them:
+
+```bash
+tokenizer-analysis \
+    --tokenizer-config my_tokenizers.json \
+    --input path/to/corpus.txt
+```
+
+`my_tokenizers.json` is a name-to-tokenizer map:
+
+```json
+{
+  "my_bpe":  {"class": "huggingface", "path": "/path/to/tokenizer.json"},
+  "llama3":  {"class": "huggingface", "path": "meta-llama/Meta-Llama-3-8B"}
+}
+```
+
+Results land in `results/analysis_results.json`, with plots beside it. For
+several corpora at once, and for the cross-lingual metrics, use
+`--language-config` instead (see [Data Configuration](#data-configuration)).
+
+### The bundled demo
+
+```bash
+uv run tokenizer-analysis --use-sample-data
+open results/fertility_individual.svg
+```
+
+Two sample tokenizers over five FLORES+ languages. This needs a source checkout:
+the demo corpus lives in `parallel/` and the tokenizers in `tokenizers/`, which
+are not part of the installed package. `--use-sample-data` supplies its own
+tokenizers, corpus and measurement settings, so it cannot be combined with
+`--tokenizer-config`, `--language-config`, `--input` or `--measurement-config`.
+
+The two demo tokenizers deliberately fail `tokenizer-sanity-check` (`bpe.json`
+covers 94 of 256 byte values), so the check below has something to report.
 
 ## Visualizing Tokenization
 
@@ -96,6 +134,8 @@ uv sync --extra parquet
 | Flag | Description |
 |------|-------------|
 | `--tokenizer-config FILE` | JSON file with tokenizer configurations |
+| `--input PATH` | Analyze a single corpus: one file or a directory. Exclusive with `--language-config` |
+| `--input-label NAME` | Name for the `--input` corpus in the results (default: the path stem) |
 | `--language-config FILE` | JSON file with languages and analysis groups |
 | `--measurement-config FILE` | JSON file with text measurement method |
 | `--use-sample-data` | Use built-in demo data |
@@ -119,6 +159,17 @@ uv sync --extra parquet
 | `--samples-per-lang N` | Text samples per language |
 | `--save-tokenized-data` | Cache tokenized data for reuse |
 | `--no-global-lines` | Hide global average lines in plots |
+| `--latex-table-types ...` | Which LaTeX tables to emit: `basic`, `information`, `comprehensive` |
+| `--latex-output-dir DIR` | Where LaTeX tables are written (default: `<output-dir>/latex_tables`) |
+| `--custom-latex-config FILE` | JSON config for a custom LaTeX table |
+| `--filter-resource-level NAME` | Restrict to one resource level from `analysis_groups` |
+| `--pairwise TOK1 TOK2` | Restrict the run to two named tokenizers |
+| `--cer-time-budget SECONDS` | Cap on CER computation per tokenizer; 0 disables (default: 10) |
+| `--use-builtin-math-data` | Use the bundled math corpus for the digit metrics |
+| `--morphscore-data-dir DIR` | Where MorphScore datasets live (default: `morphscore_data`) |
+| `--tokenized-data-file FILE` | Replay a cached tokenization instead of encoding |
+| `--tokenized-data-config FILE` | Vocabulary map that accompanies a cache |
+| `--tokenized-data-output-path PATH` | Where `--save-tokenized-data` writes |
 
 ## Configuration Files
 
@@ -187,7 +238,7 @@ Control how text "length" is measured for metric normalization via `--measuremen
 | Method | `method` value | Counting key and options | Default for |
 |--------|----------------|--------------------------|-------------|
 | Bytes | `"bytes"` | `byte_counting`: `"utf8"`, `"hf_bytelevel"` | Compression metrics |
-| Characters | `"characters"` | (none) | — |
+| Characters | `"characters"` | (none) | (none) |
 | Lines | `"lines"` | `line_counting`: `"single"`, `"newline_split"`, `"custom_regex"` | Gini metrics |
 | Words | `"words"` | `word_counting`: `"python_split"`, `"hf_whitespace"`, `"regex_whitespace"`, `"custom_regex"` | Fertility |
 
@@ -238,7 +289,7 @@ Supports 19 languages. Parquet files should have a `content` column; StarCoder m
 uv run tokenizer-analysis --use-sample-data \
     --save-tokenized-data --tokenized-data-output-path my_data.pkl
 
-# Reuse cached data (faster — no re-encoding)
+# Reuse cached data (faster, no re-encoding)
 uv run tokenizer-analysis \
     --tokenized-data-file my_data.pkl \
     --tokenized-data-config my_data_config.json
@@ -286,17 +337,52 @@ results/
 
 The slimmed file omits `pairwise_comparisons`, `summary`, `per_category` breakdowns, and derivable stat fields (`sum`, `std_err`, `min`, `max`). The full results file includes `per_category` for metrics that have category breakdowns (e.g. AST node types, operator types). Some metrics use additional keys (e.g. `by_digit_length`, `scaling` for digit metrics; `character_length`/`byte_length` for token length).
 
+#### `null` means not measured
+
+A value that could not be computed is `null`, never `0.0`. A rate with no
+denominator, a metric that needs at least two languages when one was given, a
+domain with nothing of the relevant kind in it: all report `null`. This matters
+because `0.0` is a legal value for most of these metrics, so a zero would be
+indistinguishable from a real measurement. `count` and `sum` stay numeric.
+
+Consumers doing arithmetic on these fields need a `None` check.
+
+#### Provenance
+
+Every results file carries a top-level `run_metadata` block: package version,
+git commit, the config files read and their hashes, the tokenizer files measured
+and their hashes, corpus and sample count, and which metric families were
+disabled. Two files with different numbers can be attributed to a change in the
+tokenizer, the corpus, or the library.
+
+#### Metrics reported under another metric
+
+Six metrics restate a measurement another metric already publishes, four of them
+as exact algebraic identities. They are reported as a field of the metric that
+owns the measurement rather than as separate top-level keys, so the file does not
+present one number twice as if it were two pieces of evidence. Each primary
+records the merge and its evidence under `metadata.merged_metrics`.
+
+| Reported under | Field | Relationship |
+|---|---|---|
+| `compression_rate` | `tokens_per_line` | product is exactly 1 |
+| `vocabulary_utilization` | `type_token_ratio` | TTR is utilization rescaled by vocab size over token count |
+| `renyi_efficiency` | `unigram_distribution` | unigram entropy is the unnormalized numerator of `renyi_1.0` |
+| `utf8_token_integrity` | `char_split` | the same events counted from the character side |
+| `tokenizer_fairness_gini` | `lorenz_curve` | `1 - 2*area(lorenz)` is the Gini coefficient |
+| `three_digit_boundary_alignment` | `split_variability` | Spearman -0.992 across 37 tokenizers |
+
 ## Metrics
 
 ### Basic Tokenization Metrics
-- **Compression Rate** (`compression_rate`): Ratio of total text units (bytes/chars/lines) to total tokens across the corpus — measures encoding efficiency
-- **Fertility** (`fertility`): Tokens per word/character — measures tokenization granularity
-- **Token Length**: Average token size in bytes/characters
-- **Type-Token Ratio**: Unique tokens / total tokens — measures vocabulary usage diversity
+- **Compression Rate** (`compression_rate`): Ratio of total text units (bytes/chars/lines) to total tokens across the corpus, measuring encoding efficiency
+- **Fertility** (`fertility`): Tokens per word/character, measuring tokenization granularity
+- **Token Length** (`token_length`): Average token size in bytes and characters. Note this is a mean of per-document ratios, where `compression_rate` is a ratio of totals, so the two differ on short documents
+- **Type-Token Ratio**: Unique tokens / total tokens. Reported under `vocabulary_utilization.type_token_ratio`, because it is that metric rescaled by vocabulary size over token count (see [Metrics reported under another metric](#metrics-reported-under-another-metric))
 - **Vocabulary Utilization** (`vocabulary_utilization`): Fraction of vocabulary actually used
 
 ### Information-Theoretic Metrics
-- **Renyi Entropy**: Information content at different alpha values — generalizes Shannon entropy
+- **Renyi Entropy**: Information content at different alpha values, generalizing Shannon entropy
 - **Average Token Rank** (`avg_token_rank`): Typical position of tokens within the frequency-ordered vocabulary
 - **Bigram Entropy** (`bigram_entropy`): For each token type, looks at what tokens follow it in the corpus and measures whether the followers are evenly spread or dominated by one or two tokens. A score of 1.0 means every token's followers are perfectly balanced; a score near 0 means most tokens are almost always followed by the same thing. Can interpret this as "how easy the tokenizer makes a very simple case of language modeling." Token types that appear too rarely (fewer than 3 times by default, configurable) are ignored to avoid noisy estimates. Bigrams do not cross document boundaries. Based on the Shannon efficiency metric (η) from [Poelman et al. 2025](https://aclanthology.org/2025.emnlp-main.369/), EMNLP.
 
@@ -307,7 +393,7 @@ The slimmed file omits `pairwise_comparisons`, `summary`, `per_category` breakdo
 
 Evaluates tokenizer handling of mathematical expressions. Based on Singh & Strouse (2024, [arXiv:2402.14903](https://arxiv.org/abs/2402.14903)), who showed that right-to-left tokenization of numbers improved arithmetic accuracy by >22 percentage points. Disable with `--no-digit-boundary`.
 
-> **Data scope:** When `--math-data FILE` or `--use-builtin-math-data` is set — as in the recommended invocation above — these metrics are computed **only on the dedicated math texts**, *not* the general multilingual corpus (the math data replaces the corpus for this metric group). Without either flag they fall back to whatever numbers/operators appear in the main corpus. All per-language results in this group are therefore reported under the synthetic language `math` when dedicated math data is used.
+> **Data scope:** When `--math-data FILE` or `--use-builtin-math-data` is set, as in the recommended invocation above, these metrics are computed **only on the dedicated math texts**, *not* the general multilingual corpus (the math data replaces the corpus for this metric group). Without either flag they fall back to whatever numbers/operators appear in the main corpus. All per-language results in this group are therefore reported under the synthetic language `math` when dedicated math data is used.
 
 #### Three-Digit Place-Value Boundary Alignment (`three_digit_boundary_f1`)
 
@@ -315,7 +401,7 @@ Measures whether numbers are tokenized with right-aligned 3-digit groupings that
 
 For each number, compares actual token boundaries against ideal boundaries at positions L-3, L-6, L-9 from the left. Reports precision, recall, and F1. Short numbers (<=3 digits) that remain single tokens score F1 = 1.0; short numbers needlessly split score F1 = 0.
 
-**Example:** The number `1234567` has ideal boundaries at positions 1, 4 — yielding `1|234|567` (millions, thousands, units). A tokenizer producing `1|234|567` scores F1 = 1.0. One producing `12|345|67` scores F1 = 0.0 — it has three boundaries but none at the right positions. A short number like `42` kept as a single token scores F1 = 1.0 (no boundaries needed, none placed). But `42` split into `4|2` scores F1 = 0.0 — a boundary was placed where none was needed.
+**Example:** The number `1234567` has ideal boundaries at positions 1, 4, yielding `1|234|567` (millions, thousands, units). A tokenizer producing `1|234|567` scores F1 = 1.0. One producing `12|345|67` scores F1 = 0.0, it has three boundaries but none at the right positions. A short number like `42` kept as a single token scores F1 = 1.0 (no boundaries needed, none placed). But `42` split into `4|2` scores F1 = 0.0, a boundary was placed where none was needed.
 
 **Why it matters:** Singh & Strouse (2024) showed that right-to-left digit grouping improves arithmetic accuracy by ensuring corresponding digit positions across operands occupy consistent token positions.
 
@@ -325,7 +411,7 @@ For numbers of the same digit length, measures Shannon entropy of the distributi
 
 Entropy is computed on patterns pooled across languages, not averaged per-language. Reports Shannon entropy (bits), dominant pattern, and dominant frequency per digit-length bucket.
 
-**Example:** A corpus contains three 5-digit numbers. If all are split as `XX|XXX` (pattern `{2}`), the entropy for the 5-digit bucket is 0.0 bits — perfectly consistent. If instead one is split `XX|XXX`, one as `X|XXXX`, and one as `XXX|XX`, there are three distinct patterns with equal frequency, giving entropy of log2(3) ≈ 1.58 bits. The first tokenizer has a learnable (if wrong) scheme; the second forces the model to handle every number as a special case.
+**Example:** A corpus contains three 5-digit numbers. If all are split as `XX|XXX` (pattern `{2}`), the entropy for the 5-digit bucket is 0.0 bits, perfectly consistent. If instead one is split `XX|XXX`, one as `X|XXXX`, and one as `XXX|XX`, there are three distinct patterns with equal frequency, giving entropy of log2(3) ≈ 1.58 bits. The first tokenizer has a learnable (if wrong) scheme; the second forces the model to handle every number as a special case.
 
 **Why it matters:** A tokenizer with moderate F1 but low entropy has a consistent-but-wrong scheme (potentially fixable by retraining). Moderate F1 with high entropy indicates a deeper structural problem.
 
@@ -333,7 +419,7 @@ Entropy is computed on patterns pooled across languages, not averaged per-langua
 
 Tracks fertility-per-digit (tokens per digit) across digit lengths. Reports Spearman correlation, coefficient of variation, and linear fit (slope, R-squared) between digit length and mean token count.
 
-**Example:** A tokenizer has memorized `0`-`999` as single vocabulary entries, so 1-digit numbers cost 1 token (1.0 tokens/digit), 2-digit numbers cost 1 token (0.5 tokens/digit), and 3-digit numbers cost 1 token (0.33 tokens/digit). Then at 4 digits, it fragments: `1234` -> `12|34` (0.5 tokens/digit). At 7 digits: `1234567` -> `123|45|67` (0.43 tokens/digit). The discontinuity between 3 and 4 digits — where fertility-per-digit jumps from 0.33 to 0.5 — shows up as a break in the linear fit and a low R-squared value. A smooth tokenizer would instead show a near-constant ratio across all digit lengths.
+**Example:** A tokenizer has memorized `0`-`999` as single vocabulary entries, so 1-digit numbers cost 1 token (1.0 tokens/digit), 2-digit numbers cost 1 token (0.5 tokens/digit), and 3-digit numbers cost 1 token (0.33 tokens/digit). Then at 4 digits, it fragments: `1234` -> `12|34` (0.5 tokens/digit). At 7 digits: `1234567` -> `123|45|67` (0.43 tokens/digit). The discontinuity between 3 and 4 digits, where fertility-per-digit jumps from 0.33 to 0.5, shows up as a break in the linear fit and a low R-squared value. A smooth tokenizer would instead show a near-constant ratio across all digit lengths.
 
 **Why it matters:** Tokenizers trained on natural language often have dense vocabulary coverage for small numbers (0-999 as single tokens) but fragment larger numbers unpredictably, creating representational discontinuities.
 
@@ -341,7 +427,7 @@ Tracks fertility-per-digit (tokens per digit) across digit lengths. Reports Spea
 
 Fraction of mathematical operators (`+`, `-`, `*`, `=`, `<=`, etc.) tokenized as standalone tokens rather than merged with adjacent content. The hyphen-minus `-` is always treated as an operator, even when it appears as a unary negative sign (e.g., `-42`), since disambiguating unary minus from subtraction requires expression parsing. Includes a compound preservation sub-metric measuring whether multi-character operators (`**`, `<=`, `!=`) are kept as single tokens vs. split.
 
-**Example:** In the expression `3+5>=8`, a good tokenizer produces `3` | `+` | `5` | `>=` | `8` — isolation rate 1.0 and compound preservation 1.0. A bad tokenizer produces `3+` | `5` | `>` | `=` | `8` — the `+` is merged with `3` (isolation fails), and `>=` is split into `>` and `=` (compound preservation fails). Isolation rate: 1/3 (only `=` might be isolated depending on boundaries). Compound preservation: 0/1.
+**Example:** In the expression `3+5>=8`, a good tokenizer produces `3` | `+` | `5` | `>=` | `8`, isolation rate 1.0 and compound preservation 1.0. A bad tokenizer produces `3+` | `5` | `>` | `=` | `8`, the `+` is merged with `3` (isolation fails), and `>=` is split into `>` and `=` (compound preservation fails). Isolation rate: 1/3 (only `=` might be isolated depending on boundaries). Compound preservation: 0/1.
 
 **Why it matters:** Merging an operator with its operand (e.g., `+3` as one token) forces the model to disentangle operation from value within a single embedding.
 
@@ -353,7 +439,7 @@ Measures how lossy the encode→decode round-trip is. Tokenizers can lose inform
 
 Fraction of texts where `decode(encode(text)) == text`. A score of 1.0 means the tokenizer is perfectly lossless for the evaluated data.
 
-**Example:** The text `"Hello, world!"` is encoded to `[15496, 11, 995, 0]` and decoded back to `"Hello, world!"` — exact match. The text `"café"` is encoded and decoded to `"cafe"` (accent stripped by normalization) — not an exact match.
+**Example:** The text `"Hello, world!"` is encoded to `[15496, 11, 995, 0]` and decoded back to `"Hello, world!"`, exact match. The text `"café"` is encoded and decoded to `"cafe"` (accent stripped by normalization), not an exact match.
 
 #### Character Error Rate (`mean_cer`)
 
@@ -374,7 +460,7 @@ characters = CER 0.2. Original `"a"` decoded as `"abcd"` → edit distance
 
 Fraction of encoded tokens that are the tokenizer's UNK token ID. Measures how much of the input the tokenizer cannot represent. A rate of 0.0 means no unknown tokens were produced.
 
-**Example:** Encoding `"𝕳𝖊𝖑𝖑𝖔"` produces `[UNK, UNK, UNK, UNK, UNK]` — UNK rate 1.0. Encoding `"Hello"` produces `[15496]` — UNK rate 0.0.
+**Example:** Encoding `"𝕳𝖊𝖑𝖑𝖔"` produces `[UNK, UNK, UNK, UNK, UNK]`, UNK rate 1.0. Encoding `"Hello"` produces `[15496]`, UNK rate 0.0.
 
 #### Whitespace Fidelity (`whitespace_fidelity`)
 
@@ -388,17 +474,17 @@ Evaluates how byte-level tokenizers handle multi-byte UTF-8 characters at token 
 
 #### Token UTF-8 Completeness Rate
 
-Fraction of content tokens whose bytes form complete UTF-8 characters. A token like `<0xC3>` (a single byte from the two-byte sequence for `é`) is incomplete — it contains the start of a character but not the whole thing. This is a natural consequence of byte-level tokenization, not an error: byte-fallback tokens are working as designed. The completeness rate measures how often the tokenizer's vocabulary is expressive enough to represent whole characters rather than resorting to sub-character byte sequences.
+Fraction of content tokens whose bytes form complete UTF-8 characters. A token like `<0xC3>` (a single byte from the two-byte sequence for `é`) is incomplete, it contains the start of a character but not the whole thing. This is a natural consequence of byte-level tokenization, not an error: byte-fallback tokens are working as designed. The completeness rate measures how often the tokenizer's vocabulary is expressive enough to represent whole characters rather than resorting to sub-character byte sequences.
 
-**Example:** The character `é` (U+00E9) is encoded as bytes `C3 A9`. A tokenizer that keeps `café` as `caf` | `é` produces two tokens, both containing complete UTF-8 — completeness rate 1.0. A byte-fallback tokenizer that produces `caf` | `<0xC3>` | `<0xA9>` has 3 content tokens, of which 2 contain incomplete UTF-8 sequences — completeness rate 1/3.
+**Example:** The character `é` (U+00E9) is encoded as bytes `C3 A9`. A tokenizer that keeps `café` as `caf` | `é` produces two tokens, both containing complete UTF-8, completeness rate 1.0. A byte-fallback tokenizer that produces `caf` | `<0xC3>` | `<0xA9>` has 3 content tokens, of which 2 contain incomplete UTF-8 sequences, completeness rate 1/3.
 
 #### Character Boundary Crossing Rate (`utf8_boundary_crossing`)
 
-Fraction of content tokens that cross a UTF-8 character boundary — tokens containing bytes from more than one UTF-8 character where at least one of those characters is incomplete within the token. These tokens are the direct product of BPE merges that fused bytes across character boundaries, permanently preventing the affected characters from being represented as whole tokens.
+Fraction of content tokens that cross a UTF-8 character boundary, tokens containing bytes from more than one UTF-8 character where at least one of those characters is incomplete within the token. These tokens are the direct product of BPE merges that fused bytes across character boundaries, permanently preventing the affected characters from being represented as whole tokens.
 
-This is distinct from simple byte-fallback tokens. A byte-fallback token like `<0xC3>` is incomplete but does not cross a boundary — it holds bytes from exactly one character. A boundary-crossing token like one containing `A9 E4` (the tail byte of `é` merged with the leading byte of a CJK character) spans two characters and completes neither.
+This is distinct from simple byte-fallback tokens. A byte-fallback token like `<0xC3>` is incomplete but does not cross a boundary, it holds bytes from exactly one character. A boundary-crossing token like one containing `A9 E4` (the tail byte of `é` merged with the leading byte of a CJK character) spans two characters and completes neither.
 
-**Example:** Consider bytes `C3 A9 E4 BD A0` (the characters `é你`). A BPE tokenizer that merges the last byte of `é` with the first byte of `你` might produce `C3` | `A9 E4` | `BD A0`. The middle token `A9 E4` crosses a character boundary — it contains the continuation byte of `é` and the leading byte of `你`, completing neither character. The crossing rate would be 1/3.
+**Example:** Consider bytes `C3 A9 E4 BD A0` (the characters `é你`). A BPE tokenizer that merges the last byte of `é` with the first byte of `你` might produce `C3` | `A9 E4` | `BD A0`. The middle token `A9 E4` crosses a character boundary, it contains the continuation byte of `é` and the leading byte of `你`, completing neither character. The crossing rate would be 1/3.
 
 **Why it matters:** Boundary-crossing tokens are fundamentally unrecoverable. While a byte-fallback token can be recombined with its neighbors to reconstruct a character, a boundary-crossing token has fused bytes from different characters in a way that no amount of context can cleanly separate within a single embedding.
 
@@ -416,9 +502,9 @@ Counts how many multi-byte characters in the source text have their constituent 
 
 ### Code Tokenization Metrics
 
-Evaluates tokenizer handling of source code by parsing it with tree-sitter and measuring alignment between AST node boundaries and token boundaries. Tree-sitter support is installed by default. Supports 19 languages (Python, JavaScript, Java, C, C++, Go, Rust, TypeScript, PHP, Ruby, C#, Scala, Swift, Kotlin, Lua, R, Perl, Haskell, Bash). Configure with `--code-ast-config`; disable with `--no-code-ast`.
+Evaluates tokenizer handling of source code by parsing it with tree-sitter and measuring alignment between AST node boundaries and token boundaries. Tree-sitter support is installed by default. Configured for 19 languages (Python, JavaScript, Java, C, C++, Go, Rust, TypeScript, PHP, Ruby, C#, Scala, Swift, Kotlin, Lua, R, Perl, Haskell, Bash). A grammar that crashes its parser process is reported as unmeasured and named in the log, rather than scored. Configure with `--code-ast-config`; disable with `--no-code-ast`.
 
-> **Data scope:** These metrics are **always** computed on dedicated source-code snippets (loaded via `--code-ast-config`, or small built-in synthetic samples as a fallback) — the general multilingual corpus passed to the analyzer is **never** used for this metric group, regardless of flags.
+> **Data scope:** These metrics are **always** computed on dedicated source-code snippets (loaded via `--code-ast-config`, or small built-in synthetic samples as a fallback), the general multilingual corpus passed to the analyzer is **never** used for this metric group, regardless of flags.
 
 #### AST Leaf-Node Boundary Alignment (`ast_full_alignment`)
 
@@ -426,7 +512,7 @@ Parses source code with tree-sitter, extracts leaf-node spans, and measures the 
 
 Reports start-alignment rate, end-alignment rate, full-alignment rate, and cross-boundary rate, broken down by category and language.
 
-**Example:** For the Python snippet `return total`, tree-sitter identifies `return` (keyword, bytes 0-6) and `total` (identifier, bytes 7-12). If the tokenizer produces `return` | ` total` — both AST nodes fully align with token boundaries: full alignment = 1.0. If it produces `ret` | `urn total` — the keyword `return` has start-aligned = True (token changes at position 0) but end-aligned = False (positions 5 and 6 share a token with position 7), so fully_aligned = False. The identifier `total` has start-aligned = False (it shares a token with `urn`), so it also fails. Full alignment rate: 0/2 = 0.0.
+**Example:** For the Python snippet `return total`, tree-sitter identifies `return` (keyword, bytes 0-6) and `total` (identifier, bytes 7-12). If the tokenizer produces `return` | ` total`, both AST nodes fully align with token boundaries: full alignment = 1.0. If it produces `ret` | `urn total`, the keyword `return` has start-aligned = True (token changes at position 0) but end-aligned = False (positions 5 and 6 share a token with position 7), so fully_aligned = False. The identifier `total` has start-aligned = False (it shares a token with `urn`), so it also fails. Full alignment rate: 0/2 = 0.0.
 
 **Why it matters:** Code has deterministic grammar, so AST node boundaries are objectively derivable with no manual annotation. A tokenizer that splits `return` into `ret` + `urn` fragments a syntactically atomic unit.
 
@@ -440,9 +526,9 @@ Fraction of programmer-defined identifiers split into multiple tokens, plus aver
 
 #### Indentation Depth Proportionality Correlation (`indent_depth_corr`)
 
-Measures whether the number of whitespace tokens a tokenizer produces for leading indentation grows proportionally with nesting depth. Computes the Spearman rank correlation (ρ) between logical nesting depth (from tree-sitter) and the count of whitespace-only tokens in the leading indentation of each line. Only evaluated on whitespace-significant languages (Python, YAML). Requires at least 3 distinct depth levels per language; languages with fewer are skipped.
+Measures whether the number of whitespace tokens a tokenizer produces for leading indentation grows proportionally with nesting depth. Computes the Spearman rank correlation (ρ) between indentation depth and the count of whitespace tokens in the leading indentation of each line. Depth is the line's leading-whitespace width divided by the indent unit inferred per snippet as the GCD of its non-zero indent widths; it does not come from the parse tree. Only evaluated on whitespace-significant languages (Python and Haskell). Requires at least 3 distinct depth levels per language; languages with fewer are skipped.
 
-**Example:** A Python file has lines at depths 1, 2, 3, and 4. A proportional tokenizer encodes depth-1 indentation as 1 whitespace token, depth-2 as 2, depth-3 as 3, and depth-4 as 4 — perfect rank correlation, ρ = 1.0. A tokenizer that merges all indentation into a single token regardless of depth (1, 1, 1, 1 whitespace tokens) produces ρ ≈ 0.0. A tokenizer that uses *more* tokens for shallow depths than deep ones gives ρ < 0.
+**Example:** A Python file has lines at depths 1, 2, 3, and 4. A proportional tokenizer encodes depth-1 indentation as 1 whitespace token, depth-2 as 2, depth-3 as 3, and depth-4 as 4, perfect rank correlation, ρ = 1.0. A tokenizer that merges all indentation into a single token regardless of depth (1, 1, 1, 1 whitespace tokens) produces ρ ≈ 0.0. A tokenizer that uses *more* tokens for shallow depths than deep ones gives ρ < 0.
 
 **Why it matters:** If indentation depth maps monotonically to whitespace token count, the model receives a natural positional signal for nesting structure without needing to learn it from context.
 
@@ -474,7 +560,7 @@ Then the **Tokenizer Fairness Gini** with equal weights is
   * $`0`$: perfect parity (every language has identical byte-normalised token cost).
   * $`1`$: maximal unfairness.
 
-- **Cross-Lingual Vocabulary-Utilization CoV** (`vocab_util_cross_lingual_cov`): Coefficient of variation (sample standard deviation ÷ mean, `ddof=1`) of the per-language vocabulary-utilization *ratio* across languages. Computed on the ratio (not the raw used-token count) so it is comparable across tokenizers with different vocabulary sizes. **Lower is better** — a low value means the tokenizer devotes a similarly-sized share of its vocabulary to each language (balanced cross-lingual utilization); a high value means utilization is concentrated in some languages. Complements the Gini coefficient above: Gini measures fairness of per-language *encoding cost*, while this measures balance of per-language *vocabulary coverage*. Requires ≥2 languages with mean utilization > 0; for single-language corpora it is reported as `---` (markdown) / omitted (plot) rather than a fabricated `0`. The JSON results also carry the underlying `per_language_mean` and `per_language_std`. Surfaced in the markdown results table and as an individual comparison plot (`vocab_util_cross_lingual_cov_individual.svg`).
+- **Cross-Lingual Vocabulary-Utilization CoV** (`vocab_util_cross_lingual_cov`): Coefficient of variation (sample standard deviation ÷ mean, `ddof=1`) of the per-language vocabulary-utilization *ratio* across languages. Computed on the ratio (not the raw used-token count) so it is comparable across tokenizers with different vocabulary sizes. **Lower is better**: a low value means the tokenizer devotes a similarly-sized share of its vocabulary to each language (balanced cross-lingual utilization); a high value means utilization is concentrated in some languages. Complements the Gini coefficient above: Gini measures fairness of per-language *encoding cost*, while this measures balance of per-language *vocabulary coverage*. Requires ≥2 languages with mean utilization > 0; for single-language corpora it is reported as `---` (markdown) / omitted (plot) rather than a fabricated `0`. The JSON results also carry the underlying `per_language_mean` and `per_language_std`. Surfaced in the markdown results table and as an individual comparison plot (`vocab_util_cross_lingual_cov_individual.svg`).
 
 ## Data Format Requirements
 
@@ -569,12 +655,12 @@ Reconstruction metrics (`mean_cer`, `whitespace_fidelity`) decode every tokenize
 A two-step workflow lets you encode once and iterate on metrics/visualization without re-encoding:
 
 ```bash
-# Step 1 — encode and save (slow, once)
+# Step 1: encode and save (slow, once)
 uv run tokenizer-analysis \
   --tokenizer-config tokenizers.json --language-config languages.json \
   --save-tokenized-data --tokenized-data-output-path results/tokenized_data.pkl
 
-# Step 2 — reuse cached data (fast, repeat as needed)
+# Step 2: reuse cached data (fast, repeat as needed)
 uv run tokenizer-analysis \
   --tokenized-data-file results/tokenized_data.pkl \
   --language-config languages.json
@@ -595,13 +681,13 @@ uv run tokenizer-analysis \
 
 ## Troubleshooting
 
-**`No module named 'morphscore'`** — Initialize submodules, then install MorphScore into the project environment: `git submodule update --init --recursive && uv pip install -e ./morphscore`
+**`No module named 'morphscore'`**: Initialize submodules, then install MorphScore into the project environment: `git submodule update --init --recursive && uv pip install -e ./morphscore`
 
-**`Unknown tokenizer class`** — Available classes: `"huggingface"`, `"custom_bpe"`, `"pretokenized"`, plus any custom classes you register at runtime with `register_tokenizer_class()` (see Contributing).
+**`Unknown tokenizer class`**: available classes are `"huggingface"` (aliases `"hf"`, `"transformers"`, and the deprecated `"standard"`), `"sentencepiece"`, `"custom_bpe"`, `"unimixlm"`, `"pretokenized"`, `"script_bpe"` and `"mingram"`, plus any you register at runtime with `register_tokenizer_class()` (see Contributing).
 
-**`FileNotFoundError`** — Check that paths in config files are absolute or relative to the working directory.
+**`FileNotFoundError`**: Check that paths in config files are absolute or relative to the working directory.
 
-**`_tkinter.TclError: no display name`** — Set `export MPLBACKEND=Agg` before running on headless servers.
+**`_tkinter.TclError: no display name`**: Set `export MPLBACKEND=Agg` before running on headless servers.
 
 ## Contributing
 
@@ -616,7 +702,7 @@ Subclass `TokenizerWrapper` from `tokenizer_analysis.core.tokenizer_wrapper` and
 | `get_name() -> str` | Return the tokenizer's display name. |
 | `get_vocab_size() -> int` | Return the total vocabulary size. |
 | `get_vocab() -> Dict[str, int]` | Return `{token_string: id}` mapping. Used for vocabulary utilization metrics and as a fallback for `convert_ids_to_tokens`. Return `None` if unavailable (disables vocab-dependent metrics). |
-| `can_encode() -> bool` | Return `True` if `encode()` works. Return `False` for pre-tokenized-only wrappers — this skips all encoding-dependent metrics (AST, math, UTF-8, indentation). |
+| `can_encode() -> bool` | Return `True` if `encode()` works. Return `False` for pre-tokenized-only wrappers, this skips all encoding-dependent metrics (AST, math, UTF-8, indentation). |
 | `encode(text: str) -> List[int]` | Encode text to token IDs. Only called when `can_encode()` is `True`. |
 | `can_pretokenize() -> bool` | Whether `pretokenize()` is available. Return `False` if not applicable. |
 | `pretokenize(text: str) -> List[str]` | Split text into subword pieces (strings). Only called when `can_pretokenize()` is `True`. |
@@ -674,10 +760,10 @@ Then reference `"class": "my_class"` in your tokenizer config.
 ## Citation
 
 ```bibtex
-@software{meister_tokenizer_analysis_2025,
+@software{meister_tokeval_2026,
   title = {TokEval: A Tokenizer Analysis Suite},
   author = {Meister, Clara},
-  year = {2025},
+  year = {2026},
   url = {https://github.com/cimeister/tokenizer-intrinsic-evals}
 }
 ```
