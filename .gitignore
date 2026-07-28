@@ -100,3 +100,27 @@ nohup.out
 
 # Dated config backups
 configs/*.bak.*
+
+# Local research scaffolding, never part of the released library. Listed
+# explicitly because `git add -A` swept these into a release branch once.
+/.claude/
+/lang_ratios.json
+/rerender_reproduction.py
+/run_pabpe_analysis.sh
+/run_pabpe_paper_reproduction.sh
+/run_tokenizer_analysis.sh
+/starcoder_ast_config.json
+/configs/axes2_tokenizers.json
+/configs/downstream_lm_*.json
+/configs/flores_devtest_lang_config.json
+/configs/mc_full_tokenizers.json
+/configs/tlm1b_las_gpt4o.json
+/configs/pabpe_configs/
+/scripts/backfill_operator_by_domain.py
+/scripts/fineweb_edu_compression.py
+/scripts/junk_tokens.py
+/scripts/nonemitting_tokens.py
+/scripts/run_ast_only.py
+/scripts/tiktoken_to_hf.py
+/scripts/run_batched_eval.sh
+/scripts/run_downstream_lm_evals_*.sh
