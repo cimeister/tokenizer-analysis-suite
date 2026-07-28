@@ -22,6 +22,13 @@ from typing import Dict, List, Optional, Set, Tuple
 
 CATEGORIES = ("identifier", "keyword", "operator", "literal", "delimiter")
 
+# Extra key in each categorised-spans dict holding the byte spans of tree-sitter
+# ERROR nodes. It is deliberately not in CATEGORIES: ERROR spans are never
+# aligned against tokens, they exist so callers can tell a clean parse from a
+# partial one. Consumers index the dict by category name, so the extra key is
+# inert for them.
+ERROR_SPANS_KEY = "_error_spans"
+
 IDENTIFIER_TYPES: Set[str] = {
     "identifier",
     "type_identifier",
@@ -154,9 +161,11 @@ def extract_leaf_spans(tree) -> Dict[str, List[Tuple[int, int]]]:
     categorized: Dict[str, List[Tuple[int, int]]] = {
         cat: [] for cat in CATEGORIES
     }
+    categorized[ERROR_SPANS_KEY] = []
 
     def _walk(node):
         if node.type == "ERROR":
+            categorized[ERROR_SPANS_KEY].append((node.start_byte, node.end_byte))
             return
         if node.child_count == 0:
             cat = classify_node(node)
@@ -233,6 +242,7 @@ def parse_snippets(
     parsed: Dict[str, List[Dict[str, List[Tuple[int, int]]]]] = {}
     skipped = 0
     empty_spans = {cat: [] for cat in CATEGORIES}
+    empty_spans[ERROR_SPANS_KEY] = []
 
     for lang, snippets in code_snippets.items():
         ts_name = lang_to_treesitter.get(lang)

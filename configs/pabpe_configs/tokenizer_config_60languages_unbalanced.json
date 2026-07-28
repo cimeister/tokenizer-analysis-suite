@@ -1,0 +1,29 @@
+{
+  "plot_tokenizers": [
+    "BPE",
+    "PA-BPE",
+    "PA-BPE (hybrid)",
+    "PA-BPE (window)",
+    "PA-BPE (window+hybrid)"
+  ],
+  "BPE": {
+    "class": "custom_bpe",
+    "path": "/capstor/scratch/cscs/cmeister747/tokeval-tokenizers/PA_BPE_tokenizers/128k/unbalanced/60languages/60languages-vanilla-255744"
+  },
+  "PA-BPE": {
+    "class": "custom_bpe",
+    "path": "/capstor/scratch/cscs/cmeister747/tokeval-tokenizers/PA_BPE_tokenizers/128k/unbalanced/60languages/60languages-parity-255744"
+  },
+  "PA-BPE (hybrid)": {
+    "class": "custom_bpe",
+    "path": "/capstor/scratch/cscs/cmeister747/tokeval-tokenizers/PA_BPE_tokenizers/128k/unbalanced/60languages/60languages-parity-hybrid-63936-255744"
+  },
+  "PA-BPE (window)": {
+    "class": "custom_bpe",
+    "path": "/capstor/scratch/cscs/cmeister747/tokeval-tokenizers/PA_BPE_tokenizers/128k/unbalanced/60languages/60languages-parity-window-255744"
+  },
+  "PA-BPE (window+hybrid)": {
+    "class": "custom_bpe",
+    "path": "/capstor/scratch/cscs/cmeister747/tokeval-tokenizers/PA_BPE_tokenizers/128k/unbalanced/60languages/60languages-parity-hybrid-window-63936-255744"
+  }
+}

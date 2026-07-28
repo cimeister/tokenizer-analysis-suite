@@ -1,0 +1,319 @@
+{
+  "languages": {
+    "eng_Latn": {
+      "name": "English",
+      "iso_code": "en",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/eng_Latn.txt"
+    },
+    "deu_Latn": {
+      "name": "German",
+      "iso_code": "de",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/deu_Latn.txt"
+    },
+    "fra_Latn": {
+      "name": "French",
+      "iso_code": "fr",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/fra_Latn.txt"
+    },
+    "ita_Latn": {
+      "name": "Italian",
+      "iso_code": "it",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/ita_Latn.txt"
+    },
+    "spa_Latn": {
+      "name": "Spanish",
+      "iso_code": "es",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/spa_Latn.txt"
+    },
+    "por_Latn": {
+      "name": "Portuguese",
+      "iso_code": "pt",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/por_Latn.txt"
+    },
+    "nld_Latn": {
+      "name": "Dutch",
+      "iso_code": "nl",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/nld_Latn.txt"
+    },
+    "pol_Latn": {
+      "name": "Polish",
+      "iso_code": "pl",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/pol_Latn.txt"
+    },
+    "ces_Latn": {
+      "name": "Czech",
+      "iso_code": "cs",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/ces_Latn.txt"
+    },
+    "nob_Latn": {
+      "name": "Norwegian Bokmal",
+      "iso_code": "nb",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/nob_Latn.txt"
+    },
+    "tur_Latn": {
+      "name": "Turkish",
+      "iso_code": "tr",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/tur_Latn.txt"
+    },
+    "azj_Latn": {
+      "name": "North Azerbaijani",
+      "iso_code": "az",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/azj_Latn.txt"
+    },
+    "vie_Latn": {
+      "name": "Vietnamese",
+      "iso_code": "vi",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/vie_Latn.txt"
+    },
+    "ind_Latn": {
+      "name": "Indonesian",
+      "iso_code": "id",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/ind_Latn.txt"
+    },
+    "fil_Latn": {
+      "name": "Filipino",
+      "iso_code": "tl",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/fil_Latn.txt"
+    },
+    "rus_Cyrl": {
+      "name": "Russian",
+      "iso_code": "ru",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/rus_Cyrl.txt"
+    },
+    "ell_Grek": {
+      "name": "Greek",
+      "iso_code": "el",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/ell_Grek.txt"
+    },
+    "arb_Arab": {
+      "name": "Arabic",
+      "iso_code": "ar",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/arb_Arab.txt"
+    },
+    "fas_Arab": {
+      "name": "Persian (Farsi)",
+      "iso_code": "fa",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/fas_Arab.txt"
+    },
+    "heb_Hebr": {
+      "name": "Hebrew",
+      "iso_code": "he",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/heb_Hebr.txt"
+    },
+    "hin_Deva": {
+      "name": "Hindi",
+      "iso_code": "hi",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/hin_Deva.txt"
+    },
+    "mar_Deva": {
+      "name": "Marathi",
+      "iso_code": "mr",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/mar_Deva.txt"
+    },
+    "ben_Beng": {
+      "name": "Bengali",
+      "iso_code": "bn",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/ben_Beng.txt"
+    },
+    "tam_Taml": {
+      "name": "Tamil",
+      "iso_code": "ta",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/tam_Taml.txt"
+    },
+    "tel_Telu": {
+      "name": "Telugu",
+      "iso_code": "te",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/tel_Telu.txt"
+    },
+    "kat_Geor": {
+      "name": "Georgian",
+      "iso_code": "ka",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/kat_Geor.txt"
+    },
+    "cmn_Hani": {
+      "name": "Mandarin Chinese",
+      "iso_code": "zh",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/cmn_Hani.txt"
+    },
+    "jpn_Jpan": {
+      "name": "Japanese",
+      "iso_code": "ja",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/jpn_Jpan.txt"
+    },
+    "kor_Hang": {
+      "name": "Korean",
+      "iso_code": "ko",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/kor_Hang.txt"
+    },
+    "tha_Thai": {
+      "name": "Thai",
+      "iso_code": "th",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/tha_Thai.txt"
+    }
+  },
+  "analysis_groups": {
+    "script_family": {
+      "Latin": [
+        "eng_Latn",
+        "deu_Latn",
+        "fra_Latn",
+        "ita_Latn",
+        "spa_Latn",
+        "por_Latn",
+        "nld_Latn",
+        "pol_Latn",
+        "ces_Latn",
+        "nob_Latn",
+        "tur_Latn",
+        "azj_Latn",
+        "vie_Latn",
+        "ind_Latn",
+        "fil_Latn"
+      ],
+      "Cyrillic": [
+        "rus_Cyrl"
+      ],
+      "Greek": [
+        "ell_Grek"
+      ],
+      "Arabic": [
+        "arb_Arab",
+        "fas_Arab"
+      ],
+      "Hebrew": [
+        "heb_Hebr"
+      ],
+      "Devanagari": [
+        "hin_Deva",
+        "mar_Deva"
+      ],
+      "Bengali": [
+        "ben_Beng"
+      ],
+      "Tamil": [
+        "tam_Taml"
+      ],
+      "Telugu": [
+        "tel_Telu"
+      ],
+      "Georgian": [
+        "kat_Geor"
+      ],
+      "Han_Simplified": [
+        "cmn_Hani"
+      ],
+      "Japanese": [
+        "jpn_Jpan"
+      ],
+      "Korean": [
+        "kor_Hang"
+      ],
+      "Thai": [
+        "tha_Thai"
+      ]
+    },
+    "resource_level": {
+      "High": [
+        "eng_Latn",
+        "rus_Cyrl",
+        "deu_Latn",
+        "fra_Latn",
+        "spa_Latn",
+        "ita_Latn",
+        "jpn_Jpan",
+        "cmn_Hani",
+        "pol_Latn",
+        "por_Latn",
+        "nld_Latn",
+        "vie_Latn",
+        "tur_Latn",
+        "ind_Latn",
+        "arb_Arab"
+      ],
+      "Medium": [
+        "fas_Arab",
+        "ces_Latn",
+        "ell_Grek",
+        "kor_Hang",
+        "tha_Thai",
+        "heb_Hebr",
+        "hin_Deva",
+        "nob_Latn",
+        "fil_Latn"
+      ],
+      "Low": [
+        "ben_Beng",
+        "tam_Taml",
+        "kat_Geor",
+        "mar_Deva",
+        "tel_Telu",
+        "azj_Latn"
+      ]
+    },
+    "language_family": {
+      "Indo_European_Germanic": [
+        "eng_Latn",
+        "deu_Latn",
+        "nld_Latn",
+        "nob_Latn"
+      ],
+      "Indo_European_Romance": [
+        "fra_Latn",
+        "ita_Latn",
+        "spa_Latn",
+        "por_Latn"
+      ],
+      "Indo_European_Slavic": [
+        "rus_Cyrl",
+        "pol_Latn",
+        "ces_Latn"
+      ],
+      "Indo_European_IndoAryan": [
+        "hin_Deva",
+        "mar_Deva",
+        "ben_Beng"
+      ],
+      "Indo_European_Iranian": [
+        "fas_Arab"
+      ],
+      "Indo_European_Hellenic": [
+        "ell_Grek"
+      ],
+      "Afro_Asiatic": [
+        "arb_Arab",
+        "heb_Hebr"
+      ],
+      "Turkic": [
+        "tur_Latn",
+        "azj_Latn"
+      ],
+      "Dravidian": [
+        "tam_Taml",
+        "tel_Telu"
+      ],
+      "Kartvelian": [
+        "kat_Geor"
+      ],
+      "Sino_Tibetan": [
+        "cmn_Hani"
+      ],
+      "Japonic": [
+        "jpn_Jpan"
+      ],
+      "Koreanic": [
+        "kor_Hang"
+      ],
+      "Kra_Dai": [
+        "tha_Thai"
+      ],
+      "Austroasiatic": [
+        "vie_Latn"
+      ],
+      "Austronesian": [
+        "ind_Latn",
+        "fil_Latn"
+      ]
+    }
+  },
+  "_note": "FLORES+ devtest split (1012 lines/lang). Downloaded from openlanguagedata/flores_plus. fas_Arab<-pes_Arab, cmn_Hani<-cmn_Hans."
+}

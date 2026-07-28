@@ -17,6 +17,7 @@ Five AST node categories are tracked independently:
 import math
 import os
 import pickle
+import signal
 import subprocess
 import sys
 import tempfile
@@ -48,6 +49,161 @@ _WHITESPACE_SIGNIFICANT_LANGS: Set[str] = {"python", "haskell"}
 
 logger = logging.getLogger(__name__)
 
+# Default timeout (seconds) for each per-language tree-sitter subprocess.
+DEFAULT_PARSE_TIMEOUT_S = 120
+
+
+def _treesitter_pack_version() -> str:
+    """Return the installed tree-sitter-language-pack version, or 'unknown'."""
+    try:
+        import importlib.metadata as _md
+
+        return _md.version("tree-sitter-language-pack")
+    except Exception:
+        return "unknown"
+
+
+def parse_snippets_fenced(
+    code_snippets: Dict[str, List[str]],
+    lang_to_treesitter: Dict[str, str],
+    timeout_s: int = DEFAULT_PARSE_TIMEOUT_S,
+) -> Tuple[Dict[str, list], Dict[str, str]]:
+    """Parse code snippets with tree-sitter in one subprocess per language.
+
+    Tree-sitter uses a C backend. Two things make in-process parsing unsafe.
+    First, earlier metrics call ``tokenizer.encode()`` through a Rust/C backend
+    that can corrupt heap metadata, so the first tree-sitter malloc afterwards
+    crashes. Second, some grammars corrupt the heap on their own. Measured
+    2026-07-28 with tree-sitter-language-pack 0.13.0: calling
+    ``get_parser("haskell").parse(...)`` directly on snippet 1 of the bundled
+    synthetic Haskell sample aborts the process with
+    ``malloc(): mismatching next->prev_size``, in a fresh interpreter with no
+    other grammar loaded. Either way the process dies by signal and no
+    ``except`` clause can catch it.
+
+    The worker parses inside a daemon thread, and that same snippet currently
+    survives there and returns correct spans. Do not rely on that: it is a
+    side effect of the allocation pattern, not a fix. The fence is what makes
+    both outcomes safe, because a worker that does abort is reported as a
+    crashed language rather than taking the caller down.
+
+    Spawning one subprocess per language contains the damage: a grammar that
+    crashes takes its own process down and the others still return. The worker
+    returns only categorized byte-offset spans, which is the one thing that
+    needs the C library; byte-to-char mapping and indentation extraction are
+    pure Python and stay in the caller.
+
+    Never add an in-process fallback here. Falling back would reintroduce
+    exactly the crash this function exists to contain.
+
+    Returns:
+        ``(parsed_spans, dropped)`` where *parsed_spans* maps language to a list
+        of categorized-span dicts, and *dropped* maps each language that
+        produced no spans to the reason. A language in *dropped* was not
+        measured; it did not score zero. Callers must propagate that
+        distinction rather than letting an absent language read as an absent
+        finding.
+    """
+    worker_path = os.path.join(os.path.dirname(__file__), "_treesitter_worker.py")
+    parsed_spans: Dict[str, list] = {}
+    dropped: Dict[str, str] = {}
+
+    for lang, snippets in code_snippets.items():
+        if not snippets:
+            continue
+        if lang_to_treesitter.get(lang) is None:
+            dropped[lang] = "no_grammar"
+            logger.debug("No tree-sitter grammar for %s; skipping.", lang)
+            continue
+
+        tmp_in = tmp_out = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                suffix=".pkl", prefix=f"ts_in_{lang}_", delete=False
+            ) as f_in:
+                tmp_in = f_in.name
+                pickle.dump(({lang: snippets}, lang_to_treesitter), f_in)
+
+            with tempfile.NamedTemporaryFile(
+                suffix=".pkl", prefix=f"ts_out_{lang}_", delete=False
+            ) as f_out:
+                tmp_out = f_out.name
+
+            proc = subprocess.run(
+                [sys.executable, worker_path, tmp_in, tmp_out],
+                capture_output=True,
+                timeout=timeout_s,
+            )
+            stderr_msg = proc.stderr.decode(errors="replace").strip()
+
+            if proc.returncode != 0:
+                rc = proc.returncode
+                if rc < 0:
+                    try:
+                        sig_name = signal.Signals(-rc).name
+                    except (ValueError, AttributeError):
+                        sig_name = f"signal {-rc}"
+                    dropped[lang] = f"grammar_crash:{sig_name}"
+                    logger.error(
+                        "  %s: tree-sitter worker killed by %s (return code %d). "
+                        "The %r grammar in tree-sitter-language-pack %s crashed the "
+                        "parser process, so %s was NOT measured and is absent from "
+                        "the results. This is a native crash in the grammar, not a "
+                        "property of any tokenizer. stderr:\n%s",
+                        lang, sig_name, rc, lang_to_treesitter.get(lang),
+                        _treesitter_pack_version(), lang, stderr_msg or "(empty)",
+                    )
+                else:
+                    dropped[lang] = f"worker_exit:{rc}"
+                    logger.error(
+                        "  %s: tree-sitter worker exited with code %d; %s was NOT "
+                        "measured. stderr:\n%s",
+                        lang, rc, lang, stderr_msg or "(empty)",
+                    )
+                continue
+
+            if stderr_msg:
+                logger.info("Tree-sitter worker [%s]: %s", lang, stderr_msg)
+
+            if not os.path.exists(tmp_out) or os.path.getsize(tmp_out) == 0:
+                dropped[lang] = "empty_worker_output"
+                logger.error(
+                    "  %s: worker exited successfully but wrote no output (%s); "
+                    "%s was NOT measured.",
+                    lang, tmp_out, lang,
+                )
+                continue
+
+            with open(tmp_out, "rb") as f:
+                lang_result = pickle.load(f)
+            parsed_spans.update(lang_result)
+            logger.debug("  %s: parsed %d snippet(s) in subprocess.", lang, len(snippets))
+
+        except subprocess.TimeoutExpired:
+            dropped[lang] = f"timeout:{timeout_s}s"
+            logger.warning(
+                "  %s: tree-sitter worker timed out after %ds for %d snippet(s); "
+                "%s was NOT measured.",
+                lang, timeout_s, len(snippets), lang,
+            )
+        except Exception as e:
+            dropped[lang] = f"worker_error:{type(e).__name__}"
+            logger.error(
+                "  %s: tree-sitter worker failed with %s: %s. Not falling back to "
+                "in-process parsing, which would risk crashing this process. %s was "
+                "NOT measured.",
+                lang, type(e).__name__, e, lang,
+            )
+        finally:
+            for tmp_path in (tmp_in, tmp_out):
+                if tmp_path and os.path.exists(tmp_path):
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
+
+    return parsed_spans, dropped
+
 
 class ASTBoundaryMetrics(BaseMetrics):
     """AST boundary alignment metrics for code tokenization.
@@ -72,6 +228,11 @@ class ASTBoundaryMetrics(BaseMetrics):
 
         # Tree-sitter availability (lazy)
         self._treesitter_available: Optional[bool] = None
+
+        # Languages the parser could not handle in the last compute() call,
+        # mapped to why. Surfaced in the results so an absent language is not
+        # read as a language that scored zero.
+        self._dropped_languages: Dict[str, str] = {}
 
         # Load code data
         from ..loaders.code_data import CodeDataLoader
@@ -543,116 +704,17 @@ class ASTBoundaryMetrics(BaseMetrics):
             total_input, len(code_snippets), self._PER_LANG_TIMEOUT,
         )
 
-        worker_path = os.path.join(os.path.dirname(__file__), "_treesitter_worker.py")
-
-        # Log diagnostic info so subprocess failures can be debugged remotely.
-        logger.info(
-            "Subprocess config: python=%s, worker=%s, worker_exists=%s",
-            sys.executable, worker_path, os.path.isfile(worker_path),
+        parsed_spans, dropped_languages = parse_snippets_fenced(
+            code_snippets, lang_to_treesitter, timeout_s=self._PER_LANG_TIMEOUT
         )
-
-        parsed_spans: Dict[str, list] = {}
-
-        for lang, snippets in code_snippets.items():
-            if not snippets:
-                continue
-            ts_name = lang_to_treesitter.get(lang)
-            if ts_name is None:
-                logger.debug("No tree-sitter grammar for %s; skipping.", lang)
-                continue
-
-            tmp_in = tmp_out = None
-            try:
-                with tempfile.NamedTemporaryFile(
-                    suffix=".pkl", prefix=f"ts_in_{lang}_", delete=False
-                ) as f_in:
-                    tmp_in = f_in.name
-                    pickle.dump(({lang: snippets}, lang_to_treesitter), f_in)
-
-                with tempfile.NamedTemporaryFile(
-                    suffix=".pkl", prefix=f"ts_out_{lang}_", delete=False
-                ) as f_out:
-                    tmp_out = f_out.name
-
-                logger.debug(
-                    "  %s: launching subprocess: %s %s %s %s",
-                    lang, sys.executable, worker_path, tmp_in, tmp_out,
-                )
-
-                proc = subprocess.run(
-                    [sys.executable, worker_path, tmp_in, tmp_out],
-                    capture_output=True,
-                    timeout=self._PER_LANG_TIMEOUT,
-                )
-
-                stderr_msg = proc.stderr.decode(errors="replace").strip()
-
-                if proc.returncode != 0:
-                    # Log full stderr and the signal number for crash diagnosis.
-                    rc = proc.returncode
-                    if rc < 0:
-                        import signal as _signal
-                        try:
-                            sig_name = _signal.Signals(-rc).name
-                        except (ValueError, AttributeError):
-                            sig_name = f"signal {-rc}"
-                        logger.error(
-                            "  %s: subprocess killed by %s (return code %d). "
-                            "This typically indicates a malloc/heap corruption "
-                            "crash (SIGSEGV/SIGABRT) in tree-sitter's C backend. "
-                            "stderr:\n%s",
-                            lang, sig_name, rc, stderr_msg or "(empty)",
-                        )
-                    else:
-                        logger.error(
-                            "  %s: subprocess exited with code %d. stderr:\n%s",
-                            lang, rc, stderr_msg or "(empty)",
-                        )
-                    logger.error(
-                        "  %s: NOT falling back to in-process parsing to "
-                        "avoid heap corruption in the main process.",
-                        lang,
-                    )
-                    continue
-
-                if stderr_msg:
-                    logger.info("Tree-sitter worker [%s]: %s", lang, stderr_msg)
-
-                if not os.path.exists(tmp_out) or os.path.getsize(tmp_out) == 0:
-                    logger.error(
-                        "  %s: subprocess exited successfully but output "
-                        "file is missing or empty (%s); skipping language.",
-                        lang, tmp_out,
-                    )
-                    continue
-
-                with open(tmp_out, "rb") as f:
-                    lang_result = pickle.load(f)
-                parsed_spans.update(lang_result)
-                logger.info(
-                    "  %s: parsed %d snippet(s) in subprocess.",
-                    lang, len(snippets),
-                )
-            except subprocess.TimeoutExpired:
-                logger.warning(
-                    "  %s: subprocess timed out after %ds for %d snippet(s); "
-                    "skipping language.",
-                    lang, self._PER_LANG_TIMEOUT, len(snippets),
-                )
-            except Exception as e:
-                logger.error(
-                    "  %s: subprocess failed with %s: %s.  "
-                    "NOT falling back to in-process parsing to avoid "
-                    "heap corruption.  Skipping language.",
-                    lang, type(e).__name__, e,
-                )
-            finally:
-                for tmp_path in (tmp_in, tmp_out):
-                    if tmp_path and os.path.exists(tmp_path):
-                        try:
-                            os.unlink(tmp_path)
-                        except OSError:
-                            pass
+        self._dropped_languages = dropped_languages
+        if dropped_languages:
+            logger.warning(
+                "Phase 1: %d language(s) could not be parsed and are absent from "
+                "the AST results (not scored zero): %s",
+                len(dropped_languages),
+                ", ".join(f"{k} ({v})" for k, v in sorted(dropped_languages.items())),
+            )
 
         total_parsed = sum(len(v) for v in parsed_spans.values())
         # Count snippets that produced at least one AST span (non-empty parse).
@@ -1276,19 +1338,25 @@ class ASTBoundaryMetrics(BaseMetrics):
         """Compute AST boundary alignment metrics for ONE source-code snippet
         under ONE tokenizer.
 
-        Reuses ``_parse_snippets`` (tree-sitter via the lightweight worker
-        module) for parsing, then routes ``_check_boundary_alignment_fast``,
-        ``_count_identifier_tokens_fast``, and ``_build_char_to_token_map``
-        at single-snippet granularity. The standard ``compute()`` workflow is
-        unaffected: this method snapshots and restores
-        ``self._char_decode_table`` and does not touch the aggregator state.
+        Reuses :func:`parse_snippets_fenced` for parsing, then routes
+        ``_check_boundary_alignment_fast``, ``_count_identifier_tokens_fast``,
+        and ``_build_char_to_token_map`` at single-snippet granularity. The
+        standard ``compute()`` workflow is unaffected: this method snapshots
+        and restores ``self._char_decode_table`` and does not touch the
+        aggregator state.
 
-        Tree-sitter is invoked **in-process** here (no subprocess). For
-        per-example correlation use, single-snippet calls do not accumulate
-        the heap pressure that motivated the subprocess fence in
-        ``compute()`` — but if a parse fails (timeout, exception, or no
-        matching grammar) all alignment scalars come back NaN with
-        ``n_ast_nodes = 0`` so the caller can drop the row.
+        Parsing goes through the same subprocess fence ``compute()`` uses. An
+        earlier version parsed in-process on the theory that a single snippet
+        does not accumulate heap pressure, which was wrong: a grammar can
+        corrupt the heap on its own input (the Haskell grammar in
+        tree-sitter-language-pack 0.13.0 aborts on the bundled synthetic
+        sample), and that kills the calling process outright. The fence costs
+        one subprocess spawn per call, which is the price of not taking down a
+        caller iterating over a corpus.
+
+        If a parse fails (crash, timeout, exception, or no matching grammar)
+        all alignment scalars come back NaN with ``n_ast_nodes = 0`` and
+        ``parse_status`` naming the reason, so the caller can drop the row.
 
         Returns a dict with keys: ``n_ast_nodes`` (total spans considered
         across all categories), ``full_alignment_rate``,
@@ -1330,13 +1398,16 @@ class ASTBoundaryMetrics(BaseMetrics):
             out["parse_status"] = f"no_grammar_for_{language}"
             return out
 
-        # Parse with tree-sitter via the worker module (in-process, single snippet).
-        try:
-            parsed = _parse_snippets({language: [source_code]}, CodeDataLoader._LANG_TO_TREESITTER)
-        except Exception as e:
+        # Parse through the same subprocess fence compute() uses, so a grammar
+        # that crashes on this snippet cannot take the caller's process down.
+        parsed, dropped = parse_snippets_fenced(
+            {language: [source_code]},
+            CodeDataLoader._LANG_TO_TREESITTER,
+            timeout_s=self._PER_LANG_TIMEOUT,
+        )
+        if language in dropped:
             out = dict(empty)
-            out["parse_status"] = f"parse_error:{type(e).__name__}"
-            logger.debug("compute_per_text parse failed for %s: %s", language, e)
+            out["parse_status"] = dropped[language]
             return out
         spans_list = parsed.get(language, [])
         if not spans_list:

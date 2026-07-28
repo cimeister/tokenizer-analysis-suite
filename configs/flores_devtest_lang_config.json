@@ -1,0 +1,1029 @@
+{
+  "languages": {
+    "ace_Arab": {
+      "name": "ace_Arab",
+      "iso_code": "ace",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/ace_Arab.txt"
+    },
+    "ace_Latn": {
+      "name": "ace_Latn",
+      "iso_code": "ace",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/ace_Latn.txt"
+    },
+    "acm_Arab": {
+      "name": "acm_Arab",
+      "iso_code": "acm",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/acm_Arab.txt"
+    },
+    "aeb_Arab": {
+      "name": "aeb_Arab",
+      "iso_code": "aeb",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/aeb_Arab.txt"
+    },
+    "afr_Latn": {
+      "name": "afr_Latn",
+      "iso_code": "afr",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/afr_Latn.txt"
+    },
+    "als_Latn": {
+      "name": "als_Latn",
+      "iso_code": "als",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/als_Latn.txt"
+    },
+    "amh_Ethi": {
+      "name": "amh_Ethi",
+      "iso_code": "amh",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/amh_Ethi.txt"
+    },
+    "apc_Arab": {
+      "name": "apc_Arab",
+      "iso_code": "apc",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/apc_Arab.txt"
+    },
+    "arb_Arab": {
+      "name": "Arabic (Standard)",
+      "iso_code": "ar",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/arb_Arab.txt"
+    },
+    "arb_Latn": {
+      "name": "arb_Latn",
+      "iso_code": "arb",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/arb_Latn.txt"
+    },
+    "arg_Latn": {
+      "name": "arg_Latn",
+      "iso_code": "arg",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/arg_Latn.txt"
+    },
+    "ars_Arab": {
+      "name": "ars_Arab",
+      "iso_code": "ars",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/ars_Arab.txt"
+    },
+    "ary_Arab": {
+      "name": "ary_Arab",
+      "iso_code": "ary",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/ary_Arab.txt"
+    },
+    "arz_Arab": {
+      "name": "arz_Arab",
+      "iso_code": "arz",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/arz_Arab.txt"
+    },
+    "asm_Beng": {
+      "name": "asm_Beng",
+      "iso_code": "asm",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/asm_Beng.txt"
+    },
+    "ast_Latn": {
+      "name": "ast_Latn",
+      "iso_code": "ast",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/ast_Latn.txt"
+    },
+    "awa_Deva": {
+      "name": "awa_Deva",
+      "iso_code": "awa",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/awa_Deva.txt"
+    },
+    "ayr_Latn": {
+      "name": "ayr_Latn",
+      "iso_code": "ayr",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/ayr_Latn.txt"
+    },
+    "azb_Arab": {
+      "name": "azb_Arab",
+      "iso_code": "azb",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/azb_Arab.txt"
+    },
+    "azj_Latn": {
+      "name": "Azerbaijani (North)",
+      "iso_code": "az",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/azj_Latn.txt"
+    },
+    "bak_Cyrl": {
+      "name": "bak_Cyrl",
+      "iso_code": "bak",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/bak_Cyrl.txt"
+    },
+    "bam_Latn": {
+      "name": "bam_Latn",
+      "iso_code": "bam",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/bam_Latn.txt"
+    },
+    "ban_Latn": {
+      "name": "ban_Latn",
+      "iso_code": "ban",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/ban_Latn.txt"
+    },
+    "bel_Cyrl": {
+      "name": "Belarusian",
+      "iso_code": "be",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/bel_Cyrl.txt"
+    },
+    "bem_Latn": {
+      "name": "bem_Latn",
+      "iso_code": "bem",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/bem_Latn.txt"
+    },
+    "ben_Beng": {
+      "name": "Bengali",
+      "iso_code": "bn",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/ben_Beng.txt"
+    },
+    "bho_Deva": {
+      "name": "bho_Deva",
+      "iso_code": "bho",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/bho_Deva.txt"
+    },
+    "bjn_Arab": {
+      "name": "bjn_Arab",
+      "iso_code": "bjn",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/bjn_Arab.txt"
+    },
+    "bjn_Latn": {
+      "name": "bjn_Latn",
+      "iso_code": "bjn",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/bjn_Latn.txt"
+    },
+    "bod_Tibt": {
+      "name": "bod_Tibt",
+      "iso_code": "bod",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/bod_Tibt.txt"
+    },
+    "bos_Latn": {
+      "name": "Bosnian",
+      "iso_code": "bs",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/bos_Latn.txt"
+    },
+    "bug_Latn": {
+      "name": "bug_Latn",
+      "iso_code": "bug",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/bug_Latn.txt"
+    },
+    "bul_Cyrl": {
+      "name": "Bulgarian",
+      "iso_code": "bg",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/bul_Cyrl.txt"
+    },
+    "cat_Latn": {
+      "name": "Catalan",
+      "iso_code": "ca",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/cat_Latn.txt"
+    },
+    "ceb_Latn": {
+      "name": "ceb_Latn",
+      "iso_code": "ceb",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/ceb_Latn.txt"
+    },
+    "ces_Latn": {
+      "name": "Czech",
+      "iso_code": "cs",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/ces_Latn.txt"
+    },
+    "chv_Cyrl": {
+      "name": "chv_Cyrl",
+      "iso_code": "chv",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/chv_Cyrl.txt"
+    },
+    "cjk_Latn": {
+      "name": "cjk_Latn",
+      "iso_code": "cjk",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/cjk_Latn.txt"
+    },
+    "ckb_Arab": {
+      "name": "ckb_Arab",
+      "iso_code": "ckb",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/ckb_Arab.txt"
+    },
+    "cmn_Hani": {
+      "name": "Chinese (Mandarin Simplified)",
+      "iso_code": "zh",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/cmn_Hani.txt"
+    },
+    "crh_Latn": {
+      "name": "crh_Latn",
+      "iso_code": "crh",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/crh_Latn.txt"
+    },
+    "cym_Latn": {
+      "name": "cym_Latn",
+      "iso_code": "cym",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/cym_Latn.txt"
+    },
+    "dan_Latn": {
+      "name": "Danish",
+      "iso_code": "da",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/dan_Latn.txt"
+    },
+    "deu_Latn": {
+      "name": "German",
+      "iso_code": "de",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/deu_Latn.txt"
+    },
+    "dik_Latn": {
+      "name": "dik_Latn",
+      "iso_code": "dik",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/dik_Latn.txt"
+    },
+    "dyu_Latn": {
+      "name": "dyu_Latn",
+      "iso_code": "dyu",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/dyu_Latn.txt"
+    },
+    "dzo_Tibt": {
+      "name": "dzo_Tibt",
+      "iso_code": "dzo",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/dzo_Tibt.txt"
+    },
+    "ekk_Latn": {
+      "name": "Estonian",
+      "iso_code": "et",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/ekk_Latn.txt"
+    },
+    "ell_Grek": {
+      "name": "Greek",
+      "iso_code": "el",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/ell_Grek.txt"
+    },
+    "eng_Latn": {
+      "name": "English",
+      "iso_code": "en",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/eng_Latn.txt"
+    },
+    "epo_Latn": {
+      "name": "epo_Latn",
+      "iso_code": "epo",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/epo_Latn.txt"
+    },
+    "eus_Latn": {
+      "name": "eus_Latn",
+      "iso_code": "eus",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/eus_Latn.txt"
+    },
+    "ewe_Latn": {
+      "name": "ewe_Latn",
+      "iso_code": "ewe",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/ewe_Latn.txt"
+    },
+    "fao_Latn": {
+      "name": "fao_Latn",
+      "iso_code": "fao",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/fao_Latn.txt"
+    },
+    "fas_Arab": {
+      "name": "Persian",
+      "iso_code": "fa",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/fas_Arab.txt"
+    },
+    "fij_Latn": {
+      "name": "fij_Latn",
+      "iso_code": "fij",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/fij_Latn.txt"
+    },
+    "fil_Latn": {
+      "name": "Filipino",
+      "iso_code": "fil",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/fil_Latn.txt"
+    },
+    "fin_Latn": {
+      "name": "Finnish",
+      "iso_code": "fi",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/fin_Latn.txt"
+    },
+    "fon_Latn": {
+      "name": "fon_Latn",
+      "iso_code": "fon",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/fon_Latn.txt"
+    },
+    "fra_Latn": {
+      "name": "French",
+      "iso_code": "fr",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/fra_Latn.txt"
+    },
+    "fur_Latn": {
+      "name": "fur_Latn",
+      "iso_code": "fur",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/fur_Latn.txt"
+    },
+    "fuv_Latn": {
+      "name": "fuv_Latn",
+      "iso_code": "fuv",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/fuv_Latn.txt"
+    },
+    "gaz_Latn": {
+      "name": "gaz_Latn",
+      "iso_code": "gaz",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/gaz_Latn.txt"
+    },
+    "gla_Latn": {
+      "name": "gla_Latn",
+      "iso_code": "gla",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/gla_Latn.txt"
+    },
+    "gle_Latn": {
+      "name": "gle_Latn",
+      "iso_code": "gle",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/gle_Latn.txt"
+    },
+    "glg_Latn": {
+      "name": "Galician",
+      "iso_code": "gl",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/glg_Latn.txt"
+    },
+    "gug_Latn": {
+      "name": "gug_Latn",
+      "iso_code": "gug",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/gug_Latn.txt"
+    },
+    "guj_Gujr": {
+      "name": "Gujarati",
+      "iso_code": "gu",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/guj_Gujr.txt"
+    },
+    "hat_Latn": {
+      "name": "hat_Latn",
+      "iso_code": "hat",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/hat_Latn.txt"
+    },
+    "heb_Hebr": {
+      "name": "Hebrew",
+      "iso_code": "he",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/heb_Hebr.txt"
+    },
+    "hin_Deva": {
+      "name": "Hindi",
+      "iso_code": "hi",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/hin_Deva.txt"
+    },
+    "hne_Deva": {
+      "name": "hne_Deva",
+      "iso_code": "hne",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/hne_Deva.txt"
+    },
+    "hrv_Latn": {
+      "name": "Croatian",
+      "iso_code": "hr",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/hrv_Latn.txt"
+    },
+    "hun_Latn": {
+      "name": "Hungarian",
+      "iso_code": "hu",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/hun_Latn.txt"
+    },
+    "hye_Armn": {
+      "name": "hye_Armn",
+      "iso_code": "hye",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/hye_Armn.txt"
+    },
+    "ibo_Latn": {
+      "name": "ibo_Latn",
+      "iso_code": "ibo",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/ibo_Latn.txt"
+    },
+    "ilo_Latn": {
+      "name": "ilo_Latn",
+      "iso_code": "ilo",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/ilo_Latn.txt"
+    },
+    "ind_Latn": {
+      "name": "Indonesian",
+      "iso_code": "id",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/ind_Latn.txt"
+    },
+    "isl_Latn": {
+      "name": "isl_Latn",
+      "iso_code": "isl",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/isl_Latn.txt"
+    },
+    "ita_Latn": {
+      "name": "Italian",
+      "iso_code": "it",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/ita_Latn.txt"
+    },
+    "jav_Latn": {
+      "name": "jav_Latn",
+      "iso_code": "jav",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/jav_Latn.txt"
+    },
+    "jpn_Jpan": {
+      "name": "Japanese",
+      "iso_code": "ja",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/jpn_Jpan.txt"
+    },
+    "kaa_Latn": {
+      "name": "kaa_Latn",
+      "iso_code": "kaa",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/kaa_Latn.txt"
+    },
+    "kab_Latn": {
+      "name": "kab_Latn",
+      "iso_code": "kab",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/kab_Latn.txt"
+    },
+    "kac_Latn": {
+      "name": "kac_Latn",
+      "iso_code": "kac",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/kac_Latn.txt"
+    },
+    "kam_Latn": {
+      "name": "kam_Latn",
+      "iso_code": "kam",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/kam_Latn.txt"
+    },
+    "kan_Knda": {
+      "name": "Kannada",
+      "iso_code": "kn",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/kan_Knda.txt"
+    },
+    "kas_Arab": {
+      "name": "kas_Arab",
+      "iso_code": "kas",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/kas_Arab.txt"
+    },
+    "kas_Deva": {
+      "name": "kas_Deva",
+      "iso_code": "kas",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/kas_Deva.txt"
+    },
+    "kat_Geor": {
+      "name": "Georgian",
+      "iso_code": "ka",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/kat_Geor.txt"
+    },
+    "kaz_Cyrl": {
+      "name": "Kazakh",
+      "iso_code": "kk",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/kaz_Cyrl.txt"
+    },
+    "kbp_Latn": {
+      "name": "kbp_Latn",
+      "iso_code": "kbp",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/kbp_Latn.txt"
+    },
+    "kea_Latn": {
+      "name": "kea_Latn",
+      "iso_code": "kea",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/kea_Latn.txt"
+    },
+    "khk_Cyrl": {
+      "name": "khk_Cyrl",
+      "iso_code": "khk",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/khk_Cyrl.txt"
+    },
+    "khm_Khmr": {
+      "name": "khm_Khmr",
+      "iso_code": "khm",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/khm_Khmr.txt"
+    },
+    "kik_Latn": {
+      "name": "kik_Latn",
+      "iso_code": "kik",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/kik_Latn.txt"
+    },
+    "kin_Latn": {
+      "name": "kin_Latn",
+      "iso_code": "kin",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/kin_Latn.txt"
+    },
+    "kir_Cyrl": {
+      "name": "kir_Cyrl",
+      "iso_code": "kir",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/kir_Cyrl.txt"
+    },
+    "kmb_Latn": {
+      "name": "kmb_Latn",
+      "iso_code": "kmb",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/kmb_Latn.txt"
+    },
+    "kmr_Latn": {
+      "name": "kmr_Latn",
+      "iso_code": "kmr",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/kmr_Latn.txt"
+    },
+    "knc_Arab": {
+      "name": "knc_Arab",
+      "iso_code": "knc",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/knc_Arab.txt"
+    },
+    "knc_Latn": {
+      "name": "knc_Latn",
+      "iso_code": "knc",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/knc_Latn.txt"
+    },
+    "kor_Hang": {
+      "name": "Korean",
+      "iso_code": "ko",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/kor_Hang.txt"
+    },
+    "ktu_Latn": {
+      "name": "ktu_Latn",
+      "iso_code": "ktu",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/ktu_Latn.txt"
+    },
+    "lao_Laoo": {
+      "name": "lao_Laoo",
+      "iso_code": "lao",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/lao_Laoo.txt"
+    },
+    "lij_Latn": {
+      "name": "lij_Latn",
+      "iso_code": "lij",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/lij_Latn.txt"
+    },
+    "lim_Latn": {
+      "name": "lim_Latn",
+      "iso_code": "lim",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/lim_Latn.txt"
+    },
+    "lin_Latn": {
+      "name": "lin_Latn",
+      "iso_code": "lin",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/lin_Latn.txt"
+    },
+    "lit_Latn": {
+      "name": "Lithuanian",
+      "iso_code": "lt",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/lit_Latn.txt"
+    },
+    "lld_Latn": {
+      "name": "lld_Latn",
+      "iso_code": "lld",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/lld_Latn.txt"
+    },
+    "lmo_Latn": {
+      "name": "lmo_Latn",
+      "iso_code": "lmo",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/lmo_Latn.txt"
+    },
+    "ltg_Latn": {
+      "name": "ltg_Latn",
+      "iso_code": "ltg",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/ltg_Latn.txt"
+    },
+    "ltz_Latn": {
+      "name": "ltz_Latn",
+      "iso_code": "ltz",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/ltz_Latn.txt"
+    },
+    "lua_Latn": {
+      "name": "lua_Latn",
+      "iso_code": "lua",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/lua_Latn.txt"
+    },
+    "lug_Latn": {
+      "name": "lug_Latn",
+      "iso_code": "lug",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/lug_Latn.txt"
+    },
+    "luo_Latn": {
+      "name": "luo_Latn",
+      "iso_code": "luo",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/luo_Latn.txt"
+    },
+    "lus_Latn": {
+      "name": "lus_Latn",
+      "iso_code": "lus",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/lus_Latn.txt"
+    },
+    "lvs_Latn": {
+      "name": "Latvian",
+      "iso_code": "lv",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/lvs_Latn.txt"
+    },
+    "mag_Deva": {
+      "name": "mag_Deva",
+      "iso_code": "mag",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/mag_Deva.txt"
+    },
+    "mai_Deva": {
+      "name": "mai_Deva",
+      "iso_code": "mai",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/mai_Deva.txt"
+    },
+    "mal_Mlym": {
+      "name": "Malayalam",
+      "iso_code": "ml",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/mal_Mlym.txt"
+    },
+    "mar_Deva": {
+      "name": "Marathi",
+      "iso_code": "mr",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/mar_Deva.txt"
+    },
+    "mfe_Latn": {
+      "name": "mfe_Latn",
+      "iso_code": "mfe",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/mfe_Latn.txt"
+    },
+    "mhr_Cyrl": {
+      "name": "mhr_Cyrl",
+      "iso_code": "mhr",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/mhr_Cyrl.txt"
+    },
+    "min_Latn": {
+      "name": "min_Latn",
+      "iso_code": "min",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/min_Latn.txt"
+    },
+    "mkd_Cyrl": {
+      "name": "Macedonian",
+      "iso_code": "mk",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/mkd_Cyrl.txt"
+    },
+    "mlt_Latn": {
+      "name": "mlt_Latn",
+      "iso_code": "mlt",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/mlt_Latn.txt"
+    },
+    "mni_Beng": {
+      "name": "mni_Beng",
+      "iso_code": "mni",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/mni_Beng.txt"
+    },
+    "mni_Mtei": {
+      "name": "mni_Mtei",
+      "iso_code": "mni",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/mni_Mtei.txt"
+    },
+    "mos_Latn": {
+      "name": "mos_Latn",
+      "iso_code": "mos",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/mos_Latn.txt"
+    },
+    "mri_Latn": {
+      "name": "mri_Latn",
+      "iso_code": "mri",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/mri_Latn.txt"
+    },
+    "mya_Mymr": {
+      "name": "Burmese",
+      "iso_code": "my",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/mya_Mymr.txt"
+    },
+    "nld_Latn": {
+      "name": "Dutch",
+      "iso_code": "nl",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/nld_Latn.txt"
+    },
+    "nno_Latn": {
+      "name": "nno_Latn",
+      "iso_code": "nno",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/nno_Latn.txt"
+    },
+    "nob_Latn": {
+      "name": "Norwegian Bokmål",
+      "iso_code": "nb",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/nob_Latn.txt"
+    },
+    "npi_Deva": {
+      "name": "Nepali",
+      "iso_code": "ne",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/npi_Deva.txt"
+    },
+    "nso_Latn": {
+      "name": "nso_Latn",
+      "iso_code": "nso",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/nso_Latn.txt"
+    },
+    "nus_Latn": {
+      "name": "nus_Latn",
+      "iso_code": "nus",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/nus_Latn.txt"
+    },
+    "nya_Latn": {
+      "name": "nya_Latn",
+      "iso_code": "nya",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/nya_Latn.txt"
+    },
+    "oci_Latn": {
+      "name": "oci_Latn",
+      "iso_code": "oci",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/oci_Latn.txt"
+    },
+    "ory_Latn": {
+      "name": "ory_Latn",
+      "iso_code": "ory",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/ory_Latn.txt"
+    },
+    "ory_Orya": {
+      "name": "ory_Orya",
+      "iso_code": "ory",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/ory_Orya.txt"
+    },
+    "pag_Latn": {
+      "name": "pag_Latn",
+      "iso_code": "pag",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/pag_Latn.txt"
+    },
+    "pan_Guru": {
+      "name": "pan_Guru",
+      "iso_code": "pan",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/pan_Guru.txt"
+    },
+    "pap_Latn": {
+      "name": "pap_Latn",
+      "iso_code": "pap",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/pap_Latn.txt"
+    },
+    "pbt_Arab": {
+      "name": "pbt_Arab",
+      "iso_code": "pbt",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/pbt_Arab.txt"
+    },
+    "plt_Latn": {
+      "name": "plt_Latn",
+      "iso_code": "plt",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/plt_Latn.txt"
+    },
+    "pol_Latn": {
+      "name": "Polish",
+      "iso_code": "pl",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/pol_Latn.txt"
+    },
+    "por_Latn": {
+      "name": "Portuguese",
+      "iso_code": "pt",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/por_Latn.txt"
+    },
+    "quy_Latn": {
+      "name": "quy_Latn",
+      "iso_code": "quy",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/quy_Latn.txt"
+    },
+    "ron_Latn": {
+      "name": "Romanian",
+      "iso_code": "ro",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/ron_Latn.txt"
+    },
+    "run_Latn": {
+      "name": "run_Latn",
+      "iso_code": "run",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/run_Latn.txt"
+    },
+    "rus_Cyrl": {
+      "name": "Russian",
+      "iso_code": "ru",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/rus_Cyrl.txt"
+    },
+    "sag_Latn": {
+      "name": "sag_Latn",
+      "iso_code": "sag",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/sag_Latn.txt"
+    },
+    "san_Deva": {
+      "name": "san_Deva",
+      "iso_code": "san",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/san_Deva.txt"
+    },
+    "sat_Olck": {
+      "name": "sat_Olck",
+      "iso_code": "sat",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/sat_Olck.txt"
+    },
+    "scn_Latn": {
+      "name": "scn_Latn",
+      "iso_code": "scn",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/scn_Latn.txt"
+    },
+    "shn_Mymr": {
+      "name": "shn_Mymr",
+      "iso_code": "shn",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/shn_Mymr.txt"
+    },
+    "sin_Sinh": {
+      "name": "Sinhala",
+      "iso_code": "si",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/sin_Sinh.txt"
+    },
+    "slk_Latn": {
+      "name": "Slovak",
+      "iso_code": "sk",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/slk_Latn.txt"
+    },
+    "slv_Latn": {
+      "name": "Slovenian",
+      "iso_code": "sl",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/slv_Latn.txt"
+    },
+    "smo_Latn": {
+      "name": "smo_Latn",
+      "iso_code": "smo",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/smo_Latn.txt"
+    },
+    "sna_Latn": {
+      "name": "sna_Latn",
+      "iso_code": "sna",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/sna_Latn.txt"
+    },
+    "snd_Arab": {
+      "name": "snd_Arab",
+      "iso_code": "snd",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/snd_Arab.txt"
+    },
+    "som_Latn": {
+      "name": "som_Latn",
+      "iso_code": "som",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/som_Latn.txt"
+    },
+    "sot_Latn": {
+      "name": "sot_Latn",
+      "iso_code": "sot",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/sot_Latn.txt"
+    },
+    "spa_Latn": {
+      "name": "Spanish",
+      "iso_code": "es",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/spa_Latn.txt"
+    },
+    "srd_Latn": {
+      "name": "srd_Latn",
+      "iso_code": "srd",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/srd_Latn.txt"
+    },
+    "srp_Cyrl": {
+      "name": "Serbian (Cyrillic)",
+      "iso_code": "sr",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/srp_Cyrl.txt"
+    },
+    "ssw_Latn": {
+      "name": "ssw_Latn",
+      "iso_code": "ssw",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/ssw_Latn.txt"
+    },
+    "sun_Latn": {
+      "name": "sun_Latn",
+      "iso_code": "sun",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/sun_Latn.txt"
+    },
+    "swe_Latn": {
+      "name": "Swedish",
+      "iso_code": "sv",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/swe_Latn.txt"
+    },
+    "swh_Latn": {
+      "name": "Swahili",
+      "iso_code": "sw",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/swh_Latn.txt"
+    },
+    "szl_Latn": {
+      "name": "szl_Latn",
+      "iso_code": "szl",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/szl_Latn.txt"
+    },
+    "tam_Taml": {
+      "name": "Tamil",
+      "iso_code": "ta",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/tam_Taml.txt"
+    },
+    "taq_Latn": {
+      "name": "taq_Latn",
+      "iso_code": "taq",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/taq_Latn.txt"
+    },
+    "taq_Tfng": {
+      "name": "taq_Tfng",
+      "iso_code": "taq",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/taq_Tfng.txt"
+    },
+    "tat_Cyrl": {
+      "name": "tat_Cyrl",
+      "iso_code": "tat",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/tat_Cyrl.txt"
+    },
+    "tel_Telu": {
+      "name": "Telugu",
+      "iso_code": "te",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/tel_Telu.txt"
+    },
+    "tgk_Cyrl": {
+      "name": "tgk_Cyrl",
+      "iso_code": "tgk",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/tgk_Cyrl.txt"
+    },
+    "tha_Thai": {
+      "name": "Thai",
+      "iso_code": "th",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/tha_Thai.txt"
+    },
+    "tir_Ethi": {
+      "name": "tir_Ethi",
+      "iso_code": "tir",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/tir_Ethi.txt"
+    },
+    "tpi_Latn": {
+      "name": "tpi_Latn",
+      "iso_code": "tpi",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/tpi_Latn.txt"
+    },
+    "tsn_Latn": {
+      "name": "tsn_Latn",
+      "iso_code": "tsn",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/tsn_Latn.txt"
+    },
+    "tso_Latn": {
+      "name": "tso_Latn",
+      "iso_code": "tso",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/tso_Latn.txt"
+    },
+    "tuk_Latn": {
+      "name": "tuk_Latn",
+      "iso_code": "tuk",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/tuk_Latn.txt"
+    },
+    "tum_Latn": {
+      "name": "tum_Latn",
+      "iso_code": "tum",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/tum_Latn.txt"
+    },
+    "tur_Latn": {
+      "name": "Turkish",
+      "iso_code": "tr",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/tur_Latn.txt"
+    },
+    "twi_Latn": {
+      "name": "twi_Latn",
+      "iso_code": "twi",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/twi_Latn.txt"
+    },
+    "uig_Arab": {
+      "name": "uig_Arab",
+      "iso_code": "uig",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/uig_Arab.txt"
+    },
+    "ukr_Cyrl": {
+      "name": "Ukrainian",
+      "iso_code": "uk",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/ukr_Cyrl.txt"
+    },
+    "umb_Latn": {
+      "name": "umb_Latn",
+      "iso_code": "umb",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/umb_Latn.txt"
+    },
+    "urd_Arab": {
+      "name": "Urdu",
+      "iso_code": "ur",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/urd_Arab.txt"
+    },
+    "uzn_Latn": {
+      "name": "Uzbek (Northern)",
+      "iso_code": "uz",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/uzn_Latn.txt"
+    },
+    "vec_Latn": {
+      "name": "vec_Latn",
+      "iso_code": "vec",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/vec_Latn.txt"
+    },
+    "vie_Latn": {
+      "name": "Vietnamese",
+      "iso_code": "vi",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/vie_Latn.txt"
+    },
+    "war_Latn": {
+      "name": "war_Latn",
+      "iso_code": "war",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/war_Latn.txt"
+    },
+    "wol_Latn": {
+      "name": "wol_Latn",
+      "iso_code": "wol",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/wol_Latn.txt"
+    },
+    "xho_Latn": {
+      "name": "xho_Latn",
+      "iso_code": "xho",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/xho_Latn.txt"
+    },
+    "ydd_Hebr": {
+      "name": "ydd_Hebr",
+      "iso_code": "ydd",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/ydd_Hebr.txt"
+    },
+    "yor_Latn": {
+      "name": "yor_Latn",
+      "iso_code": "yor",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/yor_Latn.txt"
+    },
+    "yue_Hani": {
+      "name": "yue_Hani",
+      "iso_code": "yue",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/yue_Hani.txt"
+    },
+    "zgh_Tfng": {
+      "name": "zgh_Tfng",
+      "iso_code": "zgh",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/zgh_Tfng.txt"
+    },
+    "zsm_Latn": {
+      "name": "Malay (Standard)",
+      "iso_code": "ms",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/zsm_Latn.txt"
+    },
+    "zul_Latn": {
+      "name": "zul_Latn",
+      "iso_code": "zul",
+      "data_path": "/capstor/store/cscs/swissai/a139/datasets/tokenizer_training/flores_parallel_data_devtest/zul_Latn.txt"
+    }
+  }
+}

@@ -1,0 +1,150 @@
+{
+  "apertus": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/apertus/tokenizer.json"
+  },
+  "bpe-nfc-clean-balanced": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/bpe-nfc-clean-balanced/tokenizer.json"
+  },
+  "bpe-nfc-plus2-balanced": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/bpe-nfc-plus2-balanced/tokenizer.json"
+  },
+  "bpe-nfc-plus3-balanced": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/bpe-nfc-plus3-balanced/tokenizer.json"
+  },
+  "claude-balanced-bpe": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/claude-balanced-bpe/tokenizer.json"
+  },
+  "clauderev-balanced-bpe": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/clauderev-balanced-bpe/tokenizer.json"
+  },
+  "gpt4o-balanced-nfc-bpe": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/gpt4o-balanced-nfc-bpe/tokenizer.json"
+  },
+  "gpt4o-code-bpe": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/gpt4o-code-bpe/tokenizer.json"
+  },
+  "gpt4o-english-bpe": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/gpt4o-english-bpe/tokenizer.json"
+  },
+  "llama3": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/llama3/tokenizer.json"
+  },
+  "mathcode-scratch": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/gpt4o-balanced-bpe/tokenizer.json"
+  },
+  "pabpe-nfc-apertus-fineweb2full-capped-tuned-hybridwindow": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/pabpe-nfc-apertus-fineweb2full-capped-tuned-hybridwindow/tokenizer.json"
+  },
+  "pabpe-nfc-clean-balanced-hybridwindow": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/pabpe-nfc-clean-balanced-hybridwindow/tokenizer.json"
+  },
+  "pabpe-nfc-clean-fineweb2full-capped-tuned-hybridwindow": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/pabpe-nfc-clean-fineweb2full-capped-tuned-hybridwindow/tokenizer.json"
+  },
+  "pabpe-nfc-clean-fineweb2full-consv2-engfull-eu3-gm110k": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/pabpe-nfc-clean-fineweb2full-consv2-engfull-eu3-gm110k/tokenizer.json"
+  },
+  "pabpe-nfc-clean-fineweb2full-consv2-eusino-v2c-frde-kr120-gm130k-v200k": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/pabpe-nfc-clean-fineweb2full-consv2-eusino-v2c-frde-kr120-gm130k-v200k/tokenizer.json"
+  },
+  "pabpe-nfc-clean-fineweb2full-consv2-eusino-v2c-gm120k-v200k": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/pabpe-nfc-clean-fineweb2full-consv2-eusino-v2c-gm120k-v200k/tokenizer.json"
+  },
+  "pabpe-nfc-clean-fineweb2full-consv2-frde2-gm110k": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/pabpe-nfc-clean-fineweb2full-consv2-frde2-gm110k/tokenizer.json"
+  },
+  "pabpe-nfc-clean-fineweb2full-consv2-plus3-repcap8": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/pabpe-nfc-clean-fineweb2full-consv2-plus3-repcap8/tokenizer.json"
+  },
+  "pabpe-nfc-clean-fineweb2full-consv2-prelim-mul-v131072": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/pabpe-nfc-clean-fineweb2full-consv2-prelim-mul-v131072/tokenizer.json"
+  },
+  "pabpe-nfc-clean-fineweb2full-plus2-capped-tuned-hybridwindow": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/pabpe-nfc-clean-fineweb2full-plus2-capped-tuned-hybridwindow/tokenizer.json"
+  },
+  "pabpe-nfc-clean-fineweb2full-plus2-capped-tuned-hybridwindow-consv2-tailcuts-gm90k-v130-sp-eng5g": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/pabpe-nfc-clean-fineweb2full-plus2-capped-tuned-hybridwindow-consv2-tailcuts-gm90k-v130-sp-eng5g/tokenizer.json"
+  },
+  "pabpe-nfc-clean-fineweb2full-plus3-capped-tuned-hybridwindow-consv2": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/pabpe-nfc-clean-fineweb2full-plus3-capped-tuned-hybridwindow-consv2/tokenizer.json"
+  },
+  "pabpe-nfc-clean-fineweb2full-plus3-capped-tuned-hybridwindow-consv2-tailcuts-gm70k-v130-sp-eng5g": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/pabpe-nfc-clean-fineweb2full-plus3-capped-tuned-hybridwindow-consv2-tailcuts-gm70k-v130-sp-eng5g/tokenizer.json"
+  },
+  "pabpe-nfc-clean-fineweb2full-plus3-capped-tuned-hybridwindow-consv2-tailcuts-gm90k-v130-sp-eng5g": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/pabpe-nfc-clean-fineweb2full-plus3-capped-tuned-hybridwindow-consv2-tailcuts-gm90k-v130-sp-eng5g/tokenizer.json"
+  },
+  "pabpe-nfc-clean-fw2full-plus3-cap-hw-consv2-gm90k-tailcuts-eng5g-repcap8": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/pabpe-nfc-clean-fw2full-plus3-cap-hw-consv2-gm90k-tailcuts-eng5g-repcap8/tokenizer.json"
+  },
+  "punct-balanced-bpe": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/punct-balanced-bpe/tokenizer.json"
+  },
+  "rightalign-balanced-nfc-bpe": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/rightalign-balanced-nfc-bpe/tokenizer.json"
+  },
+  "superbpe-apertus-fineweb2full-capped-hybridwindow": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/superbpe-apertus-fineweb2full-capped-hybridwindow/tokenizer.json"
+  },
+  "superbpe-clean-c2-balanced": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/superbpe-clean-c2-balanced/tokenizer.json"
+  },
+  "superbpe-clean-c3-balanced": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/superbpe-clean-c3-balanced/tokenizer.json"
+  },
+  "superbpe-clean-fineweb2full-capped-hybridwindow": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/superbpe-clean-fineweb2full-capped-hybridwindow/tokenizer.json"
+  },
+  "superbpe-clean-fineweb2full-capped-hybridwindow-t110k-v130k": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/superbpe-clean-fineweb2full-capped-hybridwindow-t110k-v130k/tokenizer.json"
+  },
+  "superbpe-clean-fineweb2full-plus2-cappedv2-hybridwindow-t110k-v130k-consv2": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/superbpe-clean-fineweb2full-plus2-cappedv2-hybridwindow-t110k-v130k-consv2/tokenizer.json"
+  },
+  "superbpe-gpt4-fineweb2full-hybridwindow": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/superbpe-gpt4-fineweb2full-hybridwindow/tokenizer.json"
+  },
+  "superbpe-gpt4o-balanced": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/superbpe-gpt4o-balanced/tokenizer.json"
+  },
+  "whitespace-balanced-bpe": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/whitespace-balanced-bpe/tokenizer.json"
+  }
+}

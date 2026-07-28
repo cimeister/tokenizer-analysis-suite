@@ -1,0 +1,34 @@
+{
+  "plot_tokenizers": [
+    "BPE",
+    "PA-BPE",
+    "PA-BPE (hybrid)",
+    "PA-BPE (window)",
+    "PA-BPE (window+hybrid)",
+    "PA-BPE (no-dev)"
+  ],
+  "BPE": {
+    "class": "custom_bpe",
+    "path": "final_tokenizers/128k/balanced/10languages/10languages-vanilla-255744"
+  },
+  "PA-BPE": {
+    "class": "custom_bpe",
+    "path": "final_tokenizers/128k/balanced/10languages/10languages-parity-255744"
+  },
+  "PA-BPE (hybrid)": {
+    "class": "custom_bpe",
+    "path": "final_tokenizers/128k/balanced/10languages/10languages-parity-hybrid-63936-255744"
+  },
+  "PA-BPE (window)": {
+    "class": "custom_bpe",
+    "path": "final_tokenizers/128k/balanced/10languages/10languages-parity-window-255744"
+  },
+  "PA-BPE (window+hybrid)": {
+    "class": "custom_bpe",
+    "path": "final_tokenizers/128k/balanced/10languages/10languages-parity-hybrid-window-63936-255744"
+  },
+  "PA-BPE (no-dev)": {
+    "class": "custom_bpe",
+    "path": "final_tokenizers/128k/balanced/10languages/10languages-parity-max-freq-255744"
+  }
+}

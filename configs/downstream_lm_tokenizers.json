@@ -1,0 +1,130 @@
+{
+  "Apertus": {
+    "class": "hf",
+    "path": "swiss-ai/Apertus-70B-2509"
+  },
+  "LLaMA-3": {
+    "class": "hf",
+    "path": "NousResearch/Meta-Llama-3-8B"
+  },
+  "BPE Punct (balanced)": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/punct-balanced-bpe"
+  },
+  "BPE Punct (english)": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/punct-english-bpe"
+  },
+  "BPE GPT-4o (balanced)": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/gpt4o-balanced-bpe"
+  },
+  "BPE GPT-4o NFC (balanced)": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/gpt4o-balanced-nfc-bpe"
+  },
+  "BPE GPT-4o (english)": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/gpt4o-english-bpe"
+  },
+  "BPE GPT-4o (code)": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/gpt4o-code-bpe"
+  },
+  "BPE Claude (balanced)": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/claude-balanced-bpe"
+  },
+  "BPE Claude NFC (balanced)": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/claude-balanced-nfc-bpe"
+  },
+  "BPE Claude (english)": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/claude-english-bpe"
+  },
+  "BPE RightAlign (balanced)": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/rightalign-balanced-bpe"
+  },
+  "BPE RightAlign NFC (balanced)": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/rightalign-balanced-nfc-bpe"
+  },
+  "Unigram GPT-4o (balanced)": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/gpt4o-balanced-unigram"
+  },
+  "Unigram Claude (balanced)": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/claude-balanced-unigram"
+  },
+  "Unigram RightAlign (balanced)": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/rightalign-balanced-unigram"
+  },
+  "BPE Whitespace (balanced)": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/whitespace-balanced-bpe"
+  },
+  "BPE GPT-2 (balanced)": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/gpt2-balanced-bpe"
+  },
+  "BPE GPT-4o (highres)": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/highres-bpe"
+  },
+  "BPE GPT-4o (highmid)": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/highmid-bpe"
+  },
+  "Unigram GPT-4o tuned (balanced)": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/gpt4o-balanced-unigram-tuned"
+  },
+  "Unigram Whitespace tuned (balanced)": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/whitespace-balanced-unigram"
+  },
+  "SuperBPE Punct t64k (balanced-half)": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/punct-balancedhalf-superbpe-t64k-copy"
+  },
+  "PA-BPE NFC GPT-4 (balanced)": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/pabpe-nfc-gpt4-balanced"
+  },
+  "PA-BPE NFC clean (balanced)": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/pabpe-nfc-clean-balanced"
+  },
+  "PA-BPE NFC GPT-4 Hybrid-Window (balanced)": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/pabpe-nfc-gpt4-balanced-hybridwindow"
+  },
+  "SuperBPE GPT-4o (balanced)": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/superbpe-gpt4o-balanced"
+  },
+  "SuperBPE PA-BPE NFC GPT-4 (balanced)": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/superbpe-pabpe-nfc-gpt4-balanced"
+  },
+  "SuperBPE PA-BPE NFC GPT-4 t64k": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/superbpe-pabpe-nfc-gpt4-t64k"
+  },
+  "SuperBPE clean-multi C2 (balanced)": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/superbpe-clean-c2-balanced"
+  },
+  "SuperBPE clean-multi C3 (balanced)": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/superbpe-clean-c3-balanced"
+  },
+  "BPE NFC clean-multi (balanced)": {
+    "class": "hf",
+    "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/bpe-nfc-clean-balanced"
+  }
+}

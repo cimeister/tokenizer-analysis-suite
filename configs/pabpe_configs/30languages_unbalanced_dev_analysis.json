@@ -1,0 +1,24 @@
+{
+    "plot_tokenizers": [
+        "Classical",
+        "Parity-aware (hybrid;dev100)",
+        "Parity-aware (hybrid;dev300)",
+        "Parity-aware (hybrid;dev1000)"
+    ],
+    "Classical":{
+      "class": "custom_bpe",
+      "path": "final_tokenizers/128k/unbalanced/30languages/30languages-vanilla-255744"
+    },
+      "Parity-aware (hybrid;dev100)":{
+      "class": "custom_bpe", 
+      "path": "final_tokenizers/128k/unbalanced/30languages/30languages-parity-hybrid-63936-255744_devsize_100"
+    },
+     "Parity-aware (hybrid;dev300)":{
+      "class": "custom_bpe", 
+      "path": "final_tokenizers/128k/unbalanced/30languages/30languages-parity-hybrid-63936-255744_devsize_300"
+    },
+    "Parity-aware (hybrid;dev1000)":{
+      "class": "custom_bpe", 
+      "path": "final_tokenizers/128k/unbalanced/30languages/30languages-parity-hybrid-63936-255744"
+    }
+}

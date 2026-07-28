@@ -1,0 +1,286 @@
+{
+  "languages": {
+    "arb_Arab": {
+      "name": "Arabic",
+      "iso_code": "ar",
+      "data_path": "/users/cmeister747/tokenizer-lm/results/correlations/per_lang_val/arb_Arab.parquet",
+      "training_weight": 0.007
+    },
+    "ben_Beng": {
+      "name": "Bengali",
+      "iso_code": "bn",
+      "data_path": "/users/cmeister747/tokenizer-lm/results/correlations/per_lang_val/ben_Beng.parquet",
+      "training_weight": 0.001
+    },
+    "bul_Cyrl": {
+      "name": "Bulgarian",
+      "iso_code": "bg",
+      "data_path": "/users/cmeister747/tokenizer-lm/results/correlations/per_lang_val/bul_Cyrl.parquet",
+      "training_weight": 0.002
+    },
+    "cat_Latn": {
+      "name": "Catalan",
+      "iso_code": "ca",
+      "data_path": "/users/cmeister747/tokenizer-lm/results/correlations/per_lang_val/cat_Latn.parquet",
+      "training_weight": 0.001
+    },
+    "ces_Latn": {
+      "name": "Czech",
+      "iso_code": "cs",
+      "data_path": "/users/cmeister747/tokenizer-lm/results/correlations/per_lang_val/ces_Latn.parquet",
+      "training_weight": 0.003
+    },
+    "cmn_Hani": {
+      "name": "Chinese",
+      "iso_code": "zh",
+      "data_path": "/users/cmeister747/tokenizer-lm/results/correlations/per_lang_val/cmn_Hani.parquet",
+      "training_weight": 0.013
+    },
+    "deu_Latn": {
+      "name": "German",
+      "iso_code": "de",
+      "data_path": "/users/cmeister747/tokenizer-lm/results/correlations/per_lang_val/deu_Latn.parquet",
+      "training_weight": 0.014
+    },
+    "ell_Grek": {
+      "name": "Greek",
+      "iso_code": "el",
+      "data_path": "/users/cmeister747/tokenizer-lm/results/correlations/per_lang_val/ell_Grek.parquet",
+      "training_weight": 0.004
+    },
+    "eng_Latn": {
+      "name": "English",
+      "iso_code": "en",
+      "data_path": "/users/cmeister747/tokenizer-lm/results/correlations/per_lang_val/eng_Latn.parquet",
+      "training_weight": 0.369
+    },
+    "fin_Latn": {
+      "name": "Finnish",
+      "iso_code": "fi",
+      "data_path": "/users/cmeister747/tokenizer-lm/results/correlations/per_lang_val/fin_Latn.parquet",
+      "training_weight": 0.001
+    },
+    "fra_Latn": {
+      "name": "French",
+      "iso_code": "fr",
+      "data_path": "/users/cmeister747/tokenizer-lm/results/correlations/per_lang_val/fra_Latn.parquet",
+      "training_weight": 0.015
+    },
+    "heb_Hebr": {
+      "name": "Hebrew",
+      "iso_code": "he",
+      "data_path": "/users/cmeister747/tokenizer-lm/results/correlations/per_lang_val/heb_Hebr.parquet",
+      "training_weight": 0.001
+    },
+    "hin_Deva": {
+      "name": "Hindi",
+      "iso_code": "hi",
+      "data_path": "/users/cmeister747/tokenizer-lm/results/correlations/per_lang_val/hin_Deva.parquet",
+      "training_weight": 0.001
+    },
+    "hrv_Latn": {
+      "name": "Croatian",
+      "iso_code": "hr",
+      "data_path": "/users/cmeister747/tokenizer-lm/results/correlations/per_lang_val/hrv_Latn.parquet",
+      "training_weight": 0.001
+    },
+    "hun_Latn": {
+      "name": "Hungarian",
+      "iso_code": "hu",
+      "data_path": "/users/cmeister747/tokenizer-lm/results/correlations/per_lang_val/hun_Latn.parquet",
+      "training_weight": 0.004
+    },
+    "ind_Latn": {
+      "name": "Indonesian",
+      "iso_code": "id",
+      "data_path": "/users/cmeister747/tokenizer-lm/results/correlations/per_lang_val/ind_Latn.parquet",
+      "training_weight": 0.009
+    },
+    "ita_Latn": {
+      "name": "Italian",
+      "iso_code": "it",
+      "data_path": "/users/cmeister747/tokenizer-lm/results/correlations/per_lang_val/ita_Latn.parquet",
+      "training_weight": 0.007
+    },
+    "jpn_Jpan": {
+      "name": "Japanese",
+      "iso_code": "ja",
+      "data_path": "/users/cmeister747/tokenizer-lm/results/correlations/per_lang_val/jpn_Jpan.parquet",
+      "training_weight": 0.008
+    },
+    "kor_Hang": {
+      "name": "Korean",
+      "iso_code": "ko",
+      "data_path": "/users/cmeister747/tokenizer-lm/results/correlations/per_lang_val/kor_Hang.parquet",
+      "training_weight": 0.001
+    },
+    "nld_Latn": {
+      "name": "Dutch",
+      "iso_code": "nl",
+      "data_path": "/users/cmeister747/tokenizer-lm/results/correlations/per_lang_val/nld_Latn.parquet",
+      "training_weight": 0.003
+    },
+    "pol_Latn": {
+      "name": "Polish",
+      "iso_code": "pl",
+      "data_path": "/users/cmeister747/tokenizer-lm/results/correlations/per_lang_val/pol_Latn.parquet",
+      "training_weight": 0.004
+    },
+    "por_Latn": {
+      "name": "Portuguese",
+      "iso_code": "pt",
+      "data_path": "/users/cmeister747/tokenizer-lm/results/correlations/per_lang_val/por_Latn.parquet",
+      "training_weight": 0.008
+    },
+    "ron_Latn": {
+      "name": "Romanian",
+      "iso_code": "ro",
+      "data_path": "/users/cmeister747/tokenizer-lm/results/correlations/per_lang_val/ron_Latn.parquet",
+      "training_weight": 0.004
+    },
+    "rus_Cyrl": {
+      "name": "Russian",
+      "iso_code": "ru",
+      "data_path": "/users/cmeister747/tokenizer-lm/results/correlations/per_lang_val/rus_Cyrl.parquet",
+      "training_weight": 0.181
+    },
+    "slk_Latn": {
+      "name": "Slovak",
+      "iso_code": "sk",
+      "data_path": "/users/cmeister747/tokenizer-lm/results/correlations/per_lang_val/slk_Latn.parquet",
+      "training_weight": 0.001
+    },
+    "spa_Latn": {
+      "name": "Spanish",
+      "iso_code": "es",
+      "data_path": "/users/cmeister747/tokenizer-lm/results/correlations/per_lang_val/spa_Latn.parquet",
+      "training_weight": 0.017
+    },
+    "tam_Taml": {
+      "name": "Tamil",
+      "iso_code": "ta",
+      "data_path": "/users/cmeister747/tokenizer-lm/results/correlations/per_lang_val/tam_Taml.parquet",
+      "training_weight": 0.001
+    },
+    "tha_Thai": {
+      "name": "Thai",
+      "iso_code": "th",
+      "data_path": "/users/cmeister747/tokenizer-lm/results/correlations/per_lang_val/tha_Thai.parquet",
+      "training_weight": 0.003
+    },
+    "tur_Latn": {
+      "name": "Turkish",
+      "iso_code": "tr",
+      "data_path": "/users/cmeister747/tokenizer-lm/results/correlations/per_lang_val/tur_Latn.parquet",
+      "training_weight": 0.006
+    },
+    "ukr_Cyrl": {
+      "name": "Ukrainian",
+      "iso_code": "uk",
+      "data_path": "/users/cmeister747/tokenizer-lm/results/correlations/per_lang_val/ukr_Cyrl.parquet",
+      "training_weight": 0.008
+    },
+    "vie_Latn": {
+      "name": "Vietnamese",
+      "iso_code": "vi",
+      "data_path": "/users/cmeister747/tokenizer-lm/results/correlations/per_lang_val/vie_Latn.parquet",
+      "training_weight": 0.004
+    }
+  },
+  "analysis_groups": {
+    "script_family": {
+      "Latin": [
+        "cat_Latn",
+        "ces_Latn",
+        "deu_Latn",
+        "eng_Latn",
+        "fin_Latn",
+        "fra_Latn",
+        "hrv_Latn",
+        "hun_Latn",
+        "ind_Latn",
+        "ita_Latn",
+        "nld_Latn",
+        "pol_Latn",
+        "por_Latn",
+        "ron_Latn",
+        "slk_Latn",
+        "spa_Latn",
+        "tur_Latn",
+        "vie_Latn"
+      ],
+      "Cyrillic": [
+        "bul_Cyrl",
+        "rus_Cyrl",
+        "ukr_Cyrl"
+      ],
+      "CJK_Han": [
+        "cmn_Hani",
+        "jpn_Jpan"
+      ],
+      "Hangul": [
+        "kor_Hang"
+      ],
+      "Arabic": [
+        "arb_Arab"
+      ],
+      "Devanagari": [
+        "hin_Deva"
+      ],
+      "Bengali": [
+        "ben_Beng"
+      ],
+      "Tamil": [
+        "tam_Taml"
+      ],
+      "Thai": [
+        "tha_Thai"
+      ],
+      "Hebrew": [
+        "heb_Hebr"
+      ],
+      "Greek": [
+        "ell_Grek"
+      ]
+    },
+    "resource_level": {
+      "high": [
+        "eng_Latn",
+        "rus_Cyrl",
+        "spa_Latn",
+        "deu_Latn",
+        "fra_Latn",
+        "cmn_Hani"
+      ],
+      "mid": [
+        "jpn_Jpan",
+        "ita_Latn",
+        "por_Latn",
+        "tur_Latn",
+        "ind_Latn",
+        "pol_Latn",
+        "ukr_Cyrl",
+        "nld_Latn",
+        "ron_Latn",
+        "arb_Arab",
+        "hun_Latn",
+        "vie_Latn",
+        "ces_Latn",
+        "ell_Grek",
+        "tha_Thai"
+      ],
+      "low": [
+        "fin_Latn",
+        "slk_Latn",
+        "bul_Cyrl",
+        "kor_Hang",
+        "hrv_Latn",
+        "cat_Latn",
+        "hin_Deva",
+        "heb_Hebr",
+        "ben_Beng",
+        "tam_Taml"
+      ]
+    }
+  }
+}

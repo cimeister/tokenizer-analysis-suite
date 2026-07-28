@@ -10,8 +10,11 @@ from tokenizer_analysis.metrics.code_ast import (
     _KNOWN_KEYWORDS,
     _NON_OPERATOR_PUNCTUATION,
     _WHITESPACE_SIGNIFICANT_LANGS,
+    _treesitter_pack_version,
+    parse_snippets_fenced,
 )
 # _WHITESPACE_SIGNIFICANT_LANGS is now defined in code_ast.py (not the worker)
+from tokenizer_analysis.metrics._treesitter_worker import ERROR_SPANS_KEY
 from tokenizer_analysis.loaders.code_data import CodeDataLoader
 from tokenizer_analysis.core.input_types import TokenizedData
 
@@ -539,34 +542,41 @@ class TestSyntheticSamplesParsing:
             pytest.skip("tree-sitter-language-pack not installed")
 
     def test_all_snippets_parse(self, ts_pack):
+        """Every bundled synthetic snippet parses with no ERROR nodes.
+
+        Parsing goes through ``parse_snippets_fenced`` rather than calling
+        tree-sitter directly. Calling it directly killed the whole pytest
+        process: with tree-sitter-language-pack 0.13.0 the Haskell grammar
+        aborts with ``malloc(): mismatching next->prev_size`` on snippet #1,
+        and a SIGABRT cannot be caught, so the remaining 86% of the suite never
+        ran. The fence isolates each language in its own process, which is also
+        what ``ASTBoundaryMetrics.compute`` does.
+
+        A language whose grammar crashes is reported as a crash, not as a
+        parse failure and not as a pass.
+        """
         samples = CodeDataLoader.generate_synthetic_samples()
-        for lang, snippets in samples.items():
-            ts_name = CodeDataLoader._LANG_TO_TREESITTER.get(lang)
-            if ts_name is None:
-                continue
-            try:
-                parser = ts_pack.get_parser(ts_name)
-            except Exception:
-                pytest.skip(f"No tree-sitter grammar for {ts_name}")
+        parsed, dropped = parse_snippets_fenced(
+            samples, CodeDataLoader._LANG_TO_TREESITTER
+        )
 
-            for i, snippet in enumerate(snippets):
-                tree = parser.parse(snippet.encode("utf-8"))
-                root = tree.root_node
+        crashed = {
+            lang: reason
+            for lang, reason in dropped.items()
+            if not reason.startswith("no_grammar")
+        }
+        assert not crashed, (
+            "tree-sitter worker died for: "
+            + ", ".join(f"{lang} ({reason})" for lang, reason in sorted(crashed.items()))
+            + f" (tree-sitter-language-pack {_treesitter_pack_version()})"
+        )
 
-                # Count ERROR nodes
-                errors = []
-                def _find_errors(node):
-                    if node.type == "ERROR":
-                        errors.append(
-                            f"ERROR at {node.start_point}-{node.end_point}: "
-                            f"'{snippet[node.start_byte:node.end_byte][:50]}'"
-                        )
-                    for child in node.children:
-                        _find_errors(child)
-
-                _find_errors(root)
-                assert len(errors) == 0, (
-                    f"Parse errors in {lang} snippet #{i}: {errors}"
+        for lang, spans_list in sorted(parsed.items()):
+            for i, spans in enumerate(spans_list):
+                error_spans = spans.get(ERROR_SPANS_KEY, [])
+                assert not error_spans, (
+                    f"Parse errors in {lang} snippet #{i}: {len(error_spans)} ERROR "
+                    f"node(s) at byte spans {error_spans[:5]}"
                 )
 
     def test_extract_leaf_spans_nonempty(self, ts_pack):

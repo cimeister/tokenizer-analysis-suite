@@ -1,0 +1,38 @@
+{
+ "gpt4o-codegrad00-bpe": {
+  "class": "hf",
+  "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/gpt4o-codegrad00-bpe/tokenizer.json"
+ },
+ "gpt4o-codegrad05-bpe": {
+  "class": "hf",
+  "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/gpt4o-codegrad05-bpe/tokenizer.json"
+ },
+ "gpt4o-codegrad30-bpe": {
+  "class": "hf",
+  "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/gpt4o-codegrad30-bpe/tokenizer.json"
+ },
+ "gpt4o-codegrad50-bpe": {
+  "class": "hf",
+  "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/gpt4o-codegrad50-bpe/tokenizer.json"
+ },
+ "gpt4onl-codegrad00-bpe": {
+  "class": "hf",
+  "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/gpt4onl-codegrad00-bpe/tokenizer.json"
+ },
+ "gpt4onl-codegrad05-bpe": {
+  "class": "hf",
+  "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/gpt4onl-codegrad05-bpe/tokenizer.json"
+ },
+ "gpt4onl-codegrad30-bpe": {
+  "class": "hf",
+  "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/gpt4onl-codegrad30-bpe/tokenizer.json"
+ },
+ "gpt4onl-codegrad50-bpe": {
+  "class": "hf",
+  "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/gpt4onl-codegrad50-bpe/tokenizer.json"
+ },
+ "gpt4onl-balanced-bpe": {
+  "class": "hf",
+  "path": "/capstor/store/cscs/swissai/a139/cmeister/tokenizer-lm/tokenizers/gpt4onl-balanced-bpe/tokenizer.json"
+ }
+}
