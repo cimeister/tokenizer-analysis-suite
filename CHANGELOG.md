@@ -96,8 +96,28 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Directory input globs are sorted. They feed a `--samples-per-lang`
   truncation, so filesystem order decided which texts were analyzed.
 - `scipy.stats` is imported explicitly in `metrics/base.py`.
+- `indentation_consistency.pattern_stability_rate` counted the first code token
+  as indentation. A byte-level tokenizer folds the last indent space into the
+  following word, so `'    return x'` tokenizes as `ĠĠĠ` plus `Ġreturn` and the
+  second token overlapped the indent range. Lines with identical indentation but
+  different code therefore counted as different patterns, and the rate measured
+  which word each line started with. Only whitespace-only tokens now enter the
+  pattern. On the demo corpus Python goes to 1.0, which is correct for uniformly
+  indented code.
 
 ### Removed
+- Swift, Kotlin and Perl are excluded from the code AST metrics. `classify_node`
+  does not know their identifier node types (`simple_identifier` for the first
+  two, `varname` and `function` for Perl), so the identifier share of classified
+  leaves was 0.073, 0.058 and 0.000 against 0.19 to 0.37 for every supported
+  language. They are skipped with a named warning rather than scored on a
+  fraction of their code. Adding them means extending `IDENTIFIER_TYPES` in
+  `_treesitter_worker.py`; open an issue if you want one of them.
+- `tokenizer_analysis/core/validation.py`. Its `ValidationResult`,
+  `TokenizedDataValidator`, `InputProviderValidator`,
+  `InputSpecificationValidator` and `AnalysisValidator` had no callers anywhere
+  and duplicated `core/input_utils.InputValidator`, which is the one `main.py`
+  uses. Having never run, it was also unverified against the current data model.
 - The cumulative Markdown leaderboard, along with the `--update-results-md`,
   `--dataset` and `--sort-results-by` flags, the generated `RESULTS.md` and its
   per-dataset plot directories, `tokenizer_analysis/visualization/markdown_tables.py`,

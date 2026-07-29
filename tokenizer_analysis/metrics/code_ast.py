@@ -47,6 +47,32 @@ from ._treesitter_worker import (
 
 _WHITESPACE_SIGNIFICANT_LANGS: Set[str] = {"python", "haskell"}
 
+# Languages whose leaf types this metric does not classify correctly, mapped to
+# why. They are excluded from the results rather than scored, because a wrong
+# number is worse than an absent one: the identifier category simply does not
+# fire for them, so their alignment and fragmentation figures describe a
+# fraction of the code and would sit in a table beside languages that were
+# measured properly.
+#
+# Measured on the bundled samples: identifier share of classified leaves is
+# 0.073 for Swift, 0.058 for Kotlin and 0.000 for Perl, against 0.19 to 0.37 for
+# every supported language. The cause is that `classify_node` does not know
+# these grammars' identifier node types.
+#
+# Adding them is a contained change: extend IDENTIFIER_TYPES in
+# _treesitter_worker.py with the node types below and re-measure the identifier
+# share. It was left undone rather than guessed at. If you want one of these
+# languages, please open an issue at
+# https://github.com/cimeister/tokenizer-intrinsic-evals/issues
+_UNSUPPORTED_CODE_LANGS: Dict[str, str] = {
+    "swift": "identifier node type 'simple_identifier' is not classified "
+             "(identifier share 0.073 against 0.19-0.37 for supported languages)",
+    "kotlin": "identifier node type 'simple_identifier' is not classified "
+              "(identifier share 0.058)",
+    "perl": "identifier node types 'varname' and 'function' are not classified "
+            "(identifier share 0.000)",
+}
+
 logger = logging.getLogger(__name__)
 
 # Default timeout (seconds) for each per-language tree-sitter subprocess.
@@ -724,7 +750,22 @@ class ASTBoundaryMetrics(BaseMetrics):
         code_snippets = {
             lang: self.code_loader.get_code_snippets(lang)
             for lang in self.code_loader.get_languages()
+            if lang not in _UNSUPPORTED_CODE_LANGS
         }
+        skipped = [
+            lang for lang in self.code_loader.get_languages()
+            if lang in _UNSUPPORTED_CODE_LANGS
+        ]
+        if skipped:
+            logger.warning(
+                "Skipping %d language(s) whose leaf types this metric does not "
+                "classify correctly, so they are absent from the results rather "
+                "than scored on a fraction of their code: %s. See "
+                "_UNSUPPORTED_CODE_LANGS in metrics/code_ast.py.",
+                len(skipped),
+                "; ".join(f"{lang} ({_UNSUPPORTED_CODE_LANGS[lang]})"
+                          for lang in sorted(skipped)),
+            )
         lang_to_treesitter = CodeDataLoader._LANG_TO_TREESITTER
 
         total_input = sum(len(v) for v in code_snippets.values())
@@ -932,12 +973,29 @@ class ASTBoundaryMetrics(BaseMetrics):
                                         or token_indices[-1] != tidx
                                     ):
                                         token_indices.append(tidx)
+                            # Keep only tokens whose surface is entirely
+                            # whitespace. Selecting every token that *overlaps*
+                            # the leading-whitespace range also caught the first
+                            # code token, because a byte-level tokenizer folds
+                            # the last indent space into the following word:
+                            # '    return x' tokenizes as 'GGG' + 'Greturn',
+                            # and 'Greturn' overlaps the indent range. The
+                            # pattern then became ('GGG', 'Greturn') for one
+                            # line and ('GGG', 'Gpass') for the next, so lines
+                            # with identical indentation counted as different
+                            # patterns and pattern_stability_rate measured which
+                            # word the line started with. Four identically
+                            # indented lines scored 0.25 instead of 1.0.
+                            ws_token_indices = [
+                                ti for ti in token_indices
+                                if self._is_whitespace_token(token_strings[ti])
+                            ]
                             pattern = tuple(
-                                token_strings[ti] for ti in token_indices
+                                token_strings[ti] for ti in ws_token_indices
                             )
                             ws_width = len(ws_string.expandtabs())
                             depth = ws_width // indent_unit if indent_unit else ws_width
-                            num_ws_tokens = len(token_indices)
+                            num_ws_tokens = len(ws_token_indices)
                             indent_acc[tok_name][code_lang].append({
                                 "depth": depth,
                                 "num_ws_tokens": num_ws_tokens,
@@ -1102,6 +1160,22 @@ class ASTBoundaryMetrics(BaseMetrics):
         return results
 
     @staticmethod
+    def _is_whitespace_token(token_string: str) -> bool:
+        """Is this token's surface entirely whitespace?
+
+        Decodes the byte-level and SentencePiece whitespace markers first, so
+        'GGG' (three spaces under a ByteLevel vocabulary) counts and 'Greturn'
+        does not. A token that carries any non-whitespace character is code, not
+        indentation, however much whitespace it also carries.
+        """
+        if not token_string:
+            return False
+        decoded = token_string
+        for marker, actual in BaseMetrics._DEFAULT_CHAR_DECODE.items():
+            decoded = decoded.replace(marker, actual)
+        return decoded.strip() == ""
+
+    @staticmethod
     def _spearman_correlation(x: List[float], y: List[float]) -> float:
         """Compute Spearman rank correlation between two lists.
 
@@ -1151,12 +1225,38 @@ class ASTBoundaryMetrics(BaseMetrics):
         """Build indentation consistency results from accumulated data.
 
         Computes two metrics per language per tokenizer:
-        - depth_proportionality_correlation: Spearman ρ between logical
-          nesting depth and number of whitespace tokens.
-        - pattern_stability_rate: weighted fraction of lines at each depth
-          that share the dominant tokenization pattern.
+
+        - ``depth_proportionality_correlation``: Spearman rho between
+          indentation depth and the number of whitespace tokens. Spearman is
+          rank-based, so this rewards the token count increasing *monotonically*
+          with depth, not increasing in proportion to it. The name says
+          proportionality; the statistic measures monotonicity.
+        - ``pattern_stability_rate``: weighted fraction of lines at each depth
+          that share the dominant whitespace-token pattern. Only tokens whose
+          surface is entirely whitespace enter the pattern. Selecting every
+          token that overlapped the indent range instead pulled in the first
+          code token, because a byte-level tokenizer folds the last indent
+          space into the following word, so lines with identical indentation
+          but different code counted as different patterns and the rate
+          measured which word each line started with.
+
+        Depth is the line's leading-whitespace width divided by an indent unit
+        inferred per snippet as the GCD of its non-zero indent widths. It does
+        not come from the parse tree.
         """
-        results: Dict[str, Any] = {"per_tokenizer": {}, "summary": {}}
+        results: Dict[str, Any] = {
+            "per_tokenizer": {},
+            "summary": {},
+            "metadata": {
+                "depth_source": "leading whitespace width // per-snippet GCD indent unit",
+                "depth_proportionality_correlation": (
+                    "Spearman rho, so it measures monotonic increase of "
+                    "whitespace-token count with depth, not proportionality"
+                ),
+                "pattern_tokens": "whitespace-only tokens",
+                "languages": sorted(_WHITESPACE_SIGNIFICANT_LANGS),
+            },
+        }
 
         for tok_name in self.tokenizer_names:
             tok_data: Dict[str, Any] = {"by_language": {}}
