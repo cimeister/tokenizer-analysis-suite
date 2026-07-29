@@ -273,10 +273,22 @@ class UTF8IntegrityMetrics(BaseMetrics):
                 char_count += 1
                 i += 1
             elif 0x80 <= b <= 0xBF:
-                # Orphan continuation byte — incomplete fragment
+                # Orphan continuation bytes: the tail of a character that began
+                # before this token. Consume the whole run as ONE fragment.
+                # Counting one character per byte made a token holding only the
+                # tail of a single character look like it spanned several, so it
+                # satisfied "more than one character and incomplete" on its own.
+                # Measured on FLORES with SuperBPE, that inflated
+                # boundary_crossing_rate from 584 to 632 crossings for Korean
+                # and 152 to 159 for Japanese, and contradicted the worked
+                # example in the README, which gives 1/3 where the code gave 2/3.
+                # A run cannot span two characters: continuation bytes only
+                # follow a lead byte, so once this character's tail ends the next
+                # byte is ASCII or a lead byte.
                 has_incomplete = True
                 char_count += 1
-                i += 1
+                while i < n and 0x80 <= data[i] <= 0xBF:
+                    i += 1
             elif 0xC0 <= b <= 0xDF:
                 expected = 2
                 available = min(expected, n - i)

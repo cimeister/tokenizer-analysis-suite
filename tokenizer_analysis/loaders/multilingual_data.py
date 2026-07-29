@@ -66,27 +66,48 @@ def load_multilingual_data(language_metadata: LanguageMetadata,
     
     language_texts = {}
     
+    # A language that was asked for and could not be loaded aborts the run.
+    # Continuing produced a complete-looking results file silently missing that
+    # language: on a 13-language config a single typo'd path yielded a
+    # 12-language result that read as finished, and every cross-language metric
+    # (Gini, the utilization CoV) was then computed over a different set than
+    # the one requested.
+    failures: Dict[str, str] = {}
+
     for lang_code, data_path in language_paths.items():
         lang_name = language_metadata.get_language_name(lang_code)
         logger.info(f"Loading data for {lang_name} ({lang_code}) from {data_path}")
-        
+
         try:
             texts = load_language_data(data_path, max_texts_per_language)
-            if texts:
-                language_texts[lang_code] = texts
-                logger.info(f"Loaded {len(texts)} texts for {lang_name} ({lang_code})")
-            else:
-                logger.warning(f"No texts found for {lang_name} ({lang_code})")
-        
         except Exception as e:
-            logger.error(f"Failed to load data for {lang_name} ({lang_code}): {e}")
+            failures[lang_code] = f"{type(e).__name__}: {e}"
             continue
-    
+
+        if texts:
+            language_texts[lang_code] = texts
+            logger.info(f"Loaded {len(texts)} texts for {lang_name} ({lang_code})")
+        else:
+            failures[lang_code] = f"no texts read from {data_path}"
+
+    if failures:
+        detail = "; ".join(
+            f"{lang} ({language_metadata.get_language_name(lang)}): {reason}"
+            for lang, reason in sorted(failures.items())
+        )
+        raise ValueError(
+            f"Could not load {len(failures)} of {len(language_paths)} requested "
+            f"language(s): {detail}. Every language named in the config must "
+            "load, because dropping one silently changes what the "
+            "cross-language metrics are computed over. Fix the path, or remove "
+            "the language from the config."
+        )
+
     if filter_by_group:
         logger.info(f"Successfully loaded data for {len(language_texts)} languages in {group_type}={group_name}")
     else:
         logger.info(f"Successfully loaded data for {len(language_texts)} languages")
-    
+
     return language_texts
 
 

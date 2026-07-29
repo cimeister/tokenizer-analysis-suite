@@ -332,9 +332,27 @@ class TestCrossesCharacterBoundary:
         # A9 E4 — tail of é merged with lead of CJK char
         assert inst._crosses_character_boundary(b"\xa9\xe4") is True
 
-    def test_two_orphan_continuations_crosses(self, inst):
-        # A9 BD — two orphan continuation bytes, each an incomplete char
-        assert inst._crosses_character_boundary(b"\xa9\xbd") is True
+    def test_run_of_continuations_is_one_character_tail(self, inst):
+        """Consecutive continuation bytes belong to a single character.
+
+        They cannot be the tails of two different characters: after a
+        character's last continuation byte the stream continues with ASCII or a
+        lead byte, never another continuation. So a token holding only such a
+        run holds part of exactly one character and does not cross a boundary.
+
+        This previously asserted True, matching an implementation that counted
+        one character per continuation byte. That inflated
+        boundary_crossing_rate (Korean 632 reported against 584 actual) and
+        contradicted the worked example in the README.
+        """
+        assert inst._crosses_character_boundary(b"\xa9\xbd") is False
+        # bytes 2-3 of a 3-byte character
+        assert inst._crosses_character_boundary(b"\xbd\xa0") is False
+
+    def test_continuation_run_then_lead_byte_crosses(self, inst):
+        """One character's tail followed by the start of the next does cross."""
+        assert inst._crosses_character_boundary(b"\xa9\xe4") is True
+        assert inst._crosses_character_boundary(b"\xa0\xe5\xa5") is True
 
     def test_byte_fallback_single_does_not_cross(self, inst):
         # Single-byte tokens from byte fallback never cross
