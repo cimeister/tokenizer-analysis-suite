@@ -373,8 +373,10 @@ def plot_morphscore(results: Dict[str, Any], save_path: str, tokenizer_names: Li
     for tok_name in tokenizer_names:
         if tok_name in morph_data and 'summary' in morph_data[tok_name]:
             summary = morph_data[tok_name]['summary']
-            recall_values.append(summary.get('avg_morphscore_recall', 0))
-            precision_values.append(summary.get('avg_morphscore_precision', 0))
+            # No 0 default: an absent score is absent, and drawing it at 0
+            # is indistinguishable from a measured 0.
+            recall_values.append(_plottable(summary.get('avg_morphscore_recall')))
+            precision_values.append(_plottable(summary.get('avg_morphscore_precision')))
             labels.append(tok_name)
     
     if recall_values:
@@ -399,34 +401,50 @@ def plot_morphscore(results: Dict[str, Any], save_path: str, tokenizer_names: Li
 
 def plot_utf8_integrity(results: Dict[str, Any], save_path: str, tokenizer_names: List[str]):
     """Plot UTF-8 integrity metrics: token integrity rate and char splits per 1k tokens."""
-    has_integrity = 'utf8_token_integrity' in results and 'summary' in results['utf8_token_integrity']
-    has_splits = 'utf8_char_split' in results and 'summary' in results['utf8_char_split']
+    integrity_block = results.get('utf8_token_integrity', {})
+    integrity_summary = integrity_block.get('summary', {})
+    integrity_per_tok = integrity_block.get('per_tokenizer', {})
 
-    if not has_integrity and not has_splits:
+    # Split data moved under utf8_token_integrity in 1.0 (metrics/redundancy.py),
+    # so read the merged location first and fall back to the old top-level key
+    # for results files written before the merge. Reading only the old key left
+    # the right panel blank while the figure was still written under the same
+    # filename, which is the failure mode this metric exists to catch.
+    legacy_splits = results.get('utf8_char_split', {}).get('summary', {})
+
+    def _split_value(tok_name):
+        entry = integrity_per_tok.get(tok_name, {})
+        merged = entry.get('char_split') if isinstance(entry, dict) else None
+        if isinstance(merged, dict):
+            source = merged.get('global', merged)
+            if isinstance(source, dict) and 'splits_per_1k_tokens' in source:
+                return source['splits_per_1k_tokens']
+        if tok_name in legacy_splits:
+            return legacy_splits[tok_name].get('splits_per_1k_tokens')
+        return None
+
+    def _integrity_value(tok_name):
+        if tok_name in integrity_summary:
+            # No default: a missing rate is missing, and 1.0 is the best
+            # possible value, so defaulting to it drew an absent measurement as
+            # a perfect one.
+            return integrity_summary[tok_name].get('completeness_rate')
+        entry = integrity_per_tok.get(tok_name, {})
+        if isinstance(entry, dict) and isinstance(entry.get('global'), dict):
+            return entry['global'].get('completeness_rate')
+        return None
+
+    integrity_values = [_integrity_value(t) for t in tokenizer_names]
+    split_values = [_split_value(t) for t in tokenizer_names]
+    labels = list(tokenizer_names)
+
+    if not any(v is not None for v in integrity_values + split_values):
         return
 
+    has_integrity = any(v is not None for v in integrity_values)
+    has_splits = any(v is not None for v in split_values)
+
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
-
-    integrity_values = []
-    split_values = []
-    labels = []
-
-    for tok_name in tokenizer_names:
-        if has_integrity and tok_name in results['utf8_token_integrity']['summary']:
-            integrity_values.append(
-                results['utf8_token_integrity']['summary'][tok_name].get('completeness_rate', 1.0)
-            )
-        else:
-            integrity_values.append(None)
-
-        if has_splits and tok_name in results['utf8_char_split']['summary']:
-            split_values.append(
-                results['utf8_char_split']['summary'][tok_name].get('splits_per_1k_tokens', 0.0)
-            )
-        else:
-            split_values.append(None)
-
-        labels.append(tok_name)
 
     colors = get_colors(len(labels))
 
