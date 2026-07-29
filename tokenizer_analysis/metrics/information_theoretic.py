@@ -223,7 +223,7 @@ class InformationTheoreticMetrics(BaseMetrics):
             )
         
         return results
-    
+
     def compute_compression_rate(self, tokenized_data: Dict[str, List[TokenizedData]]) -> Dict[str, Any]:
         """
         Compute compression rates using ratio-of-means: total_units / total_tokens.
@@ -417,14 +417,58 @@ class InformationTheoreticMetrics(BaseMetrics):
         return results
 
     @staticmethod
-    def _compute_weighted_entropy(right_accessors: Dict, min_occ: int) -> dict:
-        """Compute frequency-weighted normalized Shannon entropy (η) over
-        right-accessor distributions.
+    def _accessor_domain_size(right_accessors: Dict) -> int:
+        """Distinct types appearing as a successor anywhere in the corpus.
+
+        This is Poelman et al.'s ``|dom A_L|``, the denominator basis for their
+        eta. Computed over the whole accessor structure, not per context, which
+        is exactly what makes their normalization comparable across contexts.
+        """
+        seen = set()
+        for successors in right_accessors.values():
+            seen.update(successors.keys())
+        return len(seen)
+
+    @staticmethod
+    def _compute_weighted_entropy(
+        right_accessors: Dict, min_occ: int, accessor_domain: Optional[int] = None,
+        weighted: bool = True,
+    ) -> dict:
+        """Normalized Shannon entropy (eta) over right-accessor distributions.
+
+        Two normalizations, selected by *accessor_domain*.
+
+        ``accessor_domain is None`` (this library's own definition): divide by
+        ``log2(number of distinct successors this context actually had)``. The
+        denominator is the most entropy the observed support could carry, so eta
+        measures **evenness alone**: a context with 2 equally likely successors
+        and one with 500 equally likely successors both score 1.0.
+
+        ``accessor_domain`` set (Poelman et al. 2025): divide by
+        ``log2(min(accessor_domain, ta))``, where *accessor_domain* is the
+        number of distinct types appearing as a successor anywhere in the
+        corpus and ``ta`` is this context's occurrence count. The denominator no
+        longer depends on the observed support, so eta measures **variety and
+        evenness together**, on one scale shared by every context. A context
+        with 2 successors scores low however even they are, because it could in
+        principle have had many more. ``ta`` caps it because a context seen 3
+        times cannot exhibit more than log2(3) bits.
+
+        Since ``n_unique <= ta`` always, the first denominator is never larger
+        than the second, so this library's eta is systematically the higher of
+        the two.
+
+        Which to prefer depends on the question. Evenness answers "given where
+        this token can branch, how balanced is the choice". The paper's answers
+        "how close to maximally unpredictable is what follows this token".
 
         Args:
-            right_accessors: Mapping from context (any hashable key) to a
-                Counter of successor token IDs.
+            right_accessors: Mapping from context to a Counter of successors.
             min_occ: Minimum total occurrences for a context to be included.
+            accessor_domain: Corpus-wide count of distinct successor types. When
+                None, normalize by each context's own successor count.
+            weighted: Weight each context by its occurrence count. False gives
+                the unweighted mean over types that Poelman et al. use.
 
         Returns:
             Dict with keys 'entropy', 'total_ngrams', 'types_evaluated',
@@ -443,18 +487,21 @@ class InformationTheoreticMetrics(BaseMetrics):
                 types_excluded += 1
                 continue
             n_unique = len(successors)
+            weight = ta if weighted else 1
             if n_unique <= 1:
-                # Only one successor type → entropy is 0, eta is 0
+                # Only one successor type, so entropy is 0 and so is eta.
                 types_evaluated += 1
-                weight_total += ta
+                weight_total += weight
                 continue
             # Shannon entropy
             h = -sum((c / ta) * np.log2(c / ta) for c in successors.values())
-            # Normalize by max possible entropy
-            max_h = np.log2(min(n_unique, ta))
+            if accessor_domain is None:
+                max_h = np.log2(min(n_unique, ta))
+            else:
+                max_h = np.log2(min(accessor_domain, ta))
             eta = h / max_h if max_h > 0 else 0.0
-            weighted_sum += ta * eta
-            weight_total += ta
+            weighted_sum += weight * eta
+            weight_total += weight
             types_evaluated += 1
 
         entropy = weighted_sum / weight_total if weight_total else 0.0
@@ -491,8 +538,27 @@ class InformationTheoreticMetrics(BaseMetrics):
                 'metric_range': '[0.0, 1.0]',
                 'interpretation': 'Higher = more uniform successor distributions',
                 'min_bigram_occurrences': min_occ,
+                'normalizer': 'log2(distinct successors of this context)',
+                'aggregation': 'frequency-weighted mean over contexts',
+                'deviations_from_reference': [
+                    "Normalizer is this context's own successor count, not the "
+                    "corpus-wide accessor-domain size the reference uses, so eta "
+                    "measures evenness alone and is systematically higher.",
+                    'Aggregation is frequency-weighted; the reference is an '
+                    'unweighted mean over types.',
+                    'Contexts are filtered on raw occurrence count only; the '
+                    'reference also drops types containing punctuation or digits '
+                    'and types with a boundary ratio at or above 0.95.',
+                    'No windowing; the reference computes in 1000-accessor '
+                    'windows, so this value rises as the corpus shrinks.',
+                ],
+                'reference_variant': (
+                    'bigram_entropy_poelman carries the reference normalizer and '
+                    'unweighted aggregation for comparison.'
+                ),
             }
         }
+        faithful_by_lang: Dict[str, Any] = {}
 
         for tok_name in self.tokenizer_names:
             if tok_name not in tokenized_data:
@@ -522,6 +588,19 @@ class InformationTheoreticMetrics(BaseMetrics):
                 }
 
             global_stats = self._compute_weighted_entropy(global_right_accessors, min_occ)
+            # Poelman et al. 2025 as published: corpus-wide accessor-domain
+            # normalizer and an unweighted mean over types. Reported alongside
+            # rather than instead, so the two can be compared on one run.
+            domain = self._accessor_domain_size(global_right_accessors)
+            faithful_stats = self._compute_weighted_entropy(
+                global_right_accessors, min_occ,
+                accessor_domain=domain, weighted=False,
+            )
+            faithful_by_lang[tok_name] = {
+                'bigram_entropy': faithful_stats['entropy'],
+                'accessor_domain_size': domain,
+                'types_evaluated': faithful_stats['types_evaluated'],
+            }
 
             results['per_tokenizer'][tok_name] = {
                 'global_bigram_entropy': global_stats['entropy'],
@@ -552,6 +631,29 @@ class InformationTheoreticMetrics(BaseMetrics):
         results['pairwise_comparisons'] = self.compute_pairwise_comparisons(
             global_entropies, 'bigram_entropy'
         )
+        results['reference_definition'] = {
+            'per_tokenizer': faithful_by_lang,
+            'metadata': {
+                'description': (
+                    'Successor entropy under the reference normalizer and '
+                    'aggregation, for comparison with bigram_entropy above.'
+                ),
+                'normalizer': 'log2(min(corpus-wide accessor domain, context count))',
+                'aggregation': 'unweighted mean over context types',
+                'reference': (
+                    'Poelman, Bauwens, de Lhoneux (2025), Confounding Factors in '
+                    'Relating Model Performance to Morphology, EMNLP'
+                ),
+                'still_deviating': [
+                    'The reference also drops types containing punctuation or '
+                    'digits and types with a boundary ratio at or above 0.95. '
+                    'Those filters are not implemented here, so this is the '
+                    'reference normalizer and aggregation, not the full '
+                    'reference pipeline.',
+                    'No windowing.',
+                ],
+            },
+        }
 
         return results
 
@@ -582,8 +684,29 @@ class InformationTheoreticMetrics(BaseMetrics):
                 'metric_range': '[0.0, 1.0]',
                 'interpretation': 'Higher = more uniform successor distributions given bigram context',
                 'min_trigram_occurrences': min_occ,
+                'normalizer': 'log2(distinct successors of this bigram context)',
+                'aggregation': 'frequency-weighted mean over contexts',
+                'deviations_from_reference': [
+                    'Poelman et al. define bigram successor entropy; the trigram '
+                    'form is this library extending it, so there is no published '
+                    'value to compare against.',
+                    "Normalizer is the context's own successor count, not the "
+                    'corpus-wide accessor-domain size, so eta measures evenness '
+                    'alone and is systematically higher.',
+                    'Aggregation is frequency-weighted, not an unweighted mean '
+                    'over types.',
+                    'Filtered on raw occurrence count only, and not windowed.',
+                ],
+                'threshold_sensitivity': (
+                    'The ranking moves with min_trigram_occurrences: Spearman '
+                    '0.728 between thresholds 3 and 25 over 37 tokenizers, '
+                    'against 0.985 for bigram at the same settings. 89 to 90 '
+                    'percent of context types and a median 70 percent of '
+                    'occurrences are discarded at the default.'
+                ),
             }
         }
+        faithful_by_tok: Dict[str, Any] = {}
 
         for tok_name in self.tokenizer_names:
             if tok_name not in tokenized_data:
@@ -613,6 +736,16 @@ class InformationTheoreticMetrics(BaseMetrics):
                 }
 
             global_stats = self._compute_weighted_entropy(global_right_accessors, min_occ)
+            domain = self._accessor_domain_size(global_right_accessors)
+            faithful_stats = self._compute_weighted_entropy(
+                global_right_accessors, min_occ,
+                accessor_domain=domain, weighted=False,
+            )
+            faithful_by_tok[tok_name] = {
+                'trigram_entropy': faithful_stats['entropy'],
+                'accessor_domain_size': domain,
+                'types_evaluated': faithful_stats['types_evaluated'],
+            }
 
             results['per_tokenizer'][tok_name] = {
                 'global_trigram_entropy': global_stats['entropy'],
@@ -643,6 +776,25 @@ class InformationTheoreticMetrics(BaseMetrics):
         results['pairwise_comparisons'] = self.compute_pairwise_comparisons(
             global_entropies, 'trigram_entropy'
         )
+        results['reference_definition'] = {
+            'per_tokenizer': faithful_by_tok,
+            'metadata': {
+                'description': (
+                    'Trigram successor entropy under the reference normalizer '
+                    'and aggregation, for comparison with trigram_entropy above.'
+                ),
+                'normalizer': 'log2(min(corpus-wide accessor domain, context count))',
+                'aggregation': 'unweighted mean over context types',
+                'still_deviating': [
+                    'Poelman et al. define the bigram form only, so there is no '
+                    'published trigram value; this applies their normalizer and '
+                    'aggregation to the trigram extension.',
+                    'Their punctuation, digit and boundary-ratio type filters '
+                    'are not implemented.',
+                    'No windowing.',
+                ],
+            },
+        }
 
         return results
 

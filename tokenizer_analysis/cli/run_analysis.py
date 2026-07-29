@@ -473,6 +473,11 @@ def slim_results_for_json(results: Dict) -> Dict:
         if 'observed_normalization' in metric_data:
             out['observed_normalization'] = metric_data['observed_normalization']
 
+        # Successor entropy under the reference normalizer and aggregation,
+        # published next to this library's own definition for comparison.
+        if 'reference_definition' in metric_data:
+            out['reference_definition'] = metric_data['reference_definition']
+
         # Operator isolation: keep the per-domain split (prose / code / math).
         #
         # It is NOT derivable from the slimmed per_tokenizer block, because that block POOLS the

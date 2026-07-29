@@ -52,6 +52,23 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `renyi_efficiency.observed_normalization`, so values from earlier runs remain
   reproducible and the two can be compared directly.
 
+- `bigram_entropy` and `trigram_entropy` keep their current definition
+  (frequency-weighted, occurrence-count filtering, no windowing) and now
+  document how it differs from the cited Poelman et al. 2025. Each also
+  publishes a `reference_definition` block computed with the paper's
+  normalizer, `log2(min(corpus-wide accessor domain, context count))`, and its
+  unweighted mean over types, so the two can be compared on one run. The
+  paper's punctuation, digit and boundary-ratio type filters are not
+  implemented and that is stated in the block.
+
+  The normalizers measure different things. Dividing by a context's own
+  successor count makes eta pure evenness: two equally likely successors and
+  500 equally likely successors both score 1.0. Dividing by the corpus-wide
+  accessor domain puts variety and evenness on one shared scale, so a context
+  with few successors scores low however even they are. Since a context's
+  successor count never exceeds its occurrence count, the current definition is
+  systematically the higher of the two.
+
 ### Fixed (metric correctness)
 - `_build_source_to_recon_map` advanced only on a match, so one character the
   reconstruction added (a byte-level vocabulary renders `é` as `Ã©`) left it
