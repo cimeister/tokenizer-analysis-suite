@@ -720,7 +720,7 @@ class ASTBoundaryMetrics(BaseMetrics):
 
         # indent_acc: tok -> lang -> [per-line records]
         # Each record: {"depth": int, "num_ws_tokens": int,
-        #               "pattern": Tuple[str,...], "ws_width": int}
+        #               "ws_width": int}
         indent_acc: Dict[str, Dict[str, List[Dict]]] = defaultdict(
             lambda: defaultdict(list)
         )
@@ -973,38 +973,24 @@ class ASTBoundaryMetrics(BaseMetrics):
                                         or token_indices[-1] != tidx
                                     ):
                                         token_indices.append(tidx)
-                            # Keep only tokens whose surface is entirely
+                            # Count only tokens whose surface is entirely
                             # whitespace. Selecting every token that *overlaps*
                             # the leading-whitespace range also caught the first
                             # code token whenever that token covered the last
-                            # indent space too. Measured with tokenizers/bpe.json,
-                            # whose GPT-2 style pre-tokenizer regex groups a
-                            # leading space with the following word:
-                            # '    return x' tokenizes as 'GGG' + 'Greturn',
-                            # and 'Greturn' overlaps the indent range. Another
-                            # tokenizer may emit 'G' + 'return' instead; this
-                            # depends on the pre-tokenizer and the learned
-                            # merges, not on byte-level encoding as such. The
-                            # pattern then became ('GGG', 'Greturn') for one
-                            # line and ('GGG', 'Gpass') for the next, so lines
-                            # with identical indentation counted as different
-                            # patterns and pattern_stability_rate measured which
-                            # word the line started with. Four identically
-                            # indented lines scored 0.25 instead of 1.0.
+                            # indent space too, which happens when the
+                            # pre-tokenizer groups a leading space with the
+                            # following word and a merge for the pair was
+                            # learned. That token is code, not indentation.
                             ws_token_indices = [
                                 ti for ti in token_indices
                                 if self._is_whitespace_token(token_strings[ti])
                             ]
-                            pattern = tuple(
-                                token_strings[ti] for ti in ws_token_indices
-                            )
                             ws_width = len(ws_string.expandtabs())
                             depth = ws_width // indent_unit if indent_unit else ws_width
                             num_ws_tokens = len(ws_token_indices)
                             indent_acc[tok_name][code_lang].append({
                                 "depth": depth,
                                 "num_ws_tokens": num_ws_tokens,
-                                "pattern": pattern,
                                 "ws_width": ws_width,
                             })
 
@@ -1236,19 +1222,16 @@ class ASTBoundaryMetrics(BaseMetrics):
           rank-based, so this rewards the token count increasing *monotonically*
           with depth, not increasing in proportion to it. The name says
           proportionality; the statistic measures monotonicity.
-        - ``pattern_stability_rate``: weighted fraction of lines at each depth
-          that share the dominant whitespace-token pattern. Only tokens whose
-          surface is entirely whitespace enter the pattern. Selecting every
-          token that overlapped the indent range instead pulled in the first
-          code token whenever that token also covered the last indent space.
-          A GPT-2 style pre-tokenizer regex groups a leading space with the
-          following word, and if a merge for that pair was learned the
-          resulting token spans both, so it overlaps the indent range. Lines
-          with identical indentation but different code then counted as
-          different patterns and the rate measured which word each line
-          started with. Whether this happens depends on the pre-tokenizer and
-          the learned merges, not on byte-level encoding as such, so the fix
-          is stated in terms of what a token covers.
+
+        A ``pattern_stability_rate`` was removed before release. Once only
+        whitespace-only tokens were counted, it was 1.0 for 11 of 12 tokenizers
+        measured and took two distinct values in total, which is what theory
+        predicts: a deterministic tokenizer encodes a fixed whitespace string
+        one fixed way, so the rate can only drop when two different indent
+        widths map to the same depth, a property of the source rather than of
+        the tokenizer. The spread it showed beforehand came from the bug of
+        counting the first code token, which made it measure which word each
+        line started with.
 
         Depth is the line's leading-whitespace width divided by an indent unit
         inferred per snippet as the GCD of its non-zero indent widths. It does
@@ -1263,7 +1246,7 @@ class ASTBoundaryMetrics(BaseMetrics):
                     "Spearman rho, so it measures monotonic increase of "
                     "whitespace-token count with depth, not proportionality"
                 ),
-                "pattern_tokens": "whitespace-only tokens",
+                "counted_tokens": "whitespace-only tokens",
                 "languages": sorted(_WHITESPACE_SIGNIFICANT_LANGS),
             },
         }
@@ -1271,7 +1254,6 @@ class ASTBoundaryMetrics(BaseMetrics):
         for tok_name in self.tokenizer_names:
             tok_data: Dict[str, Any] = {"by_language": {}}
             lang_correlations: List[float] = []
-            lang_stabilities: List[float] = []
             languages_seen: set = set()
 
             for code_lang in sorted(indent_acc.get(tok_name, {})):
@@ -1293,35 +1275,20 @@ class ASTBoundaryMetrics(BaseMetrics):
                 else:
                     corr = float("nan")
 
-                # Pattern stability rate
-                depth_groups: Dict[int, List[Tuple]] = defaultdict(list)
-                for r in records:
-                    depth_groups[r["depth"]].append(r["pattern"])
-
-                dominant_total = 0
-                for d, patterns in depth_groups.items():
-                    counter = Counter(patterns)
-                    dominant_total += counter.most_common(1)[0][1]
-
-                stability = dominant_total / total_indented_lines if total_indented_lines else 0.0
-
                 tok_data["by_language"][code_lang] = {
                     "depth_proportionality_correlation": float(corr) if not math.isnan(corr) else None,
-                    "pattern_stability_rate": float(stability),
                     "num_depth_levels": distinct_depths,
                     "total_indented_lines": total_indented_lines,
                 }
 
                 if not math.isnan(corr):
                     lang_correlations.append(corr)
-                lang_stabilities.append(stability)
                 languages_seen.add(code_lang)
 
             results["per_tokenizer"][tok_name] = tok_data
 
             if languages_seen:
                 summary: Dict[str, Any] = {
-                    "avg_pattern_stability_rate": float(np.mean(lang_stabilities)),
                     "languages_analyzed": len(languages_seen),
                 }
                 if lang_correlations:
@@ -1449,7 +1416,6 @@ class ASTBoundaryMetrics(BaseMetrics):
                     print(f"{tok_name}:")
                     if "avg_depth_proportionality_correlation" in s:
                         print(f"  {'Avg Depth Correlation':25}: {s['avg_depth_proportionality_correlation']:.3f}")
-                    print(f"  {'Avg Pattern Stability':25}: {s['avg_pattern_stability_rate']:.3f}")
                     print(f"  {'Languages':25}: {s['languages_analyzed']}")
 
                     tok_detail = indent.get("per_tokenizer", {}).get(tok_name, {})
@@ -1462,7 +1428,6 @@ class ASTBoundaryMetrics(BaseMetrics):
                             print(
                                 f"    {lang:13}: "
                                 f"depth_corr={corr_str}  "
-                                f"stability={d['pattern_stability_rate']:.3f}  "
                                 f"levels={d['num_depth_levels']}  "
                                 f"lines={d['total_indented_lines']}"
                             )

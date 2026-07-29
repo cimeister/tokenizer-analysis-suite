@@ -96,18 +96,23 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Directory input globs are sorted. They feed a `--samples-per-lang`
   truncation, so filesystem order decided which texts were analyzed.
 - `scipy.stats` is imported explicitly in `metrics/base.py`.
-- `indentation_consistency.pattern_stability_rate` counted the first code token
-  as indentation whenever that token also covered the last indent space. A
-  GPT-2 style pre-tokenizer regex groups a leading space with the following
-  word, so under `tokenizers/bpe.json` `'    return x'` tokenizes as `ĠĠĠ` plus
-  `Ġreturn`, and the second token overlapped the indent range. Whether this
-  happens depends on the pre-tokenizer and the learned merges. Lines with identical indentation but
-  different code therefore counted as different patterns, and the rate measured
-  which word each line started with. Only whitespace-only tokens now enter the
-  pattern. On the demo corpus Python goes to 1.0, which is correct for uniformly
-  indented code.
+- `indentation_consistency` counts only whitespace-only tokens as indentation.
+  It previously counted every token overlapping the leading-whitespace range,
+  which pulled in the first code token whenever that token also covered the last
+  indent space. That happens when the pre-tokenizer groups a leading space with
+  the following word and a merge for the pair was learned; it depends on the
+  pre-tokenizer and the merges, not on byte-level encoding as such.
 
 ### Removed
+- `indentation_consistency.pattern_stability_rate` and its
+  `avg_pattern_stability_rate` summary. Once only whitespace-only tokens were
+  counted, it was 1.0 for 11 of 12 tokenizers measured and took two distinct
+  values in total. That is what theory predicts: a deterministic tokenizer
+  encodes a fixed whitespace string one fixed way, so the rate can only drop
+  when two different indent widths map to the same depth, which is a property of
+  the source rather than of the tokenizer. The spread it showed beforehand came
+  from counting the first code token, which made it measure which word each line
+  started with. `depth_proportionality_correlation` is unaffected.
 - Swift, Kotlin and Perl are excluded from the code AST metrics. `classify_node`
   does not know their identifier node types (`simple_identifier` for the first
   two, `varname` and `function` for Perl), so the identifier share of classified

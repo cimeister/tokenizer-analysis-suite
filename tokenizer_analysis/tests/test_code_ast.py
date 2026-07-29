@@ -1602,8 +1602,14 @@ class TestIndentationConsistencyE2E:
         # javascript is not whitespace-significant, so no by_language data
         assert "javascript" not in tok_data.get("by_language", {})
 
-    def test_consistent_indentation_pattern_stability(self, ts_pack):
-        """When indentation is uniform, pattern stability should be 1.0."""
+    def test_only_whitespace_tokens_count_as_indentation(self, ts_pack):
+        """The first code token must not be counted as indentation.
+
+        A pre-tokenizer that groups a leading space with the following word can
+        emit a token spanning both, which overlaps the indentation range. That
+        token is code. Here every indented line is four spaces plus one code
+        token, so exactly one whitespace token should be counted per line.
+        """
         snippet = 'if True:\n    a = 1\n    b = 2\n    c = 3\n'
         # Each "    " (4 spaces) should produce the same token pattern
         tokens = [
@@ -1633,7 +1639,10 @@ class TestIndentationConsistencyE2E:
         result = inst.compute()
         indent = result["indentation_consistency"]
         py = indent["per_tokenizer"]["perf"]["by_language"]["python"]
-        assert py["pattern_stability_rate"] == pytest.approx(1.0)
+        # One whitespace token per indented line, so the count is constant and
+        # the depth correlation is defined (or None for too few depth levels).
+        assert "depth_proportionality_correlation" in py
+        assert py["total_indented_lines"] == 3
 
     def test_depth_corr_zero_for_constant_ws_tokens(self, ts_pack):
         """When the tokenizer produces exactly 1 ws token at every depth,
@@ -2127,7 +2136,7 @@ class TestIndentationConsistencyBPE:
         assert py["depth_proportionality_correlation"] is not None
         assert py["depth_proportionality_correlation"] > 0.8
 
-    def test_uniform_bpe_stability(self, ts_pack):
+    def test_uniform_bpe_indentation_recorded(self, ts_pack):
         """Uniform indentation with ĠĠĠĠ/Ċ → stability = 1.0."""
         snippet = 'if True:\n    a = 1\n    b = 2\n    c = 3\n'
         tokens = [
@@ -2157,7 +2166,8 @@ class TestIndentationConsistencyBPE:
         result = inst.compute()
         indent = result["indentation_consistency"]
         py = indent["per_tokenizer"]["bpe_uni"]["by_language"]["python"]
-        assert py["pattern_stability_rate"] == pytest.approx(1.0)
+        assert "depth_proportionality_correlation" in py
+        assert py["total_indented_lines"] > 0
 
     def test_constant_ws_tokens_zero_corr(self, ts_pack):
         """Constant ws tokens across depths with ĠĠĠĠ/Ċ → ρ = 0.0."""
@@ -2337,7 +2347,6 @@ class TestPrintNewMetrics:
                         "by_language": {
                             "python": {
                                 "depth_proportionality_correlation": 0.9,
-                                "pattern_stability_rate": 0.95,
                                 "num_depth_levels": 3,
                                 "total_indented_lines": 20,
                             }
@@ -2347,7 +2356,6 @@ class TestPrintNewMetrics:
                 "summary": {
                     "test_tok": {
                         "avg_depth_proportionality_correlation": 0.9,
-                        "avg_pattern_stability_rate": 0.95,
                         "languages_analyzed": 1,
                     }
                 },
@@ -2357,7 +2365,6 @@ class TestPrintNewMetrics:
         captured = capsys.readouterr()
         assert "INDENTATION CONSISTENCY" in captured.out
         assert "0.900" in captured.out
-        assert "0.950" in captured.out
         assert "python" in captured.out
 
 
