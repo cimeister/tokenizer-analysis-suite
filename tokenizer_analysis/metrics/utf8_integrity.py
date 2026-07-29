@@ -98,7 +98,19 @@ class UTF8IntegrityMetrics(BaseMetrics):
         remapping, whereas the marker count only asks whether the training
         corpus happened to exercise enough of the remapped range.
         """
-        backend = getattr(tokenizer, 'backend_tokenizer', tokenizer)
+        # Unwrap first. The pipeline passes a TokenizerWrapper, which exposes
+        # neither .decoder nor .pre_tokenizer, so without this the component
+        # check silently returned None for every tokenizer and the marker-count
+        # heuristic decided instead, which is the failure this check exists to
+        # prevent. Measured: gpt4o-english-bpe resolved to None through the
+        # wrapper and True through the backend.
+        backend = tokenizer
+        if hasattr(backend, 'get_underlying_tokenizer'):
+            try:
+                backend = backend.get_underlying_tokenizer() or backend
+            except Exception as e:
+                logger.debug("Could not unwrap tokenizer for component check: %s", e)
+        backend = getattr(backend, 'backend_tokenizer', backend)
         for attr in ('decoder', 'pre_tokenizer'):
             component = getattr(backend, attr, None)
             if component is None:
