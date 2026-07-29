@@ -97,9 +97,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   truncation, so filesystem order decided which texts were analyzed.
 - `scipy.stats` is imported explicitly in `metrics/base.py`.
 - `indentation_consistency.pattern_stability_rate` counted the first code token
-  as indentation. A byte-level tokenizer folds the last indent space into the
-  following word, so `'    return x'` tokenizes as `ĠĠĠ` plus `Ġreturn` and the
-  second token overlapped the indent range. Lines with identical indentation but
+  as indentation whenever that token also covered the last indent space. A
+  GPT-2 style pre-tokenizer regex groups a leading space with the following
+  word, so under `tokenizers/bpe.json` `'    return x'` tokenizes as `ĠĠĠ` plus
+  `Ġreturn`, and the second token overlapped the indent range. Whether this
+  happens depends on the pre-tokenizer and the learned merges. Lines with identical indentation but
   different code therefore counted as different patterns, and the rate measured
   which word each line started with. Only whitespace-only tokens now enter the
   pattern. On the demo corpus Python goes to 1.0, which is correct for uniformly

@@ -976,10 +976,15 @@ class ASTBoundaryMetrics(BaseMetrics):
                             # Keep only tokens whose surface is entirely
                             # whitespace. Selecting every token that *overlaps*
                             # the leading-whitespace range also caught the first
-                            # code token, because a byte-level tokenizer folds
-                            # the last indent space into the following word:
+                            # code token whenever that token covered the last
+                            # indent space too. Measured with tokenizers/bpe.json,
+                            # whose GPT-2 style pre-tokenizer regex groups a
+                            # leading space with the following word:
                             # '    return x' tokenizes as 'GGG' + 'Greturn',
-                            # and 'Greturn' overlaps the indent range. The
+                            # and 'Greturn' overlaps the indent range. Another
+                            # tokenizer may emit 'G' + 'return' instead; this
+                            # depends on the pre-tokenizer and the learned
+                            # merges, not on byte-level encoding as such. The
                             # pattern then became ('GGG', 'Greturn') for one
                             # line and ('GGG', 'Gpass') for the next, so lines
                             # with identical indentation counted as different
@@ -1235,10 +1240,15 @@ class ASTBoundaryMetrics(BaseMetrics):
           that share the dominant whitespace-token pattern. Only tokens whose
           surface is entirely whitespace enter the pattern. Selecting every
           token that overlapped the indent range instead pulled in the first
-          code token, because a byte-level tokenizer folds the last indent
-          space into the following word, so lines with identical indentation
-          but different code counted as different patterns and the rate
-          measured which word each line started with.
+          code token whenever that token also covered the last indent space.
+          A GPT-2 style pre-tokenizer regex groups a leading space with the
+          following word, and if a merge for that pair was learned the
+          resulting token spans both, so it overlaps the indent range. Lines
+          with identical indentation but different code then counted as
+          different patterns and the rate measured which word each line
+          started with. Whether this happens depends on the pre-tokenizer and
+          the learned merges, not on byte-level encoding as such, so the fix
+          is stated in terms of what a token covers.
 
         Depth is the line's leading-whitespace width divided by an indent unit
         inferred per snippet as the GCD of its non-zero indent widths. It does
