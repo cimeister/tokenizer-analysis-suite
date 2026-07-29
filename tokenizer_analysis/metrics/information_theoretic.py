@@ -81,18 +81,46 @@ class InformationTheoreticMetrics(BaseMetrics):
     def compute_renyi_efficiency_analysis(self, tokenized_data: Dict[str, List[TokenizedData]]) -> Dict[str, Any]:
         """
         Compute Rényi efficiency metrics for all tokenizers.
-        
+
+        Follows Zouhar et al. 2023, "Tokenization and the Noiseless Channel":
+        ``Eff_alpha(W_V) = H_alpha(W_V) / log|V|``, with ``|V|`` the tokenizer's
+        declared vocabulary size.
+
+        The result also carries an ``observed_normalization`` block computed
+        with ``log2(number of token types observed in the corpus)``, which is
+        what this library used before 1.0. Both are published so a value from an
+        older run can be reproduced and compared; they rank tokenizers at
+        Spearman 0.678 over 37 tokenizers, so they are not interchangeable.
+
         Args:
             tokenized_data: Dict mapping tokenizer names to TokenizedData lists
-            
+
         Returns:
             Dict with Rényi efficiency results
         """
-        
+
         results = {
             'per_tokenizer': {},
             'per_language': {},
-            'pairwise_comparisons': {}
+            'pairwise_comparisons': {},
+            'observed_normalization': {'per_tokenizer': {}},
+            'metadata': {
+                'definition': 'Eff_alpha = H_alpha(token distribution) / log2(|V|)',
+                'normalizer': 'declared vocabulary size',
+                'reference': (
+                    'Zouhar, Meister, Gastaldi, Du, Sachan, Cotterell (2023), '
+                    'Tokenization and the Noiseless Channel, ACL'
+                ),
+                'alphas': list(self.renyi_alphas),
+                'aggregation': 'micro_pooled',
+                'observed_normalization': (
+                    'Same entropies divided by log2(observed token types) '
+                    'instead, the pre-1.0 behaviour. Corpus-dependent, and its '
+                    'per-language values each used a different divisor so they '
+                    'were not on a common scale. Spearman 0.678 against the '
+                    'published definition over 37 tokenizers.'
+                ),
+            },
         }
         
         for tok_name in self.tokenizer_names:
@@ -100,6 +128,7 @@ class InformationTheoreticMetrics(BaseMetrics):
                 continue
                 
             tok_results = {}
+            observed_results = {}
             tok_data = tokenized_data[tok_name]
             
             # Collect all tokens for global entropy
@@ -119,24 +148,54 @@ class InformationTheoreticMetrics(BaseMetrics):
                 
                 per_lang_token_counts[lang] = lang_token_counts
             
-            # Compute Rényi entropy for each alpha
+            # Rényi efficiency, both normalizations.
+            #
+            # Zouhar et al. 2023 define Eff_alpha = H_alpha(W_V) / log|V|, with
+            # |V| the tokenizer's declared vocabulary size. This library divided
+            # by log2 of the number of token types *observed in the corpus*
+            # instead, which is a different quantity: it is corpus-dependent, so
+            # part of what it measures is how much of its vocabulary the
+            # tokenizer exercised on this data, and it moves if you change the
+            # corpus. Over 37 tokenizers the two normalizations rank tokenizers
+            # at Spearman 0.678, with a maximum rank shift of 16 places.
+            #
+            # `renyi_efficiency` now follows the published definition.
+            # `renyi_efficiency_observed` keeps the old one so results computed
+            # under it stay reproducible and the two can be compared directly.
+            declared_vocab = self.get_vocab_size(tok_name)
+
             for alpha in self.renyi_alphas:
                 alpha_key = f'renyi_{alpha}'
                 tok_results[alpha_key] = {}
-                
-                # Global entropy
+                observed_results[alpha_key] = {}
+
                 global_entropy = self.compute_renyi_entropy(global_token_counts, alpha)
-                global_vocab = len(global_token_counts)
-                tok_results[alpha_key]['overall'] = global_entropy / np.log2(global_vocab) if global_vocab > 1 else 0.0
-                
-                # Per-language entropy
+                observed_vocab = len(global_token_counts)
+                tok_results[alpha_key]['overall'] = (
+                    global_entropy / np.log2(declared_vocab) if declared_vocab > 1 else None
+                )
+                observed_results[alpha_key]['overall'] = (
+                    global_entropy / np.log2(observed_vocab) if observed_vocab > 1 else None
+                )
+
                 for lang, lang_counts in per_lang_token_counts.items():
                     lang_entropy = self.compute_renyi_entropy(lang_counts, alpha)
-                    lang_vocab = len(lang_counts)
-                    tok_results[alpha_key][lang] = lang_entropy / np.log2(lang_vocab) if lang_vocab > 1 else 0.0
+                    lang_observed = len(lang_counts)
+                    # The declared vocabulary is the same for every language, so
+                    # per-language values under this normalization are on one
+                    # common scale. Under the observed normalization each
+                    # language had its own divisor, so those were not comparable
+                    # across the languages they were tabulated against.
+                    tok_results[alpha_key][lang] = (
+                        lang_entropy / np.log2(declared_vocab) if declared_vocab > 1 else None
+                    )
+                    observed_results[alpha_key][lang] = (
+                        lang_entropy / np.log2(lang_observed) if lang_observed > 1 else None
+                    )
             
             results['per_tokenizer'][tok_name] = tok_results
-        
+            results['observed_normalization']['per_tokenizer'][tok_name] = observed_results
+
         # Aggregate per-language results
         all_languages = set()
         for tok_results in results['per_tokenizer'].values():

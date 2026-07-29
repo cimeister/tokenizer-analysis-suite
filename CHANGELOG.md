@@ -41,6 +41,17 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   into the reconstructed text, and reports them as `unmappable`, instead of
   counting them as fragmented with a token count of -1.
 
+### Changed (metric definitions)
+- `renyi_efficiency` now follows Zouhar et al. 2023: `H_alpha / log2(|V|)` with
+  `|V|` the declared vocabulary size. It previously divided by `log2(number of
+  token types observed in the corpus)`, which is corpus-dependent and gave each
+  language a different divisor, so per-language values were not on a common
+  scale. The two rank tokenizers at Spearman 0.678 over 37 tokenizers, with a
+  maximum shift of 16 places, so they are not interchangeable. The old
+  normalization is still published under
+  `renyi_efficiency.observed_normalization`, so values from earlier runs remain
+  reproducible and the two can be compared directly.
+
 ### Fixed (metric correctness)
 - `_build_source_to_recon_map` advanced only on a match, so one character the
   reconstruction added (a byte-level vocabulary renders `é` as `Ã©`) left it

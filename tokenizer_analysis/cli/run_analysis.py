@@ -466,6 +466,13 @@ def slim_results_for_json(results: Dict) -> Dict:
         if 'metadata' in metric_data:
             out['metadata'] = metric_data['metadata']
 
+        # Renyi publishes the pre-1.0 normalization alongside the published one
+        # so an older value stays reproducible. Keep it; it is not derivable
+        # from the primary block, since the divisors differ per tokenizer and
+        # per language.
+        if 'observed_normalization' in metric_data:
+            out['observed_normalization'] = metric_data['observed_normalization']
+
         # Operator isolation: keep the per-domain split (prose / code / math).
         #
         # It is NOT derivable from the slimmed per_tokenizer block, because that block POOLS the
