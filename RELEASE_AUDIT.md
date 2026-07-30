@@ -181,6 +181,34 @@ for the whole corpus; no metric was reading it. Every place that inferred a
 source-to-token correspondence from token surfaces now uses offsets or raises.
 See the offsets entries below.
 
+### X11. Subword markers are stripped for every tokenizer family: **open**
+`metrics/base.py` `_process_token`. The WordPiece and BPE marker rules
+(`##` prefix, `</w>` suffix, `@@` suffix) are applied whatever the tokenizer,
+so for a byte-level BPE they corrupt real content: `_clean_token('###')`
+returns `'#'` and `_clean_token('##')` returns `''`. `###` is an ordinary
+Markdown heading token. Measured: 8 vocabulary entries in apertus and 31 in
+llama3 begin with `##`, and 2 and 3 respectively end with `</w>` or `@@`.
+
+This is the same shape as the special-token fix that landed in 18cfb28, and the
+same call sites are affected: reconstructions and the UTF-8 content-token
+denominator. The fix needs a per-tokenizer decision about whether the marker
+convention applies at all, which the wrapper can now answer the way it answers
+the special-token question.
+
+Found by the agent implementing the special-token accessor; not fixed there
+because it is a separate metric-affecting change.
+
+### X12. `SentencePieceTokenizer.get_special_token_ids()` is not overridden: **open**
+`core/tokenizer_wrapper.py`. It falls through to the base implementation, which
+returns an empty set, so no SentencePiece token is recognised as special by id.
+`get_special_token_strings()` was implemented for that class in 18cfb28, so the
+string path is correct and the id path is not. The visualizer works around it by
+also treating a raw zero-length offset as a special-token signal.
+
+Note: `sentencepiece` is not installed in the working venv, so the SentencePiece
+paths are covered only by stubs and the SP fixtures in `test_tokenizer_wrapper.py`
+skip. That gap should be closed before release.
+
 ### X10. Reconstruction guessing, four further instances: **fixed**
 A dedicated sweep found four more places inferring source positions from token
 surfaces rather than offsets.
