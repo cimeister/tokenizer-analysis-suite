@@ -36,7 +36,7 @@ complete-looking results file containing only the surviving language. On a
 finished. Nothing in the JSON records that a language was requested and
 dropped.
 
-### S4. Missing MorphScore data scores 0.0: **open**
+### S4. Missing MorphScore data scores 0.0: **fixed**
 `metrics/morphscore.py`. A nonexistent `--morphscore-data-dir` exits 0 and
 writes `avg_morphscore_recall: 0.0`, `avg_morphscore_precision: 0.0`,
 `avg_micro_f1: 0.0`, `avg_macro_f1: 0.0`. A tokenizer that was never evaluated
@@ -140,7 +140,7 @@ the valid ones.
 not one of the two errors `_load_config` handles. A comment at
 `cli/run_analysis.py:1029` claims directories are supported; no code path does.
 
-### L4. MorphScore's ImportError gives no install instruction: **open**
+### L4. MorphScore's ImportError gives no install instruction: **fixed**
 `metrics/morphscore.py:20,72`. Names the package but not how to get it, unlike
 `sentencepiece` and `script_bpe`, which both name the exact `pip install`.
 

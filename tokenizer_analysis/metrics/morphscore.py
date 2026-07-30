@@ -17,7 +17,12 @@ try:
     from morphscore import MorphScore
     MORPHSCORE_AVAILABLE = True
 except ImportError:
-    logger.warning("MorphScore library not available. MorphScore metrics will be disabled.")
+    logger.warning(
+        "MorphScore is not installed, so MorphScore metrics are unavailable. "
+        "Install with `git submodule update --init --recursive` then "
+        "`uv pip install -e ./morphscore`; datasets are downloaded separately "
+        "(see morphscore/README.md)."
+    )
     MORPHSCORE_AVAILABLE = False
 
 
@@ -69,7 +74,14 @@ class MorphScoreMetrics(BaseMetrics):
         super().__init__(input_provider)
 
         if not MORPHSCORE_AVAILABLE:
-            raise ImportError("MorphScore library is required for MorphScore metrics")
+            raise ImportError(
+                "MorphScore is required for MorphScore metrics and is not "
+                "installed. It ships as a git submodule of this repository: "
+                "`git submodule update --init --recursive` then "
+                "`uv pip install -e ./morphscore`. The evaluation datasets are "
+                "downloaded separately; see morphscore/README.md. Drop "
+                "--morphscore to run without it."
+            )
 
         # Validate that input provider supports tokenizer access
         if not isinstance(input_provider, RawTokenizationProvider):
@@ -183,15 +195,22 @@ class MorphScoreMetrics(BaseMetrics):
                 morph_results = morph_score.eval(underlying_tokenizer)
                 
                 # Process results
+                # None, not 0.0. A tokenizer evaluated on zero languages has no
+                # morphological score; publishing 0.0 recorded it as scoring the
+                # worst possible value on every axis, and the only tell was
+                # languages_evaluated: 0 sitting beside four zeros that read as
+                # measurements. This fires whenever the MorphScore data
+                # directory is missing or holds no CSV for any requested
+                # language, which exits 0 and otherwise looks like a normal run.
                 tokenizer_results = {
                     'per_language': {},
                     'summary': {
                         'languages_evaluated': 0,
                         'total_samples': 0,
-                        'avg_morphscore_recall': 0.0,
-                        'avg_morphscore_precision': 0.0,
-                        'avg_micro_f1': 0.0,
-                        'avg_macro_f1': 0.0
+                        'avg_morphscore_recall': None,
+                        'avg_morphscore_precision': None,
+                        'avg_micro_f1': None,
+                        'avg_macro_f1': None,
                     }
                 }
                 

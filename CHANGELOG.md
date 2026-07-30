@@ -96,6 +96,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Directory input globs are sorted. They feed a `--samples-per-lang`
   truncation, so filesystem order decided which texts were analyzed.
 - `scipy.stats` is imported explicitly in `metrics/base.py`.
+- MorphScore reports `null` rather than `0.0` for a tokenizer it evaluated on
+  zero languages, which happens whenever the data directory is missing or holds
+  no CSV for any requested language. The run exits 0 and otherwise looks
+  normal, so four zeros beside `languages_evaluated: 0` read as a tokenizer
+  scoring worst on every axis.
+- MorphScore's missing-library errors name the install steps (submodule init,
+  editable install, separate dataset download) instead of only the package.
 - `indentation_consistency` counts only whitespace-only tokens as indentation.
   It previously counted every token overlapping the leading-whitespace range,
   which pulled in the first code token whenever that token also covered the last
