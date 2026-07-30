@@ -21,9 +21,10 @@ import re
 import sys
 import unicodedata
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from ..constants import (
+    GENERIC_SPECIAL_TOKENS,
     MAX_EXAMPLE_DISPLAY_COUNT,
     SANITY_BYTE_COVERAGE_REQUIRED,
     SANITY_CROSS_BOUNDARY_PROBE,
@@ -50,6 +51,7 @@ from ..core.tokenizer_wrapper import (
     SentencePieceTokenizer,
     TokenizerWrapper,
     UniMixLMTokenizer,
+    resolve_special_token_strings,
 )
 from ..metrics.base import BaseMetrics
 from ..metrics.basic import BasicTokenizationMetrics
@@ -108,16 +110,26 @@ def severity_to_exit_code(overall: str) -> int:
 # reimplemented here per decision 3, no metrics/ edits).
 # ---------------------------------------------------------------------------
 
-def is_special_token(raw: str) -> bool:
-    return bool(BaseMetrics._SPECIAL_TOKEN.match(raw))
+def is_special_token(raw: str,
+                     special_tokens: Optional[Set[str]] = None) -> bool:
+    """Is *raw* one of the tokens the tokenizer declares special?
+
+    *special_tokens* comes from ``resolve_special_token_strings``;
+    ``TokenizerSanityChecker`` resolves it once and passes it in. ``None`` falls
+    back to GENERIC_SPECIAL_TOKENS, matching ``BaseMetrics._process_token``.
+    """
+    if special_tokens is None:
+        special_tokens = GENERIC_SPECIAL_TOKENS
+    return raw in special_tokens
 
 
-def clean_token(raw: str, char_decode_table: Dict[str, str]) -> Optional[str]:
+def clean_token(raw: str, char_decode_table: Dict[str, str],
+                special_tokens: Optional[Set[str]] = None) -> Optional[str]:
     """Strip subword markers; return ``None`` for special tokens.
 
     Mirrors ``BaseMetrics._process_token(preserve_space=False)``.
     """
-    if is_special_token(raw):
+    if is_special_token(raw, special_tokens):
         return None
     table = {**BaseMetrics._DEFAULT_CHAR_DECODE, **(char_decode_table or {})}
     decoded = "".join(table.get(ch, ch) for ch in raw)
@@ -295,6 +307,10 @@ class TokenizerSanityChecker:
         self.vocab = self.wrapper.get_vocab() or {}
         self._id_to_tok = {v: k for k, v in self.vocab.items()}
         self.vocab_size = self.wrapper.get_vocab_size()
+        # Resolved once here so the fallback warning fires once per tokenizer
+        # rather than once per vocabulary entry: the checks below call
+        # clean_token over the whole vocab four times.
+        self.special_strings = resolve_special_token_strings(self.wrapper)
         underlying = self.wrapper.get_underlying_tokenizer()
         try:
             self.char_decode = (
@@ -320,7 +336,8 @@ class TokenizerSanityChecker:
         return self.wrapper.decode(ids, skip_special_tokens=True)
 
     def _token_bytes(self, raw: str) -> Optional[bytes]:
-        return _token_string_to_bytes(raw, self.byte_enc["unicode_to_byte"])
+        return _token_string_to_bytes(raw, self.byte_enc["unicode_to_byte"],
+                                      self.special_strings)
 
     # -- C16 helper ------------------------------------------------------
 
@@ -504,7 +521,7 @@ class TokenizerSanityChecker:
         leading = 0
         considered = 0
         for raw in self.vocab:
-            cleaned = clean_token(str(raw), self.char_decode)
+            cleaned = clean_token(str(raw), self.char_decode, self.special_strings)
             if not cleaned:
                 continue
             considered += 1
@@ -689,7 +706,7 @@ class TokenizerSanityChecker:
         ws_any = 0
         considered = 0
         for raw in self.vocab:
-            cleaned = clean_token(str(raw), self.char_decode)
+            cleaned = clean_token(str(raw), self.char_decode, self.special_strings)
             if cleaned is None:
                 continue
             considered += 1
@@ -747,7 +764,7 @@ class TokenizerSanityChecker:
         max_run = 0
         considered = 0
         for raw in self.vocab:
-            cleaned = clean_token(str(raw), self.char_decode)
+            cleaned = clean_token(str(raw), self.char_decode, self.special_strings)
             if cleaned is None or cleaned == "":
                 continue
             considered += 1
@@ -1100,7 +1117,7 @@ class TokenizerSanityChecker:
         can_decode = self.wrapper.can_decode()
         outliers = []
         for raw in self.vocab:
-            cleaned = clean_token(str(raw), self.char_decode)
+            cleaned = clean_token(str(raw), self.char_decode, self.special_strings)
             if cleaned and len(cleaned) > SANITY_MAX_REASONABLE_TOKEN_CHARS:
                 # Store the human-readable decoded form (the byte-level surface
                 # is unreadable mojibake for non-ASCII tokens); fall back to the
@@ -1194,7 +1211,7 @@ class TokenizerSanityChecker:
         special_ids = self.wrapper.get_special_token_ids()
         for tok_str, tid in self.vocab.items():
             tok_str = str(tok_str)
-            if tid in special_ids or is_special_token(tok_str):
+            if tid in special_ids or is_special_token(tok_str, self.special_strings):
                 continue
             tb = self._token_bytes(tok_str)
             if tb is None or not _is_valid_complete_utf8(tb):

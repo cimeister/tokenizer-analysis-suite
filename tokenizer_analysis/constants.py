@@ -102,6 +102,31 @@ PUNCTUATION = '.,!?;:"()[]{}'
 UNK_CANDIDATES = ['<unk>', '[UNK]', '<UNK>', '<|unk|>', '\u2047']
 
 
+# --- Special tokens ---
+
+# Last-resort special-token set, used only when a tokenizer cannot report its own
+# declared special tokens (TokenizerWrapper.get_special_token_strings() returns
+# None); the caller warns, naming the tokenizer, before using it.
+#
+# A token treated as special is deleted from reconstructed text and excluded from
+# the UTF-8 content-token denominator, so this decision has to come from the
+# tokenizer's metadata. It used to come from the surface pattern
+# ^(<\||\[).*(\|>|\])$, which was wrong in both directions. It matched ordinary
+# content tokens: 2 vocabulary entries of tokenizers/bpe.json (one of them
+# '[...]'), 2 of apertus ('[]' and '[][]') and 5 of llama3. It matched neither
+# '<s>' nor '</s>', so the Mistral/Llama BOS and EOS were treated as content
+# although tokenizers/bpe.json and apertus both declare them special.
+#
+# The entries are the spellings used by the tokenizer families this package is run
+# against: SentencePiece / Llama / Mistral, GPT-2, and BERT / WordPiece. It is a
+# guess, not a declaration: it cannot contain tokenizer-specific forms such as
+# llama3's '<|reserved_special_token_0|>'.
+GENERIC_SPECIAL_TOKENS = frozenset({
+    '<s>', '</s>', '<unk>', '<pad>', '<mask>', '<bos>', '<eos>',
+    '<|endoftext|>', '[CLS]', '[SEP]', '[PAD]', '[UNK]', '[MASK]',
+})
+
+
 # --- Tokenizer Sanity Check ---
 # Pass/warn/fail thresholds for the single-tokenizer sanity-check diagnostic
 # (tokenizer_analysis/diagnostics/sanity_check.py). Every value here is echoed

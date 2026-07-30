@@ -10,13 +10,14 @@ the static methods on `UTF8IntegrityMetrics`. We do not duplicate that logic
 here; we only iterate over a single document's tokens and aggregate per-doc.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from .config import (
     DEFAULT_WORD_MEASUREMENT_CONFIG,
     TextMeasurementConfig,
     TextMeasurer,
 )
+from .core.tokenizer_wrapper import resolve_special_token_strings
 from .metrics.utf8_integrity import (
     UTF8IntegrityMetrics,
     _GPT2_DETECTION_THRESHOLD,
@@ -127,12 +128,19 @@ def per_example_utf8_integrity(
     tokenizer,
     text: str,
     gpt2_unicode_to_byte: Optional[Dict[str, int]] = None,
+    special_tokens: Optional[Set[str]] = None,
 ) -> Dict[str, Any]:
     """UTF-8 boundary integrity per single example.
 
     Per-doc version of UTF8IntegrityMetrics.compute(). Uses the same
     `_token_string_to_bytes` / `_is_valid_complete_utf8` /
     `_crosses_character_boundary` helpers as the aggregate pipeline.
+
+    `special_tokens` is the set the tokenizer declares special; those tokens are
+    left out of the content-token denominator. Like `gpt2_unicode_to_byte` it is
+    resolved per call when omitted, so callers iterating many texts for one
+    tokenizer should call `resolve_special_token_strings` once and pass the
+    result in.
 
     Returns:
     - n_content_tokens: tokens excluding specials / placeholders
@@ -147,6 +155,8 @@ def per_example_utf8_integrity(
     """
     if gpt2_unicode_to_byte is None:
         gpt2_unicode_to_byte = maybe_detect_gpt2(tokenizer)
+    if special_tokens is None:
+        special_tokens = resolve_special_token_strings(tokenizer)
 
     ids = _encode_to_ids(tokenizer, text)
     token_strs = _ids_to_token_strings(tokenizer, ids)
@@ -168,7 +178,9 @@ def per_example_utf8_integrity(
         ):
             n_byte_fallback += 1
 
-        b = UTF8IntegrityMetrics._token_string_to_bytes(token_str, gpt2_unicode_to_byte)
+        b = UTF8IntegrityMetrics._token_string_to_bytes(
+            token_str, gpt2_unicode_to_byte, special_tokens
+        )
         if b is None:
             continue  # specials / placeholders excluded from the denominator
         n_total += 1
@@ -199,16 +211,20 @@ def per_example_all(
     text: str,
     measurer: Optional[TextMeasurer] = None,
     gpt2_unicode_to_byte: Optional[Dict[str, int]] = None,
+    special_tokens: Optional[Set[str]] = None,
 ) -> Dict[str, Any]:
     """Convenience wrapper: returns the union of `per_example_basic` and
     `per_example_utf8_integrity` for one (tokenizer, text) pair.
 
     GPT-2 detection is cached in the optional `gpt2_unicode_to_byte` argument —
     callers iterating many texts for the same tokenizer should detect once and
-    pass it in to avoid re-scanning the vocab per call.
+    pass it in to avoid re-scanning the vocab per call. `special_tokens` works
+    the same way; see `per_example_utf8_integrity`.
     """
     out = per_example_basic(tokenizer, text, measurer=measurer)
-    out.update(per_example_utf8_integrity(tokenizer, text, gpt2_unicode_to_byte))
+    out.update(per_example_utf8_integrity(
+        tokenizer, text, gpt2_unicode_to_byte, special_tokens,
+    ))
     return out
 
 
@@ -243,10 +259,12 @@ class _StubInputProvider:
 # use on the per-text path, which is also cheap).
 #
 # NOT THREAD-SAFE: ``compute_per_text`` snapshots and restores
-# ``self._char_decode_table`` (a shared mutable attribute) around its body.
+# ``self._char_decode_table`` and ``self._special_tokens`` (shared mutable
+# attributes) around its body.
 # Two threads calling ``per_example_*_alignment`` concurrently on the same
-# singleton can race and observe each other's char-decode table during the
-# critical section. For multi-threaded use, either (a) instantiate a fresh
+# singleton can race and observe each other's char-decode table or
+# special-token set during the critical section. For multi-threaded use,
+# either (a) instantiate a fresh
 # ``DigitBoundaryMetrics`` / ``ASTBoundaryMetrics`` per thread (cheap), or
 # (b) guard the call site with a ``threading.Lock``. Single-threaded use
 # (the default for our extraction scripts) is unaffected.

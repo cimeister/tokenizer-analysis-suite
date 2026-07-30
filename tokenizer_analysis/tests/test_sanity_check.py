@@ -163,6 +163,12 @@ class StubWrapper(TokenizerWrapper):
         self._pretok_fn = pretok_fn
 
     def get_name(self): return "stub"
+    def get_special_token_strings(self):
+        """The stub is built from a plain vocab dict with no special-token
+        declaration attached, so it declares none. Returning the empty set keeps
+        every stub vocab entry a content token, which is what the checks under
+        test are meant to see."""
+        return set()
     def get_vocab_size(self): return len(self._vocab)
     def get_vocab(self): return dict(self._vocab)
     def can_encode(self): return True

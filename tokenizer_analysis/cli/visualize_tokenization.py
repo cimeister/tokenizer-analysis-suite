@@ -246,18 +246,33 @@ def _fill_offsets(
 
     Pre-tokenizers (e.g. GPT-2 ByteLevel) may consume whitespace that
     doesn't appear in any token's offset.  Gaps are assigned to the next
-    real token.  Zero-length offsets (``s == e``) are kept as-is — they
-    mark special tokens (BOS/EOS, byte-fallback, etc.).
+    real token.  Zero-length offsets (``s == e``) are kept as-is: the
+    tokenizer itself reported an empty span there (BOS/EOS and similar).
+
+    Note that this also collapses the 2nd..Nth token of a multi-byte
+    character split across byte-tokens to a zero-length span, because
+    those tokens all carry the same source offset.  Callers must not read
+    a zero-length span in the *output* as evidence of a special token; see
+    ``visualize_tokens``.
     """
     filled: list[tuple[int, int]] = []
     prev_end = 0
     for s, e in offsets:
         if s == e:
-            # Zero-length span: special/synthetic token — keep unchanged
+            # Zero-length span reported by the tokenizer: keep unchanged.
             filled.append((s, e))
             continue
-        # Clamp start to avoid overlap; extend back to fill any gap
-        real_start = max(prev_end, 0) if prev_end > s else (prev_end if prev_end < s else s)
+        # Overlap (prev_end > s), gap (prev_end < s) and exact fit
+        # (prev_end == s) all resolve to the same start: prev_end. This line
+        # used to be the three-branch ternary
+        #   max(prev_end, 0) if prev_end > s else (prev_end if prev_end < s else s)
+        # which read as if it distinguished the three, but prev_end is never
+        # negative (it starts at 0 and is only ever assigned an offset end), so
+        # max(prev_end, 0) == prev_end and the third branch is reached only when
+        # s == prev_end. Enumerated over all prev_end, s in 0..5: no case differs
+        # from prev_end. Concluded it was an elaborate way to write prev_end, so
+        # it is now written as prev_end.
+        real_start = prev_end
         filled.append((real_start, e))
         prev_end = e
     return filled
@@ -390,12 +405,39 @@ def visualize_tokens(
 
         ws_only = 0          # tokens whose span is pure non-newline whitespace
         newline_toks = 0      # tokens whose span contains at least one \n
-        special_toks = 0      # zero-length spans (BOS/EOS etc.)
         newline_indent_toks = 0  # tokens containing \n followed by spaces
+
+        # A zero-length span in the *filled* offsets is not evidence of a
+        # special token. _fill_offsets clamps the 2nd..Nth byte-token of a
+        # split multi-byte character to zero length, because every byte-token
+        # of that character carries the same source offset. Measured before
+        # this change: '相対性理論\n' through a 270-token byte-level BPE with a
+        # full byte alphabet reported 'Special: 10' for a text with zero
+        # special tokens, while the next output line reported the same 10
+        # tokens as '10 hidden token(s)'.
+        #
+        # Two signals identify a real special token, and both are needed:
+        #   - the id is declared special by the tokenizer (HuggingFaceTokenizer
+        #     reads all_special_ids / added_tokens);
+        #   - the *raw* offset is already zero-length, i.e. the tokenizer
+        #     itself reported an empty source span. SentencePieceTokenizer
+        #     does not declare special ids and gives BOS/EOS a (0, 0) offset,
+        #     so dropping this signal would undercount there.
+        # A continuation byte-token has neither: its raw offset is the real
+        # non-empty span of the character it belongs to. Continuations are
+        # reported by the sub-character split summary below.
+        special_ids = wrapper.get_special_token_ids()
+        special_toks = sum(
+            1 for tid, (raw_s, raw_e) in zip(ids, raw_offsets)
+            if tid in special_ids or raw_s == raw_e
+        )
 
         for sp in spans:
             if not sp:
-                special_toks += 1
+                # Zero-length span: either a declared special token (already
+                # counted above) or a sub-character continuation. Neither is
+                # whitespace, so it contributes to none of these counters.
+                continue
             elif "\n" in sp:
                 newline_toks += 1
                 # Check for merged newline+indent pattern
@@ -455,7 +497,7 @@ def visualize_tokens(
         if newline_indent_toks:
             ws_summary += f" ({newline_indent_toks} merged with newline)"
         if special_toks:
-            ws_summary += f"  |  Special: {len([sp for sp in spans if not sp])}"
+            ws_summary += f"  |  Special: {special_toks}"
 
         if use_color:
             lines.append(f"{_DIM}{ws_summary}{_RESET}")
@@ -469,7 +511,7 @@ def visualize_tokens(
             split_note = (
                 f"  Sub-character splits: {split_chars} char(s) split "
                 f"across multiple byte-tokens ({hidden_tokens} hidden "
-                f"token(s) — red background in colour mode)"
+                f"token(s), red background in colour mode)"
             )
             if use_color:
                 lines.append(f"{_DIM}{split_note}{_RESET}")
@@ -585,6 +627,23 @@ def run_from_args(args: argparse.Namespace) -> None:
             wrappers.append((name, wrapper))
         except Exception as e:
             print(f"\nSkipping {name}: {e}", file=sys.stderr)
+
+    # Report the load count on every run. Before this, a run in which every
+    # tokenizer failed to load printed the source text, no tokenization, and
+    # exited 0, so a wrong config path looked like a successful run with
+    # nothing to show. The count goes to stderr because stdout is the
+    # documented output stream ('--no-color > out.txt').
+    print(
+        f"Loaded {len(wrappers)} of {len(names)} requested tokenizer(s).",
+        file=sys.stderr,
+    )
+    if not wrappers:
+        print(
+            "Error: no requested tokenizer could be loaded; nothing to "
+            "visualize. See the skip reasons above.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     # ── Show source texts once for reference ─────────────────────────
     for label, text in samples:

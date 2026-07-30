@@ -446,13 +446,19 @@ def plot_utf8_integrity(results: Dict[str, Any], save_path: str, tokenizer_names
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
 
+    # Colour is keyed to the tokenizer, not to its position in a panel's
+    # filtered list. Slicing colors[:len(filtered)] per panel meant a tokenizer
+    # missing from one panel shifted every colour in the other: measured with
+    # tokenizer A absent from the integrity panel, B was #EE7733 on the left and
+    # #0077BB on the right of the same figure.
     colors = get_colors(len(labels))
+    color_by_tokenizer = dict(zip(labels, colors))
 
     # Left panel: Token Boundary Integrity Rate
     valid_integrity = [(l, v) for l, v in zip(labels, integrity_values) if v is not None]
     if valid_integrity:
         vi_labels, vi_vals = zip(*valid_integrity)
-        vi_colors = colors[:len(vi_labels)]
+        vi_colors = [color_by_tokenizer[l] for l in vi_labels]
         ax1.bar(vi_labels, vi_vals, color=vi_colors, alpha=0.8)
         ax1.set_ylabel(get_ylabel('utf8_token_integrity'))
         ax1.set_title(f'Token UTF-8 Completeness Rate{_arrow_suffix("utf8_token_integrity")}')
@@ -463,7 +469,7 @@ def plot_utf8_integrity(results: Dict[str, Any], save_path: str, tokenizer_names
     valid_splits = [(l, v) for l, v in zip(labels, split_values) if v is not None]
     if valid_splits:
         vs_labels, vs_vals = zip(*valid_splits)
-        vs_colors = colors[:len(vs_labels)]
+        vs_colors = [color_by_tokenizer[l] for l in vs_labels]
         ax2.bar(vs_labels, vs_vals, color=vs_colors, alpha=0.8)
         ax2.set_ylabel(get_ylabel('utf8_char_split'))
         ax2.set_title(f'Character Splits per 1k Tokens{_arrow_suffix("utf8_char_split")}')

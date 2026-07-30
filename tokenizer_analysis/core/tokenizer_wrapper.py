@@ -6,16 +6,115 @@ making it easy for users to integrate custom tokenizers into the framework.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Union, Any, Tuple
+from typing import Dict, List, Optional, Set, Union, Any, Tuple
 import json
 import logging
 import os
 import glob
 import warnings
 
-from ..constants import UNK_CANDIDATES
+from ..constants import GENERIC_SPECIAL_TOKENS, UNK_CANDIDATES
 
 logger = logging.getLogger(__name__)
+
+# Ids of tokenizer objects already warned about in resolve_special_token_strings.
+# This suppresses duplicate warnings only; no result is cached under an id, so a
+# recycled id can at worst drop a warning, never return another tokenizer's set.
+_WARNED_MISSING_SPECIALS: set = set()
+
+
+def _hf_added_tokens_decoder(tok) -> Optional[Dict[int, Any]]:
+    """Return ``{id: AddedToken-like}`` for the tokens added to *tok* outside its
+    learned vocabulary, or ``None`` when *tok* exposes no such metadata.
+
+    transformers tokenizers carry the ``added_tokens_decoder`` attribute; a raw
+    ``tokenizers.Tokenizer`` exposes the ``get_added_tokens_decoder()`` getter.
+    ``None`` rather than ``{}`` keeps "this tokenizer added nothing" distinct from
+    "this object cannot be asked", which is the difference between reporting an
+    empty special-token set and falling back to GENERIC_SPECIAL_TOKENS.
+    """
+    dec = getattr(tok, 'added_tokens_decoder', None)
+    if dec:
+        return dec
+    getter = getattr(tok, 'get_added_tokens_decoder', None)
+    if callable(getter):
+        try:
+            return getter()
+        except Exception as e:
+            logger.debug("get_added_tokens_decoder failed: %s", e)
+            return None
+    return {} if dec is not None else None
+
+
+def hf_special_token_strings(tok) -> Optional[Set[str]]:
+    """Surface strings of every token *tok* declares special or added.
+
+    The string counterpart of :meth:`HuggingFaceTokenizer.get_special_token_ids`:
+    same two metadata channels (``all_special_tokens`` on transformers objects,
+    the added-tokens decoder on both), same reasoning that an added token is an
+    intentional addition rather than a learned merge. Returns ``None`` when
+    neither channel can be read, which tells the caller this object cannot report
+    its special tokens at all.
+
+    Takes a raw HuggingFace tokenizer, not a wrapper, so the per-example entry
+    points in ``tokenizer_analysis.per_example`` (which are handed the raw object)
+    can use the same metadata as the pipeline.
+    """
+    strings: Set[str] = set()
+    answered = False
+
+    specials = getattr(tok, 'all_special_tokens', None)
+    if specials is not None:
+        answered = True
+        strings.update(str(s) for s in specials if s is not None)
+
+    dec = _hf_added_tokens_decoder(tok)
+    if dec is not None:
+        answered = True
+        for added in dec.values():
+            content = getattr(added, 'content', None)
+            strings.add(str(added) if content is None else str(content))
+
+    return strings if answered else None
+
+
+def resolve_special_token_strings(tokenizer: Any) -> Set[str]:
+    """The special-token strings *tokenizer* declares, or GENERIC_SPECIAL_TOKENS.
+
+    *tokenizer* may be a :class:`TokenizerWrapper` or a raw HuggingFace tokenizer.
+    When neither can report its declared special tokens this warns once per
+    tokenizer object and returns the generic set, because that set is a guess: it
+    holds the common spellings but no tokenizer-specific form such as llama3's
+    ``<|reserved_special_token_0|>``.
+    """
+    declared: Optional[Set[str]] = None
+    getter = getattr(tokenizer, 'get_special_token_strings', None)
+    if callable(getter):
+        try:
+            declared = getter()
+        except Exception as e:
+            logger.debug("get_special_token_strings failed: %s", e)
+    else:
+        declared = hf_special_token_strings(tokenizer)
+
+    if declared is not None:
+        return set(declared)
+
+    key = id(tokenizer)
+    if key not in _WARNED_MISSING_SPECIALS:
+        _WARNED_MISSING_SPECIALS.add(key)
+        name_getter = getattr(tokenizer, 'get_name', None)
+        try:
+            name = name_getter() if callable(name_getter) else type(tokenizer).__name__
+        except Exception:
+            name = type(tokenizer).__name__
+        logger.warning(
+            "Tokenizer %s cannot report its declared special tokens; using the "
+            "%d generic ones (GENERIC_SPECIAL_TOKENS). Any special token it "
+            "spells differently will be counted as content text.",
+            name, len(GENERIC_SPECIAL_TOKENS),
+        )
+    return set(GENERIC_SPECIAL_TOKENS)
 
 
 def _setup_fast_decode(tok):
@@ -85,12 +184,30 @@ class TokenizerWrapper(ABC):
         """Raises NotImplementedError if can_pretokenize() returns False."""
         pass
     
+    @abstractmethod
+    def get_special_token_strings(self) -> Optional[Set[str]]:
+        """Surface strings of the tokens this tokenizer declares special.
+
+        Read them from the tokenizer's own metadata; never infer them from the
+        surface form. Return an empty set when the tokenizer genuinely declares
+        none, and ``None`` only when it cannot be asked. ``None`` makes callers
+        warn, naming the tokenizer, and fall back to
+        :data:`~tokenizer_analysis.constants.GENERIC_SPECIAL_TOKENS`.
+
+        Abstract rather than defaulting to the empty set because the answer
+        decides which vocabulary entries are deleted from reconstructed text and
+        dropped from the UTF-8 content-token denominator. A wrapper that silently
+        inherited "declares none" would publish content-token counts that include
+        its BOS and EOS.
+        """
+        pass
+
     @classmethod
     @abstractmethod
     def from_config(cls, name: str, config: Dict[str, Any]) -> 'TokenizerWrapper':
         """Create tokenizer wrapper from config."""
         pass
-    
+
     def pretokenize_with_spans(
         self, text: str
     ) -> Optional[List[Tuple[str, Tuple[int, int]]]]:
@@ -356,16 +473,18 @@ class HuggingFaceTokenizer(TokenizerWrapper):
     def _added_tokens_decoder(self):
         """Return {id: AddedToken-like} for declared added/special tokens, for either a
         transformers tokenizer or a raw tokenizers.Tokenizer; {} if unavailable."""
-        tok = self._tokenizer
-        dec = getattr(tok, 'added_tokens_decoder', None)
-        if dec:
-            return dec
-        if hasattr(tok, 'get_added_tokens_decoder'):
-            try:
-                return tok.get_added_tokens_decoder()
-            except Exception:
-                return {}
-        return {}
+        return _hf_added_tokens_decoder(self._tokenizer) or {}
+
+    def get_special_token_strings(self) -> Optional[Set[str]]:
+        """Surface strings for the same tokens get_special_token_ids reports: the
+        declared special tokens plus everything added outside the learned vocabulary.
+
+        Both come from the tokenizer's own metadata. Measured on the bundled
+        tokenizers/bpe.json this returns {'<s>', '</s>', '<pad>', '<unk>'}, on
+        apertus 1000 strings and on llama3 256; the surface pattern this replaced
+        matched none of bpe.json's four.
+        """
+        return hf_special_token_strings(self._tokenizer)
 
     def get_special_token_ids(self) -> set:
         """IDs of all tokens ADDED outside the learned vocabulary -- declared special tokens
@@ -414,6 +533,10 @@ class UniMixLMTokenizer(HuggingFaceTokenizer):
     Extends :class:`HuggingFaceTokenizer` with language-specific (``langspec``)
     encoding that picks the best per-language tokenizer by log-probability, and
     pre-tokenization via ``base_tokenizer``.
+
+    ``get_special_token_strings`` is inherited unchanged: ``__init__`` asserts
+    that every langspec per-language tokenizer has the same vocabulary order as
+    the base tokenizer, so the base tokenizer's declaration describes all of them.
     """
 
     def __init__(self, name: str, tokenizer, config: Dict[str, Any]):
@@ -701,6 +824,52 @@ class SentencePieceTokenizer(TokenizerWrapper):
                 result.append(f"<UNK_{tid}>")
         return result
 
+    def get_special_token_strings(self) -> Optional[Set[str]]:
+        """The configured bos/eos/unk/pad pieces, plus every piece SentencePiece
+        itself types as control or unknown.
+
+        The piece type is the model's own metadata, so user-defined control pieces
+        (``<|im_start|>`` and the like, added at training time with
+        ``--control_symbols``) are covered without matching on surface form.
+
+        Byte-fallback pieces (``<0xNN>``) are deliberately left out although they
+        look like markup: each stands for one content byte, and the UTF-8 metrics
+        decode them to that byte. SentencePiece types them BYTE, not CONTROL, so
+        the scan below already excludes them; likewise UNUSED pieces, which are
+        pruned merges rather than special tokens.
+        """
+        specials: Set[str] = set()
+
+        for id_getter in ('bos_id', 'eos_id', 'unk_id', 'pad_id'):
+            try:
+                piece_id = getattr(self._sp, id_getter)()
+                if piece_id is not None and piece_id >= 0:
+                    specials.add(self._sp.id_to_piece(piece_id))
+            except Exception as e:
+                logger.debug("SentencePiece %s() failed for %s: %s",
+                             id_getter, self._name, e)
+
+        # Older sentencepiece bindings name these IsControl/IsUnknown, newer ones
+        # also expose the snake_case spelling.
+        is_control = (getattr(self._sp, 'IsControl', None)
+                      or getattr(self._sp, 'is_control', None))
+        is_unknown = (getattr(self._sp, 'IsUnknown', None)
+                      or getattr(self._sp, 'is_unknown', None))
+        if callable(is_control) and callable(is_unknown):
+            try:
+                for piece_id in range(self._sp.get_piece_size()):
+                    if is_control(piece_id) or is_unknown(piece_id):
+                        specials.add(self._sp.id_to_piece(piece_id))
+            except Exception as e:
+                logger.debug("SentencePiece piece-type scan failed for %s: %s",
+                             self._name, e)
+        else:
+            logger.debug(
+                "SentencePiece build for %s exposes no piece-type predicate; "
+                "special tokens are the bos/eos/unk/pad pieces only.", self._name,
+            )
+        return specials
+
     def get_unk_token_id(self) -> Optional[int]:
         """Get the UNK token ID from SentencePiece tokenizer."""
         # SentencePiece exposes unk_id(); returns -1 if undefined
@@ -868,6 +1037,15 @@ class CustomBPETokenizer(TokenizerWrapper):
             raise NotImplementedError(f"Tokenizer {self._name} does not support pretokenization")
         return [token for token, _ in self._tokenizer.pre_tokenizer.pre_tokenize_str(text)]
 
+    def get_special_token_strings(self) -> Optional[Set[str]]:
+        """Added-token surfaces from the underlying ``tokenizers.Tokenizer``.
+
+        A vocab.json + merges.txt BPE has no special tokens of its own; any it
+        reports were attached to the loaded tokenizer object, and that object's
+        added-tokens metadata is the only place they are declared.
+        """
+        return hf_special_token_strings(self._tokenizer)
+
     def get_unk_token_id(self) -> Optional[int]:
         """Get the UNK token ID from custom BPE tokenizer."""
         try:
@@ -931,7 +1109,17 @@ class PreTokenizedDataTokenizer(TokenizerWrapper):
     
     def pretokenize(self, text: str) -> List[str]:
         raise NotImplementedError("PreTokenizedDataTokenizer cannot pretokenize text")
-    
+
+    def get_special_token_strings(self) -> Optional[Set[str]]:
+        """``None``: this wrapper holds a vocab size and an optional vocab dict
+        taken from the config, and the config declares no special tokens.
+
+        An empty set would assert that the pre-tokenized corpus contains none,
+        which nothing here establishes. ``None`` makes the caller warn, naming
+        this tokenizer, and use GENERIC_SPECIAL_TOKENS instead.
+        """
+        return None
+
     @classmethod
     def from_config(cls, name: str, config: Dict[str, Any]) -> 'PreTokenizedDataTokenizer':
         """Create pre-tokenized data tokenizer wrapper from config."""
@@ -1078,6 +1266,16 @@ class _ScriptTokTokenizer(TokenizerWrapper):
         # (array.array); decode each chunk back to its rendered substring.
         return [self._pretokenizer.decode(chunk)
                 for chunk in self._pretokenizer.pretokenize(text)]
+
+    def get_special_token_strings(self) -> Optional[Set[str]]:
+        """Empty: the ``script_bpe`` back ends declare no special tokens.
+
+        Both reserve id 0 for padding, but the reserved id is not a key of
+        ``backend.tokens``, so it has no token string and never appears in the
+        vocabulary this wrapper exposes. Every string :meth:`get_vocab` returns is
+        a rendered token (see the class docstring), which is content.
+        """
+        return set()
 
     def get_underlying_tokenizer(self):
         # Deliberately None: these are not HuggingFace tokenizers, so MorphScore

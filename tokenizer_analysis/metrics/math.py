@@ -408,6 +408,7 @@ class DigitBoundaryMetrics(BaseMetrics):
 
             tokenizer_obj = self.input_provider.get_tokenizer(tok_name)
             self._char_decode_table = self._decode_table_for(tok_name, tokenizer_obj)
+            self._special_tokens = self._resolve_special_tokens(tokenizer_obj)
             lang_groups = TokenizedDataProcessor.group_by_language(
                 tokenized_data[tok_name]
             )
@@ -499,6 +500,7 @@ class DigitBoundaryMetrics(BaseMetrics):
                         entropy_acc[tok_name][lang][bucket].append(pattern)
 
         self._char_decode_table = None
+        self._special_tokens = None
 
         # ---- operator isolation: prose / code / math, reported separately ----
         domain_accs = {
@@ -720,6 +722,7 @@ class DigitBoundaryMetrics(BaseMetrics):
 
             tokenizer_obj = self.input_provider.get_tokenizer(tok_name)
             self._char_decode_table = self._decode_table_for(tok_name, tokenizer_obj)
+            self._special_tokens = self._resolve_special_tokens(tokenizer_obj)
             lang_groups = TokenizedDataProcessor.group_by_language(
                 tokenized_data[tok_name]
             )
@@ -820,6 +823,7 @@ class DigitBoundaryMetrics(BaseMetrics):
             )
 
         self._char_decode_table = None
+        self._special_tokens = None
         return acc
 
     @staticmethod
@@ -1510,8 +1514,8 @@ class DigitBoundaryMetrics(BaseMetrics):
         Mirrors the per-text body inside ``compute()`` but does not pool across
         a corpus. Used by per-example correlation analysis. The standard
         ``compute()`` workflow is unaffected; this method snapshots and
-        restores ``self._char_decode_table`` so calling it does not mutate
-        aggregator state.
+        restores ``self._char_decode_table`` and ``self._special_tokens`` so
+        calling it does not mutate aggregator state.
 
         Returns a dict with keys: ``n_digit_spans``, ``mean_digit_f1``,
         ``mean_fertility_per_digit``, ``single_token_number_rate``,
@@ -1541,12 +1545,14 @@ class DigitBoundaryMetrics(BaseMetrics):
 
         # Snapshot + restore aggregator state so compute() callers are unaffected.
         saved_table = getattr(self, "_char_decode_table", None)
+        saved_specials = getattr(self, "_special_tokens", None)
         try:
             self._char_decode_table = (
                 char_decode_table
                 if char_decode_table is not None
                 else self._build_char_decode_table(tokenizer_obj)
             )
+            self._special_tokens = self._resolve_special_tokens(tokenizer_obj)
 
             # ---- Encode and build char→token map (mirrors compute() body) ----
             try:
@@ -1687,3 +1693,4 @@ class DigitBoundaryMetrics(BaseMetrics):
             }
         finally:
             self._char_decode_table = saved_table
+            self._special_tokens = saved_specials

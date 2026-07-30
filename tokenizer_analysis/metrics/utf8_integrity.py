@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import logging
 
 from .base import BaseMetrics, TokenizedDataProcessor
+from ..constants import GENERIC_SPECIAL_TOKENS
 from ..core.input_types import TokenizedData
 from ..core.input_providers import InputProvider
 
@@ -188,6 +189,7 @@ class UTF8IntegrityMetrics(BaseMetrics):
     def _token_string_to_bytes(
         token_str: str,
         unicode_to_byte: Optional[Dict[str, int]] = None,
+        special_tokens: Optional[Set[str]] = None,
     ) -> Optional[bytes]:
         """Convert a vocabulary token string to the raw bytes it represents.
 
@@ -195,10 +197,22 @@ class UTF8IntegrityMetrics(BaseMetrics):
         character is mapped through the table to recover the original byte.
         Otherwise, subword markers are stripped and the result is UTF-8 encoded.
 
+        *special_tokens* is the set the owning tokenizer declares special, as
+        returned by ``TokenizerWrapper.get_special_token_strings``. ``None`` means
+        no tokenizer was consulted, and GENERIC_SPECIAL_TOKENS is used.
+
         Returns ``None`` for special tokens and placeholder strings.
         """
-        # Special tokens — always skip regardless of encoding style
-        if BaseMetrics._SPECIAL_TOKEN.match(token_str):
+        # Special tokens are skipped whatever the encoding style, because they
+        # stand for no source bytes. Membership in the declared set, not the
+        # surface pattern ^(<\||\[).*(\|>|\])$ this replaced: that pattern kept
+        # '<s>' and '</s>' in the content-token denominator of every completeness
+        # and split rate (both are declared special by tokenizers/bpe.json and by
+        # apertus) while dropping bracket-form content tokens from it, of which
+        # llama3 has 5 and o200k 6.
+        if special_tokens is None:
+            special_tokens = GENERIC_SPECIAL_TOKENS
+        if token_str in special_tokens:
             return None
 
         # Placeholder tokens from failed conversions
@@ -606,6 +620,7 @@ class UTF8IntegrityMetrics(BaseMetrics):
 
             tokenizer_obj = self.input_provider.get_tokenizer(tok_name)
             unicode_to_byte = self._detect_gpt2_encoding(tokenizer_obj)
+            special_tokens = self._resolve_special_tokens(tokenizer_obj)
 
             lang_groups = TokenizedDataProcessor.group_by_language(
                 tokenized_data[tok_name]
@@ -621,7 +636,7 @@ class UTF8IntegrityMetrics(BaseMetrics):
                     token_bytes_list: List[Tuple[int, bytes]] = []
                     for tok_idx, tok_str in enumerate(token_strings):
                         raw_bytes = self._token_string_to_bytes(
-                            tok_str, unicode_to_byte
+                            tok_str, unicode_to_byte, special_tokens
                         )
                         if raw_bytes is None:
                             continue

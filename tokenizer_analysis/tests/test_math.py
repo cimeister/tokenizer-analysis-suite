@@ -25,6 +25,8 @@ def _make_instance():
     inst = object.__new__(DigitBoundaryMetrics)
     inst._tokenizer_vocab_cache = {}
     inst._char_decode_table = None
+    inst._special_tokens = None
+    inst._special_token_cache = {}
     return inst
 
 
@@ -197,11 +199,27 @@ class TestBuildCharToTokenMap:
         assert mapping == [0, 0, 0, 0, 0, 1, 1, 1, 1, 1]
 
     def test_skips_special_tokens(self, inst):
+        # Skipping is driven by what the tokenizer declares, so the declaration
+        # has to be set. This test used to leave it implicit and pass on a
+        # surface pattern that matched any <|...|> or [...] token.
+        inst._special_tokens = {"<|start|>", "<|end|>"}
         text, mapping = inst._build_char_to_token_map(
             ["<|start|>", "abc", "<|end|>"]
         )
         assert text == "abc"
         assert mapping == [1, 1, 1]
+
+    def test_keeps_undeclared_bracket_tokens(self, inst):
+        """Bracket-form tokens the tokenizer does not declare are content.
+
+        '[...]' is a real token in the bundled tokenizers/bpe.json vocabulary and
+        '[]' is one in apertus and llama3. The surface pattern that used to decide
+        this deleted them from the reconstruction.
+        """
+        inst._special_tokens = {"<|start|>"}
+        text, mapping = inst._build_char_to_token_map(["a", "[...]", "[]"])
+        assert text == "a[...][]"
+        assert mapping == [0, 1, 1, 1, 1, 1, 2, 2]
 
     def test_empty_input(self, inst):
         text, mapping = inst._build_char_to_token_map([])

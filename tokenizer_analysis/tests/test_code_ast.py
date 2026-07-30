@@ -55,6 +55,8 @@ def _make_instance():
     inst._tokenizer_vocab_cache = {}
     inst._warned_tokenizers = set()
     inst._char_decode_table = None
+    inst._special_tokens = None
+    inst._special_token_cache = {}
     return inst
 
 
@@ -783,6 +785,8 @@ class TestEndToEnd:
         inst._tokenizer_vocab_cache = {}
         inst._warned_tokenizers = set()
         inst._char_decode_table = None
+        inst._special_tokens = None
+        inst._special_token_cache = {}
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -820,6 +824,8 @@ class TestEndToEnd:
         inst._tokenizer_vocab_cache = {}
         inst._warned_tokenizers = set()
         inst._char_decode_table = None
+        inst._special_tokens = None
+        inst._special_token_cache = {}
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -855,6 +861,8 @@ class TestEndToEnd:
         inst._tokenizer_vocab_cache = {}
         inst._warned_tokenizers = set()
         inst._char_decode_table = None
+        inst._special_tokens = None
+        inst._special_token_cache = {}
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -885,6 +893,8 @@ class TestEndToEnd:
         inst._tokenizer_vocab_cache = {}
         inst._warned_tokenizers = set()
         inst._char_decode_table = None
+        inst._special_tokens = None
+        inst._special_token_cache = {}
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -924,6 +934,8 @@ class TestEndToEnd:
         inst._tokenizer_vocab_cache = {}
         inst._warned_tokenizers = set()
         inst._char_decode_table = None
+        inst._special_tokens = None
+        inst._special_token_cache = {}
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -1468,6 +1480,8 @@ class TestIdentifierFragmentationE2E:
         inst._tokenizer_vocab_cache = {}
         inst._warned_tokenizers = set()
         inst._char_decode_table = None
+        inst._special_tokens = None
+        inst._special_token_cache = {}
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -1503,6 +1517,8 @@ class TestIdentifierFragmentationE2E:
         inst._tokenizer_vocab_cache = {}
         inst._warned_tokenizers = set()
         inst._char_decode_table = None
+        inst._special_tokens = None
+        inst._special_token_cache = {}
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -1544,6 +1560,8 @@ class TestIndentationConsistencyE2E:
         inst._tokenizer_vocab_cache = {}
         inst._warned_tokenizers = set()
         inst._char_decode_table = None
+        inst._special_tokens = None
+        inst._special_token_cache = {}
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -1575,6 +1593,8 @@ class TestIndentationConsistencyE2E:
         inst._tokenizer_vocab_cache = {}
         inst._warned_tokenizers = set()
         inst._char_decode_table = None
+        inst._special_tokens = None
+        inst._special_token_cache = {}
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -1617,6 +1637,8 @@ class TestIndentationConsistencyE2E:
         inst._tokenizer_vocab_cache = {}
         inst._warned_tokenizers = set()
         inst._char_decode_table = None
+        inst._special_tokens = None
+        inst._special_token_cache = {}
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -1665,6 +1687,8 @@ class TestIndentationConsistencyE2E:
         inst._tokenizer_vocab_cache = {}
         inst._warned_tokenizers = set()
         inst._char_decode_table = None
+        inst._special_tokens = None
+        inst._special_token_cache = {}
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -1709,6 +1733,8 @@ class TestIndentationConsistencyE2E:
         inst._tokenizer_vocab_cache = {}
         inst._warned_tokenizers = set()
         inst._char_decode_table = None
+        inst._special_tokens = None
+        inst._special_token_cache = {}
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -1745,6 +1771,8 @@ class TestIndentationConsistencyE2E:
         inst._tokenizer_vocab_cache = {}
         inst._warned_tokenizers = set()
         inst._char_decode_table = None
+        inst._special_tokens = None
+        inst._special_token_cache = {}
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -1792,6 +1820,8 @@ class TestIndentationConsistencyE2E:
         inst._tokenizer_vocab_cache = {}
         inst._warned_tokenizers = set()
         inst._char_decode_table = None
+        inst._special_tokens = None
+        inst._special_token_cache = {}
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -2023,6 +2053,8 @@ class TestWhitespaceStrippingTokenizer:
         inst._tokenizer_vocab_cache = {}
         inst._warned_tokenizers = set()
         inst._char_decode_table = None
+        inst._special_tokens = None
+        inst._special_token_cache = {}
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -2111,6 +2143,8 @@ class TestIndentationConsistencyBPE:
         inst._tokenizer_vocab_cache = {}
         inst._warned_tokenizers = set()
         inst._char_decode_table = None
+        inst._special_tokens = None
+        inst._special_token_cache = {}
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -2144,6 +2178,8 @@ class TestIndentationConsistencyBPE:
         inst._tokenizer_vocab_cache = {}
         inst._warned_tokenizers = set()
         inst._char_decode_table = None
+        inst._special_tokens = None
+        inst._special_token_cache = {}
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -2187,6 +2223,8 @@ class TestIndentationConsistencyBPE:
         inst._tokenizer_vocab_cache = {}
         inst._warned_tokenizers = set()
         inst._char_decode_table = None
+        inst._special_tokens = None
+        inst._special_token_cache = {}
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -2245,6 +2283,8 @@ class TestIndentationConsistencySP:
         inst._tokenizer_vocab_cache = {}
         inst._warned_tokenizers = set()
         inst._char_decode_table = None
+        inst._special_tokens = None
+        inst._special_token_cache = {}
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}

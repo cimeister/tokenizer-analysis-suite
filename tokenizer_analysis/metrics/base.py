@@ -3,7 +3,7 @@ Base metrics class for unified TokenizedData interface - skeleton only.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any, Set, Tuple
 import re
 import numpy as np
 import scipy
@@ -13,8 +13,10 @@ import logging
 
 from ..core.input_types import TokenizedData
 from ..core.input_providers import InputProvider
+from ..core.tokenizer_wrapper import resolve_special_token_strings
 from ..constants import (
     DEFAULT_SAFE_DIVIDE_VALUE,
+    GENERIC_SPECIAL_TOKENS,
     PERCENTAGE_MULTIPLIER,
     MAX_ERROR_DISPLAY_COUNT,
 )
@@ -38,7 +40,6 @@ class BaseMetrics(ABC):
     _CONTINUATION = re.compile(r'^##')
     _END_WORD = re.compile(r'</w>$')
     _CONTINUATION_END = re.compile(r'@@$')
-    _SPECIAL_TOKEN = re.compile(r'^(<\||\[).*(\|>|\])$')
     # SentencePiece byte-fallback token form: a single token encoding one raw
     # byte as the literal 6-character string `<0xNN>` (NN = uppercase or
     # lowercase hex). Emitted by LLaMA-family / Mistral SP tokenizers with
@@ -74,7 +75,24 @@ class BaseMetrics(ABC):
         self._tokenizer_vocab_cache: Dict[int, Dict[int, str]] = {}
         self._warned_tokenizers: set = set()
         self._char_decode_table: Optional[Dict[str, str]] = None
-    
+        # Special-token strings of the tokenizer currently being processed, set
+        # by the per-tokenizer loops the same way _char_decode_table is. None
+        # means "not resolved for a specific tokenizer", and _process_token then
+        # uses GENERIC_SPECIAL_TOKENS.
+        self._special_tokens: Optional[Set[str]] = None
+        self._special_token_cache: Dict[int, Set[str]] = {}
+
+    def _resolve_special_tokens(self, tokenizer: Any) -> Set[str]:
+        """Special-token strings declared by *tokenizer*, memoized per object.
+
+        The memo is what keeps the fallback warning to one per tokenizer instead
+        of one per token: _process_token runs over every token of every document.
+        """
+        key = id(tokenizer)
+        if key not in self._special_token_cache:
+            self._special_token_cache[key] = resolve_special_token_strings(tokenizer)
+        return self._special_token_cache[key]
+
     def get_tokenized_data(self) -> Dict[str, List[TokenizedData]]:
         """Get tokenized data organized by tokenizer."""
         return self.input_provider.get_tokenized_data()
@@ -211,7 +229,20 @@ class BaseMetrics(ABC):
                 space — the ``_decode_raw_token`` path used for
                 whitespace-preserving alignment.
         """
-        if self._SPECIAL_TOKEN.match(raw_token):
+        # Membership in the tokenizer's declared set, not a surface pattern. The
+        # pattern this replaced, ^(<\||\[).*(\|>|\])$, matched ordinary content
+        # tokens and deleted them from the reconstruction: 2 vocabulary entries of
+        # tokenizers/bpe.json (one of them '[...]'), 2 of apertus ('[]' and
+        # '[][]') and 5 of llama3. Deleting '[...]' from the reconstruction of
+        # 'y = a[...]' took the delimiter start and end alignment of that snippet
+        # from 0.5 to 0.0 under tokenizers/bpe.json. The pattern also matched
+        # neither '<s>' nor '</s>', so all 4 tokens bpe.json declares special and
+        # 976 of apertus's 1000 were reconstructed as literal text.
+        # self._special_tokens is None on the paths that never resolve a
+        # tokenizer, where GENERIC_SPECIAL_TOKENS is the documented fallback.
+        specials = (GENERIC_SPECIAL_TOKENS if self._special_tokens is None
+                    else self._special_tokens)
+        if raw_token in specials:
             return None
 
         # Decode SentencePiece byte-fallback tokens (`<0xNN>` → chr(NN)) before

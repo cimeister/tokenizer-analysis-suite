@@ -823,6 +823,10 @@ class ASTBoundaryMetrics(BaseMetrics):
 
         # Pre-build character decode tables for byte-level BPE / SP tokenizers.
         decode_tables = {n: self._build_char_decode_table(t) for n, t in active_tokenizers}
+        # Pre-resolve each tokenizer's declared special tokens. _process_token
+        # deletes these from the reconstruction, so they have to be the ones this
+        # tokenizer declares rather than anything matched on surface form.
+        special_tokens = {n: self._resolve_special_tokens(t) for n, t in active_tokenizers}
 
         for code_lang, spans_list in parsed_spans.items():
             snippets = code_snippets[code_lang]
@@ -873,6 +877,7 @@ class ASTBoundaryMetrics(BaseMetrics):
                 # -- Per-tokenizer work --
                 for tok_name, tokenizer in active_tokenizers:
                     self._char_decode_table = decode_tables[tok_name]
+                    self._special_tokens = special_tokens[tok_name]
                     try:
                         token_ids, enc_offsets = tokenizer.encode_with_offsets(
                             snippet
@@ -985,6 +990,7 @@ class ASTBoundaryMetrics(BaseMetrics):
                             })
 
         self._char_decode_table = None
+        self._special_tokens = None
 
         # Log Phase 2 summary: how many AST nodes contributed per tokenizer
         for tok_name in self.tokenizer_names:
@@ -1442,8 +1448,8 @@ class ASTBoundaryMetrics(BaseMetrics):
         ``_check_boundary_alignment_fast``, ``_count_identifier_tokens_fast``,
         and ``_build_char_to_token_map`` at single-snippet granularity. The
         standard ``compute()`` workflow is unaffected: this method snapshots
-        and restores ``self._char_decode_table`` and does not touch the
-        aggregator state.
+        and restores ``self._char_decode_table`` and ``self._special_tokens``
+        and does not touch the aggregator state.
 
         Parsing goes through the same subprocess fence ``compute()`` uses. An
         earlier version parsed in-process on the theory that a single snippet
@@ -1546,12 +1552,14 @@ class ASTBoundaryMetrics(BaseMetrics):
 
         # Snapshot + restore aggregator state so compute() callers are unaffected.
         saved_table = getattr(self, "_char_decode_table", None)
+        saved_specials = getattr(self, "_special_tokens", None)
         try:
             self._char_decode_table = (
                 char_decode_table
                 if char_decode_table is not None
                 else self._build_char_decode_table(tokenizer_obj)
             )
+            self._special_tokens = self._resolve_special_tokens(tokenizer_obj)
 
             # Encode source (with offsets for the indentation path; we don't
             # use indentation here, but encode_with_offsets is the standard
@@ -1650,3 +1658,4 @@ class ASTBoundaryMetrics(BaseMetrics):
             return result
         finally:
             self._char_decode_table = saved_table
+            self._special_tokens = saved_specials
