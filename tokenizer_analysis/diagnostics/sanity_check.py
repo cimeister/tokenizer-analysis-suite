@@ -915,6 +915,7 @@ class TokenizerSanityChecker:
         nv = self.normview
         kept = 0
         total = 0
+        unverifiable = 0
         worst = []
         for p in self.probes:
             if getattr(p, "category", "") in ("control_chars",):
@@ -925,25 +926,55 @@ class TokenizerSanityChecker:
                     base = nv.normalize_fn(base)
                 except Exception:
                     base = p.text
-            try:
-                pieces = self.wrapper.pretokenize(p.text)
-            except Exception:
+            # Measure coverage with the pretokenizer's own spans over the
+            # source. Comparing surface string lengths instead counted the
+            # byte-level surface, where one CJK character becomes three
+            # characters, so the inflation absorbed real loss and the check
+            # returned a false PASS. Measured with a pretokenizer discarding
+            # every second piece: CJK reported conservation 1.000 while ASCII
+            # correctly reported 0.500.
+            spans = self.wrapper.pretokenize_with_spans(p.text)
+            if spans is None:
+                unverifiable += 1
                 continue
-            cleaned = "".join(
-                clean_token(str(x), self.char_decode) or "" for x in pieces
-            )
-            in_chars = [c for c in base if not c.isspace()]
-            out_chars = [c for c in cleaned if not c.isspace()]
-            total += len(in_chars)
-            kept += min(len(in_chars), len(out_chars))
-            if len(out_chars) < len(in_chars):
+
+            covered = set()
+            for _surface, span in spans:
+                if not span:
+                    continue
+                start, end = span
+                covered.update(range(max(0, start), min(end, len(p.text))))
+
+            in_idx = [i for i, c in enumerate(base) if not c.isspace()]
+            # base is the normalized text; spans index the raw text. They agree
+            # when the normalizer is a no-op, which is the only case where a
+            # character-level comparison is meaningful anyway.
+            src_idx = [i for i, c in enumerate(p.text) if not c.isspace()]
+            kept_here = sum(1 for i in src_idx if i in covered)
+            total += len(src_idx)
+            kept += kept_here
+            if kept_here < len(src_idx):
                 worst.append(p.text[:60])
-        frac = (kept / total) if total else 1.0
+            del in_idx
+        if total == 0:
+            # Nothing was measurable. Saying "conserved 1.0" would be a PASS
+            # asserted on no evidence, which is what this tool exists not to do.
+            return _mk(name, "behavioral", Severity.UNVERIFIABLE, None,
+                       SANITY_PRETOK_CONSERVATION_FAIL_FRAC,
+                       "pretokenizer reports no character spans, so coverage "
+                       "cannot be measured",
+                       "a silently char-dropping pretokenizer is invisible data "
+                       "loss", worst)
+
+        frac = kept / total
         sev = (Severity.FAIL if frac < SANITY_PRETOK_CONSERVATION_FAIL_FRAC
                else Severity.PASS)
+        note = f"pretokenizer conserved {frac:.6f} of non-space chars"
+        if unverifiable:
+            note += f" ({unverifiable} probe(s) reported no spans and were skipped)"
         return _mk(name, "behavioral", sev, round(frac, 6),
                    SANITY_PRETOK_CONSERVATION_FAIL_FRAC,
-                   f"pretokenizer conserved {frac:.6f} of non-space chars",
+                   note,
                    "a silently char-dropping pretokenizer is invisible data "
                    "loss", worst)
 

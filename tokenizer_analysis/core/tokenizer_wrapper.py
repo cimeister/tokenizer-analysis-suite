@@ -91,6 +91,19 @@ class TokenizerWrapper(ABC):
         """Create tokenizer wrapper from config."""
         pass
     
+    def pretokenize_with_spans(
+        self, text: str
+    ) -> Optional[List[Tuple[str, Tuple[int, int]]]]:
+        """Pretokenize and return ``[(surface, (start, end)), ...]`` over *text*.
+
+        Returns ``None`` when the backend cannot report spans. Spans are the
+        only way to ask what fraction of the source the pretokenizer kept:
+        comparing surface string lengths instead counts a byte-level surface,
+        where one CJK character becomes three characters, so the inflation hides
+        real character loss.
+        """
+        return None
+
     def can_decode(self) -> bool:
         return False
 
@@ -299,6 +312,20 @@ class HuggingFaceTokenizer(TokenizerWrapper):
         if not self.can_pretokenize():
             raise NotImplementedError(f"Tokenizer {self._name} does not support pretokenization")
         return [token for token, _ in self._tokenizer.pre_tokenizer.pre_tokenize_str(text)]
+
+    def pretokenize_with_spans(self, text: str):
+        """Surfaces with their character spans, straight from the backend.
+
+        ``pre_tokenize_str`` already returns the spans; the plain
+        ``pretokenize`` above throws them away.
+        """
+        if not self.can_pretokenize():
+            return None
+        try:
+            return list(self._tokenizer.pre_tokenizer.pre_tokenize_str(text))
+        except Exception as e:
+            logger.debug("pre_tokenize_str failed for %s: %s", self._name, e)
+            return None
 
     def get_underlying_tokenizer(self):
         """Return the underlying HuggingFace tokenizer object."""

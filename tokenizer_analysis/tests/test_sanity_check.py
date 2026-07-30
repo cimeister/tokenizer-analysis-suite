@@ -175,6 +175,27 @@ class StubWrapper(TokenizerWrapper):
         if not self._pretok_fn:
             raise NotImplementedError
         return self._pretok_fn(text)
+
+    def pretokenize_with_spans(self, text):
+        """Surfaces with their spans, located by walking them through the text.
+
+        A real pretokenizer reports spans, and C10 measures coverage with them
+        rather than by comparing surface lengths, so a stub without spans is
+        reported as unverifiable instead of exercising the check. A surface the
+        stub drops simply contributes no span, which is exactly the character
+        loss the check looks for.
+        """
+        if not self._pretok_fn:
+            return None
+        spans = []
+        pos = 0
+        for surface in self._pretok_fn(text):
+            found = text.find(surface, pos)
+            if found < 0:
+                continue
+            spans.append((surface, (found, found + len(surface))))
+            pos = found + len(surface)
+        return spans
     def convert_ids_to_tokens(self, ids):
         return [self._i2t.get(i, f"<UNK_{i}>") for i in ids]
     def encode_with_offsets(self, text):
