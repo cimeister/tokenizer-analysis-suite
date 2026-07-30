@@ -96,6 +96,17 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Directory input globs are sorted. They feed a `--samples-per-lang`
   truncation, so filesystem order decided which texts were analyzed.
 - `scipy.stats` is imported explicitly in `metrics/base.py`.
+- The two per-tokenizer caches in `metrics/base.py` keyed on `id(tokenizer)`
+  without holding a reference, and CPython recycles the id of a freed object.
+  Reachable through the public `per_example` API, whose module-level singletons
+  outlive caller-supplied tokenizers: 4 of 40 calls read another tokenizer's
+  special-token set and 20 of 40 read another's reverse vocabulary. Both now
+  store the tokenizer alongside the value and check identity on read.
+- A readable but empty `added_tokens` list was read as "this tokenizer declares
+  no special tokens", so `tokenizers/unigramlm.json` resolved to an empty set
+  although `<unk>`, `<s>`, `</s>` and `<pad>` sit at ids 0 to 3. The model's
+  unknown token is now consulted as well, and an empty result falls back to
+  `GENERIC_SPECIAL_TOKENS` with a warning.
 - MorphScore reports `null` rather than `0.0` for a tokenizer it evaluated on
   zero languages, which happens whenever the data directory is missing or holds
   no CSV for any requested language. The run exits 0 and otherwise looks
@@ -114,6 +125,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   indent space. That happens when the pre-tokenizer groups a leading space with
   the following word and a merge for the pair was learned; it depends on the
   pre-tokenizer and the merges, not on byte-level encoding as such.
+
+### Changed (Python API, breaking)
+- `TokenizerWrapper` subclasses must implement `get_special_token_strings()`.
+  It is abstract, so a custom wrapper written against 0.x fails to instantiate
+  until it is added. See MIGRATION.md.
 
 ### Removed
 - `indentation_consistency.pattern_stability_rate` and its

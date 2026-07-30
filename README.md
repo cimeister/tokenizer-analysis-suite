@@ -706,6 +706,7 @@ Subclass `TokenizerWrapper` from `tokenizer_analysis.core.tokenizer_wrapper` and
 | `encode(text: str) -> List[int]` | Encode text to token IDs. Only called when `can_encode()` is `True`. |
 | `can_pretokenize() -> bool` | Whether `pretokenize()` is available. Return `False` if not applicable. |
 | `pretokenize(text: str) -> List[str]` | Split text into subword pieces (strings). Only called when `can_pretokenize()` is `True`. |
+| `get_special_token_strings() -> Optional[Set[str]]` | Return the surface strings the tokenizer declares special, read from its own metadata. Return an empty set if it genuinely has none, or `None` if it cannot report them, in which case the library warns and falls back to `GENERIC_SPECIAL_TOKENS`. Never pattern-match on token surfaces here: the shapes overlap with ordinary content such as `[0]` and `[...]`. |
 | `from_config(cls, name, config) -> TokenizerWrapper` | Class method factory. Receives the tokenizer name and the config dict from the JSON file. |
 
 #### Optional overrides
@@ -735,6 +736,11 @@ class MyTokenizer(TokenizerWrapper):
     def encode(self, text): return self._tok.encode(text)
     def can_pretokenize(self): return False
     def pretokenize(self, text): raise NotImplementedError
+
+    def get_special_token_strings(self):
+        # Read from the tokenizer's own metadata. Return None if it cannot
+        # report them, and the library warns and uses a generic list.
+        return set(self._tok.all_special_tokens)
 
     @classmethod
     def from_config(cls, name, config):

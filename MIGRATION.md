@@ -89,6 +89,22 @@ their values are not comparable with new ones:
 
 ## Python API
 
+### `TokenizerWrapper` subclasses must implement `get_special_token_strings()`
+
+It is a new abstract method, so a custom wrapper written against 0.x fails to
+instantiate until it is added:
+
+    TypeError: Can't instantiate abstract class MyTokenizer with abstract
+    method get_special_token_strings
+
+Return the surface strings your tokenizer declares special, read from its own
+metadata. Return an empty set only if it genuinely has none, and `None` if it
+cannot report them; the library then warns and falls back to
+`GENERIC_SPECIAL_TOKENS`. Do not pattern-match on token surfaces: that is what
+the removed `_SPECIAL_TOKEN` regex did, and it deleted ordinary content tokens
+such as `[0]` and `[...]` while missing `<s>` and `</s>`.
+
+
 - `MorphologicalMetrics` and `MorphologicalDataLoader` were removed from
   `tokenizer_analysis`. Use MorphScore instead.
 - `MarkdownTableGenerator` and `results_filename` were removed from

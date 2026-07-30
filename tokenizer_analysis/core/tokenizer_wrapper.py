@@ -75,6 +75,32 @@ def hf_special_token_strings(tok) -> Optional[Set[str]]:
             content = getattr(added, 'content', None)
             strings.add(str(added) if content is None else str(content))
 
+    # Third channel: the model's own unknown token. A SentencePiece-converted
+    # vocabulary can carry <unk>, <s>, </s> and <pad> as ordinary vocabulary
+    # entries with an empty added_tokens list, and model.unk_token is then the
+    # only metadata naming any of them.
+    for owner in (getattr(tok, 'model', None), tok):
+        unk = getattr(owner, 'unk_token', None)
+        if isinstance(unk, str) and unk:
+            answered = True
+            strings.add(unk)
+            break
+
+    if not strings:
+        # A readable but empty channel is not a declaration that this tokenizer
+        # has no special tokens. The bundled tokenizers/unigramlm.json is the
+        # case: added_tokens is empty, yet <unk>, <s>, </s> and <pad> sit at ids
+        # 0 to 3. Answering "none" bypassed the generic fallback and let those
+        # four be treated as ordinary content, which is the same class of error
+        # the surface regex made. Measured before this: 20479 of 37892
+        # _process_token calls in one run ran with an empty set.
+        #
+        # Returning None instead means the caller warns and uses
+        # GENERIC_SPECIAL_TOKENS. For a tokenizer that genuinely has no special
+        # tokens that is 13 well-known strings unlikely to be content, which is
+        # the cheaper direction to be wrong in.
+        return None
+
     return strings if answered else None
 
 

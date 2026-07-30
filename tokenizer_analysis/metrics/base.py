@@ -72,7 +72,19 @@ class BaseMetrics(ABC):
         self.input_provider = input_provider
         self.tokenizer_names = input_provider.get_tokenizer_names()
         self.language_metadata = None  # Can be set by subclasses
-        self._tokenizer_vocab_cache: Dict[int, Dict[int, str]] = {}
+        # Both per-tokenizer caches below key on id(tokenizer) and store the
+        # tokenizer object alongside the value. The object reference is the
+        # point: CPython recycles the id of a freed object, so without it a
+        # long-lived metrics instance (the module-level singletons in
+        # per_example.py live for the whole process) hands one tokenizer the
+        # cached data of a different, already-collected one.
+        #
+        # Measured through the public per_example API before this: 20 of 40
+        # calls read another tokenizer's reverse vocabulary, and every
+        # Tokenizer.from_file landed on the same recycled address so only one
+        # cache entry was ever created. The metric consequence for one text was
+        # n_digit_spans 0 against 2 and mean_digit_f1 nan against 0.0.
+        self._tokenizer_vocab_cache: Dict[int, Tuple[Any, Dict[int, str]]] = {}
         self._warned_tokenizers: set = set()
         self._char_decode_table: Optional[Dict[str, str]] = None
         # Special-token strings of the tokenizer currently being processed, set
@@ -80,7 +92,7 @@ class BaseMetrics(ABC):
         # means "not resolved for a specific tokenizer", and _process_token then
         # uses GENERIC_SPECIAL_TOKENS.
         self._special_tokens: Optional[Set[str]] = None
-        self._special_token_cache: Dict[int, Set[str]] = {}
+        self._special_token_cache: Dict[int, Tuple[Any, Set[str]]] = {}
 
     def _resolve_special_tokens(self, tokenizer: Any) -> Set[str]:
         """Special-token strings declared by *tokenizer*, memoized per object.
@@ -89,9 +101,12 @@ class BaseMetrics(ABC):
         of one per token: _process_token runs over every token of every document.
         """
         key = id(tokenizer)
-        if key not in self._special_token_cache:
-            self._special_token_cache[key] = resolve_special_token_strings(tokenizer)
-        return self._special_token_cache[key]
+        cached = self._special_token_cache.get(key)
+        if cached is not None and cached[0] is tokenizer:
+            return cached[1]
+        resolved = resolve_special_token_strings(tokenizer)
+        self._special_token_cache[key] = (tokenizer, resolved)
+        return resolved
 
     def get_tokenized_data(self) -> Dict[str, List[TokenizedData]]:
         """Get tokenized data organized by tokenizer."""
@@ -176,8 +191,9 @@ class BaseMetrics(ABC):
         tokenizer_id = id(tokenizer)
 
         # Fast path: use cached vocab reverse-mapping if available
-        if tokenizer_id in self._tokenizer_vocab_cache:
-            id_to_token = self._tokenizer_vocab_cache[tokenizer_id]
+        cached = self._tokenizer_vocab_cache.get(tokenizer_id)
+        if cached is not None and cached[0] is tokenizer:
+            id_to_token = cached[1]
             return [id_to_token.get(tid, f"<UNK_{tid}>") for tid in token_ids]
 
         try:
@@ -193,11 +209,11 @@ class BaseMetrics(ABC):
             if hasattr(tokenizer, 'get_vocab'):
                 vocab = tokenizer.get_vocab()
             if vocab:
-                self._tokenizer_vocab_cache[tokenizer_id] = {
+                self._tokenizer_vocab_cache[tokenizer_id] = (tokenizer, {
                     v: (k.decode('utf-8') if isinstance(k, bytes) else str(k))
                     for k, v in vocab.items()
-                }
-                id_to_token = self._tokenizer_vocab_cache[tokenizer_id]
+                })
+                id_to_token = self._tokenizer_vocab_cache[tokenizer_id][1]
                 return [id_to_token.get(tid, f"<UNK_{tid}>") for tid in token_ids]
         except Exception as e:
             logger.debug("Vocabulary lookup fallback failed: %s", e)

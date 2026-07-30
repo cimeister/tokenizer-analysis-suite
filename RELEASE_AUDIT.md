@@ -198,6 +198,27 @@ the special-token question.
 Found by the agent implementing the special-token accessor; not fixed there
 because it is a separate metric-affecting change.
 
+### X13. `id()`-keyed caches returned another tokenizer's data: **fixed**
+`metrics/base.py`. `_special_token_cache` and the pre-existing
+`_tokenizer_vocab_cache` keyed on `id(tokenizer)` without holding a reference,
+and CPython recycles the id of a freed object. The module-level singletons in
+`per_example.py` live for the whole process while caller-supplied tokenizers do
+not, so this was reachable through the public API: measured 4 of 40 calls
+getting the wrong special-token set, and 20 of 40 the wrong reverse vocabulary,
+with only one vocab-cache entry ever created because every `Tokenizer.from_file`
+landed on the same address. Metric consequence for one text: `n_digit_spans` 0
+against 2, `mean_digit_f1` nan against 0.0. Both caches now store the tokenizer
+alongside the value and check identity on read. Re-measured: 0 of 40 wrong.
+
+### X14. An empty metadata channel was read as "declares no special tokens": **fixed**
+`core/tokenizer_wrapper.py`. `hf_special_token_strings` set `answered = True` on
+a readable-but-empty `added_tokens`, so the bundled `tokenizers/unigramlm.json`
+resolved to an empty set even though `<unk>`, `<s>`, `</s>` and `<pad>` sit at
+ids 0 to 3. That bypassed the generic fallback and let all four be treated as
+content: 20479 of 37892 `_process_token` calls in one run used an empty set. The
+model's own unknown token is now a third channel, and an empty result returns
+None so the caller warns and uses `GENERIC_SPECIAL_TOKENS`.
+
 ### X12. `SentencePieceTokenizer.get_special_token_ids()` is not overridden: **open**
 `core/tokenizer_wrapper.py`. It falls through to the base implementation, which
 returns an empty set, so no SentencePiece token is recognised as special by id.
@@ -263,7 +284,7 @@ preceding space, so it is always included. Two lines at the same depth with
 different code therefore get different patterns. A four-line snippet all
 indented identically reports 0.25 where the correct value is 1.0.
 
-### X5. `_SPECIAL_TOKEN` deletes ordinary bracket tokens: **open**
+### X5. `_SPECIAL_TOKEN` deletes ordinary bracket tokens: **fixed**
 `metrics/base.py:33`. The pattern `^(<\||\[).*(\|>|\])$` matches `[]`, `[0]`,
 `[i]` and `[...]`, not only `[CLS]`. Those tokens are dropped from the
 reconstruction and from the UTF-8 content-token denominator. The marker
