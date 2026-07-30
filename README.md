@@ -280,7 +280,7 @@ Specify source code paths for AST boundary analysis via `--code-ast-config`:
 }
 ```
 
-Supports 19 languages. Parquet files should have a `content` column; StarCoder metadata prefixes are stripped automatically. Without a config file, built-in synthetic code samples are used.
+Configured for 19 languages, of which 16 are measured (see the code metrics below). Parquet files should have a `content` column and need the `parquet` extra; without an engine installed the run fails rather than reading an empty corpus. StarCoder metadata prefixes are stripped automatically, as are a leading byte-order mark and CRLF line endings. Without a config file, built-in synthetic code samples are used and the run says so.
 
 ### Pre-tokenized Data
 
@@ -382,7 +382,7 @@ records the merge and its evidence under `metadata.merged_metrics`.
 - **Vocabulary Utilization** (`vocabulary_utilization`): Fraction of vocabulary actually used
 
 ### Information-Theoretic Metrics
-- **Renyi Entropy**: Information content at different alpha values, generalizing Shannon entropy
+- **Rényi Efficiency** (`renyi_efficiency`): `H_alpha / log2(|V|)` following Zouhar et al. 2023, with `|V|` the declared vocabulary size. The pre-1.0 normalization, which divided by the number of token types observed in the corpus, is still published under `observed_normalization`; the two rank tokenizers at Spearman 0.678, so they are not interchangeable
 - **Average Token Rank** (`avg_token_rank`): Typical position of tokens within the frequency-ordered vocabulary
 - **Bigram Entropy** (`bigram_entropy`): For each token type, looks at what tokens follow it in the corpus and measures whether the followers are evenly spread or dominated by one or two tokens. A score of 1.0 means every token's followers are perfectly balanced; a score near 0 means most tokens are almost always followed by the same thing. Can interpret this as "how easy the tokenizer makes a very simple case of language modeling." Token types that appear too rarely (fewer than 3 times by default, configurable) are ignored to avoid noisy estimates. Bigrams do not cross document boundaries. Based on the Shannon efficiency metric (η) from [Poelman et al. 2025](https://aclanthology.org/2025.emnlp-main.369/), EMNLP.
 
@@ -502,7 +502,7 @@ Counts how many multi-byte characters in the source text have their constituent 
 
 ### Code Tokenization Metrics
 
-Evaluates tokenizer handling of source code by parsing it with tree-sitter and measuring alignment between AST node boundaries and token boundaries. Tree-sitter support is installed by default. Configured for 19 languages (Python, JavaScript, Java, C, C++, Go, Rust, TypeScript, PHP, Ruby, C#, Scala, Swift, Kotlin, Lua, R, Perl, Haskell, Bash). A grammar that crashes its parser process is reported as unmeasured and named in the log, rather than scored. Configure with `--code-ast-config`; disable with `--no-code-ast`.
+Evaluates tokenizer handling of source code by parsing it with tree-sitter and measuring alignment between AST node boundaries and token boundaries. Tree-sitter support is installed by default. Configured for 19 languages, of which 16 are measured. Swift, Kotlin and Perl are excluded because the node types their grammars use for identifiers are not classified, so the identifier share of classified leaves is 0.073, 0.058 and 0.000 against 0.19 to 0.37 for the supported languages; they are skipped with a named warning rather than scored on a fraction of their code. A grammar that crashes its parser process is likewise reported as unmeasured and named in the log. Configure with `--code-ast-config`; disable with `--no-code-ast`.
 
 > **Data scope:** These metrics are **always** computed on dedicated source-code snippets (loaded via `--code-ast-config`, or small built-in synthetic samples as a fallback), the general multilingual corpus passed to the analyzer is **never** used for this metric group, regardless of flags.
 
@@ -526,7 +526,7 @@ Fraction of programmer-defined identifiers split into multiple tokens, plus aver
 
 #### Indentation Depth Proportionality Correlation (`indent_depth_corr`)
 
-Measures whether the number of whitespace tokens a tokenizer produces for leading indentation grows proportionally with nesting depth. Computes the Spearman rank correlation (ρ) between indentation depth and the count of whitespace tokens in the leading indentation of each line. Depth is the line's leading-whitespace width divided by the indent unit inferred per snippet as the GCD of its non-zero indent widths; it does not come from the parse tree. Only evaluated on whitespace-significant languages (Python and Haskell). Requires at least 3 distinct depth levels per language; languages with fewer are skipped.
+Measures whether the number of whitespace tokens a tokenizer produces for leading indentation grows monotonically with nesting depth. Computes the Spearman rank correlation (ρ) between indentation depth and the count of whitespace tokens in the leading indentation of each line. Spearman is rank-based, so ρ = 1 means the count increases monotonically with depth, not in proportion to it; the metric key says proportionality and the statistic measures monotonicity. Only tokens whose surface is entirely whitespace are counted, because a pre-tokenizer that groups a leading space with the following word can emit a token spanning both, and that token is code. Depth is the line's leading-whitespace width divided by the indent unit inferred per snippet as the GCD of its non-zero indent widths; it does not come from the parse tree. Only evaluated on whitespace-significant languages (Python and Haskell). Requires at least 3 distinct depth levels per language; languages with fewer are skipped.
 
 **Example:** A Python file has lines at depths 1, 2, 3, and 4. A proportional tokenizer encodes depth-1 indentation as 1 whitespace token, depth-2 as 2, depth-3 as 3, and depth-4 as 4, perfect rank correlation, ρ = 1.0. A tokenizer that merges all indentation into a single token regardless of depth (1, 1, 1, 1 whitespace tokens) produces ρ ≈ 0.0. A tokenizer that uses *more* tokens for shallow depths than deep ones gives ρ < 0.
 
