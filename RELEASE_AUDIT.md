@@ -28,7 +28,7 @@ no warning. Now an error naming the conflicting flags.
 five-language sample. Now an error listing `--input`, `--language-config` and
 `--use-sample-data`.
 
-### S3. A missing corpus file dropped the language: **open**
+### S3. A missing corpus file dropped the language: **fixed**
 `loaders/multilingual_data.py:81-83`. A two-language config with one
 nonexistent `data_path` exits 0, logs two warnings, and writes a
 complete-looking results file containing only the surviving language. On a
@@ -78,7 +78,7 @@ object has no attribute 'items'`, and continues with `code_texts = {}`. The
 operator-isolation code domain then has zero samples with no further signal.
 See L1 for the other half of this.
 
-### S10. Grouped plots swallow failures, individual plots do not: **open**
+### S10. Grouped plots swallow failures, individual plots do not: **partly fixed**
 `visualization/plots.py:579`. The only guarded call among roughly 15 in
 `generate_all_plots`. A malformed grouped result logs `Failed to plot <metric>
 for group type <type>` and returns normally; the same failure in any other plot
@@ -175,16 +175,32 @@ Fixed with a bounded-window re-sync. Digit spans actually measured, demo corpus
 at 200 lines per language: English 116 to 143 of 143 present, German 112 to 145,
 Spanish 89 to 126, total 358 to 456.
 
-**Still open:** entirely non-ASCII scripts barely improve, Arabic 16 of 127
-spans and Russian 26 of 143, because the reconstruction never applies the
-byte-level vocabulary's byte-to-unicode map. The source character has no literal
-counterpart in the reconstruction to re-sync on. The fix is to decode
-byte-level token strings through `_GPT2_UNICODE_TO_BYTE` during reconstruction,
-the way `utf8_integrity` already does, rather than to tune the alignment further.
-Until then the digit metrics are close to Latin-script-only, and any published
-per-language digit number for a non-Latin script is not trustworthy.
+**Superseded.** Tuning the aligner was the wrong fix. `encode_with_offsets`
+returns exact character spans and `TokenizedData.offsets` was already populated
+for the whole corpus; no metric was reading it. Every place that inferred a
+source-to-token correspondence from token surfaces now uses offsets or raises.
+See the offsets entries below.
 
-### X2. UTF-8 byte-level detection failed in the flattering direction: **fixed**
+### X10. Reconstruction guessing, four further instances: **fixed**
+A dedicated sweep found four more places inferring source positions from token
+surfaces rather than offsets.
+
+- `code_ast._map_from_greedy_decode`: a second greedy aligner with no re-sync,
+  reached whenever a wrapper returns no offsets, which four wrappers never
+  override. On a 45-character French snippet it agreed with offsets on 19
+  characters and left 26 unmapped, silently. Deleted; missing offsets now raise.
+- `math` operator isolation ran its regex over a reconstruction, so a
+  Mistral-form `<s>` contributed a `<` and a `>` counted as operators. Apertus
+  and Llama3 reported 8 operators at 0.750 isolation on a sentence with 6 at
+  1.000. Now 6 at 1.000.
+- Derived code and math corpora were built without offsets, so both domains were
+  skipped entirely once isolation required them (112 and 262 documents dropped).
+  They are now encoded with offsets.
+- `sanity_check` C10 conservation compared byte-level surface lengths, so CJK's
+  3x inflation absorbed real loss and produced a false PASS. Now measured with
+  pretokenizer spans, via a new `pretokenize_with_spans` on the wrapper.
+
+### X2. UTF-8 byte-level detection failed in the flattering direction: **fixed (twice)**
 `metrics/utf8_integrity.py`. Detection counted single-character vocabulary
 entries against 68 GPT-2 marker characters with a threshold of 50. A byte-level
 tokenizer trained on a corpus that never exercises the control bytes carries
@@ -197,7 +213,14 @@ falls back to the marker count only when the components cannot be introspected.
 Any `utf8_token_integrity` or `utf8_char_split` number published for
 `gpt4o-english-bpe` before this is invalid.
 
-### X3. `_crosses_character_boundary` counts continuation bytes as characters: **open**
+The first attempt did not work. It read `.decoder` off whatever object it was
+handed, and the pipeline hands it a `TokenizerWrapper`, which exposes neither
+component, so the check returned None for every tokenizer and the heuristic
+decided anyway. It now unwraps through `get_underlying_tokenizer()` first.
+Measured end to end after the second fix: `gpt4o-english-bpe` completeness
+1.0000 to 0.6623, split rate 0.0000 to 0.2712.
+
+### X3. `_crosses_character_boundary` counts continuation bytes as characters: **fixed**
 `metrics/utf8_integrity.py:233-237`. The branch increments the character count
 once per continuation byte, so a token holding only the tail of one character
 satisfies "more than one character and incomplete" and is counted as crossing a
@@ -205,7 +228,7 @@ boundary. The README's own worked example gives 1/3; the code gives 2/3.
 Measured inflation on FLORES with SuperBPE: Korean 632 crossings reported
 against 584 true, Japanese 159 against 152.
 
-### X4. `pattern_stability_rate` counts the first code token as indentation: **open**
+### X4. `pattern_stability_rate` counts the first code token as indentation: **fixed (metric then removed)**
 `metrics/code_ast.py:925-945`. Tokens are selected by overlap with the leading
 whitespace range, and with ByteLevel offsets the first code token absorbs the
 preceding space, so it is always included. Two lines at the same depth with
@@ -251,7 +274,7 @@ scipy.stats import spearmanr` at module scope, before anything can call
 `compute_basic_stats`. scipy gained lazy submodule loading in 1.9.0; the
 declared floor is 1.7.0. Explicit import added.
 
-### C2. `core/validation.py` is entirely unreachable: **open**
+### C2. `core/validation.py` is entirely unreachable: **fixed (deleted)**
 `ValidationResult`, `TokenizedDataValidator`, `InputProviderValidator`,
 `InputSpecificationValidator`, `AnalysisValidator` and `validate_and_report`
 are defined, exported from nowhere, and imported by nothing. The
