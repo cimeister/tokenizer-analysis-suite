@@ -26,6 +26,37 @@ from ..utils.text_utils import (
 
 logger = logging.getLogger(__name__)
 
+class ParquetEngineMissing(RuntimeError):
+    """No parquet engine is installed, so a parquet corpus cannot be read.
+
+    A distinct class because the loaders wrap parquet reads in several layers of
+    ``except Exception`` that log and continue. Those handlers exist to skip one
+    unreadable file among many, which is reasonable, but a missing engine makes
+    EVERY parquet file unreadable, so skipping them all yields an empty corpus
+    and a run that completes normally. Each handler re-raises this one type.
+    """
+
+
+def _reraise_if_no_parquet_engine(exc: Exception, path: str) -> None:
+    """Turn a missing parquet engine into a loud error naming the extra.
+
+    pandas raises an ImportError that already names pyarrow, but every parquet
+    call site caught it and returned an empty list, so a user without the
+    optional extra got a run that completed with silently zero data for every
+    parquet source. A corpus that failed to load is not an empty corpus.
+    """
+    if isinstance(exc, ParquetEngineMissing):
+        raise exc
+    if isinstance(exc, ImportError) or 'usable engine' in str(exc).lower():
+        raise ParquetEngineMissing(
+            f"Cannot read the parquet file {path!r}: no parquet engine is "
+            "installed. Install the optional extra with "
+            "`uv sync --extra parquet` (or `pip install pyarrow`). Reading "
+            "zero rows here would silently shrink the corpus, so this is an "
+            "error rather than an empty result."
+        ) from exc
+
+
 
 def load_multilingual_data(language_metadata: LanguageMetadata, 
                           max_texts_per_language: int = DEFAULT_MAX_TEXTS_PER_LANGUAGE,
@@ -162,6 +193,8 @@ def load_language_data(data_path: str, max_texts: int) -> List[str]:
             logger.debug(f"Processing Parquet file: {parquet_file}")
             try:
                 texts.extend(load_from_parquet(parquet_file, max_texts - len(texts)))
+            except ParquetEngineMissing:
+                raise
             except Exception as e:
                 logger.error(f"Error processing Parquet file {parquet_file}: {e}")
                 continue
@@ -259,7 +292,11 @@ def load_from_parquet(parquet_file: str, max_texts: int) -> List[str]:
     
     try:
         # Read parquet file
-        df = pd.read_parquet(parquet_file)
+        try:
+            df = pd.read_parquet(parquet_file)
+        except Exception as exc:
+            _reraise_if_no_parquet_engine(exc, parquet_file)
+            raise
         
         # Look for text column (try common names)
         text_column = None
@@ -287,6 +324,8 @@ def load_from_parquet(parquet_file: str, max_texts: int) -> List[str]:
             if text and text != 'nan':
                 texts.append(text)
     
+    except ParquetEngineMissing:
+        raise
     except Exception as e:
         logger.error(f"Error reading Parquet file {parquet_file}: {e}")
         return []

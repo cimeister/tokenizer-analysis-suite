@@ -84,7 +84,7 @@ See L1 for the other half of this.
 for group type <type>` and returns normally; the same failure in any other plot
 propagates. Same failure class, opposite handling.
 
-### S11. Missing parquet engine yields an empty corpus: **open**
+### S11. Missing parquet engine yields an empty corpus: **fixed**
 `loaders/code_data.py:225-229`, `loaders/multilingual_data.py:241,269`.
 pandas raises an `ImportError` that names pyarrow and fastparquet, but both
 call sites catch it, log, and return `[]`. A user without the `parquet` extra

@@ -103,6 +103,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   scoring worst on every axis.
 - MorphScore's missing-library errors name the install steps (submodule init,
   editable install, separate dataset download) instead of only the package.
+- A missing parquet engine raises `ParquetEngineMissing` naming
+  `uv sync --extra parquet`, instead of every parquet read returning an empty
+  list. Three layers of `except Exception` used to swallow it, so a user
+  without the optional extra got a run that completed with zero data for every
+  parquet source.
 - `indentation_consistency` counts only whitespace-only tokens as indentation.
   It previously counted every token overlapping the leading-whitespace range,
   which pulled in the first code token whenever that token also covered the last

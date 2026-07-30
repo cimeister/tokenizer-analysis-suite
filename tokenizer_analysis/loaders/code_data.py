@@ -11,6 +11,8 @@ import logging
 import re
 from typing import Dict, List, Optional
 
+from .multilingual_data import ParquetEngineMissing, _reraise_if_no_parquet_engine
+
 logger = logging.getLogger(__name__)
 
 
@@ -105,6 +107,8 @@ class CodeDataLoader:
                 continue
             try:
                 self._load_language(lang, path)
+            except ParquetEngineMissing:
+                raise
             except Exception as e:
                 logger.error("Error loading code for %s from %s: %s", lang, path, e)
 
@@ -255,6 +259,7 @@ class CodeDataLoader:
         try:
             df = pd.read_parquet(path)
         except Exception as e:
+            _reraise_if_no_parquet_engine(e, path)
             logger.error("Failed to read parquet file %s: %s", path, e)
             return []
 
