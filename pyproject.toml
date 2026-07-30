@@ -51,8 +51,18 @@ parquet = [
     "pyarrow>=10.0.0",
 ]
 
+# SentencePiece model files (the `sentencepiece` tokenizer class). The wrapper
+# imports it lazily and raises with this install line when it is absent, so the
+# rest of the package works without it. Floor is the release the 1.0 tests were
+# run against; the wrapper also probes the older IsControl/IsUnknown spelling,
+# so earlier releases may work but were not tested.
+sentencepiece = [
+    "sentencepiece>=0.2.0,<1",
+]
+
 [dependency-groups]
 dev = [
+    "sentencepiece>=0.2.0,<1",   # so the SentencePieceTokenizer tests run rather than skip
     "black>=21.0",
     "flake8>=3.8",
     "mypy>=0.800",

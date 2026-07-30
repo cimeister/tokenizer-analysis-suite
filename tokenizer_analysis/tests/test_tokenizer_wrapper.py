@@ -240,6 +240,54 @@ class TestNoSpecialTokensInEncode:
         assert len(ids_bos_eos) == len(ids_plain) + expected_extra
 
 
+class TestSentencePieceSpecialTokenReporting:
+    """get_special_token_strings/get_special_token_ids must distinguish "cannot
+    report" from "declares none", and must not silently inherit the base
+    class's empty-set default for ids.
+    """
+
+    def test_special_token_strings_none_when_every_probe_fails(self):
+        """A processor whose bos/eos/unk/pad probes all raise, and that exposes
+        no IsControl/IsUnknown, cannot be asked for its special tokens at all.
+        get_special_token_strings() must return None (the "cannot report"
+        signal that makes resolve_special_token_strings warn and fall back to
+        GENERIC_SPECIAL_TOKENS), not an empty set, which would assert this
+        tokenizer genuinely declares none.
+        """
+        class UnreadableSPProcessor:
+            def bos_id(self):
+                raise RuntimeError("simulated failure")
+
+            def eos_id(self):
+                raise RuntimeError("simulated failure")
+
+            def unk_id(self):
+                raise RuntimeError("simulated failure")
+
+            def pad_id(self):
+                raise RuntimeError("simulated failure")
+
+            def get_piece_size(self):
+                return 0
+
+        wrapper = SentencePieceTokenizer("unreadable", UnreadableSPProcessor(), {})
+        assert wrapper.get_special_token_strings() is None
+
+    def test_special_token_ids_read_declared_roles(self, sp_wrapper, sp_processor):
+        """get_special_token_ids() must read the model's own bos/eos/unk/pad ids
+        instead of inheriting TokenizerWrapper's default empty set, and must
+        skip roles the model reports unset (sentencepiece signals unset with a
+        negative id).
+        """
+        expected = {
+            i for i in (sp_processor.bos_id(), sp_processor.eos_id(),
+                        sp_processor.unk_id(), sp_processor.pad_id())
+            if i >= 0
+        }
+        assert expected, "fixture model should declare at least one of bos/eos/unk/pad"
+        assert sp_wrapper.get_special_token_ids() == expected
+
+
 class TestConvertIdsRoundtrip:
     """convert_ids_to_tokens(encode(text)) should produce valid token strings."""
 

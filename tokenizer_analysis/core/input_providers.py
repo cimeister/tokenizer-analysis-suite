@@ -3,6 +3,7 @@ Input provider implementations for raw and pre-tokenized data.
 """
 
 from typing import Dict, List, Any, Union, Optional, TYPE_CHECKING
+import dataclasses
 import logging
 import time
 from .input_types import (
@@ -27,7 +28,17 @@ class RawTokenizationProvider(InputProvider):
             specifications: Dict mapping tokenizer names to InputSpecification objects
                            (all must be in raw mode)
         """
-        self.specifications = specifications
+        # Copy each specification. get_tokenized_data() sets ``texts = None`` on
+        # them once the texts have been encoded, to release the corpus; done on
+        # the caller's own objects that leaves each one neither raw nor
+        # pre-tokenized, so its own is_raw_mode is False and
+        # spec.get_languages() raises TypeError on the None. dataclasses.replace
+        # re-runs __post_init__, so the copies are validated on construction as
+        # well. The texts dict itself is shared rather than deep-copied: only
+        # the attribute is rebound here, never the dict's contents.
+        self.specifications = {
+            name: dataclasses.replace(spec) for name, spec in specifications.items()
+        }
         self._validate_specifications()
         self._tokenized_cache = {}
         self._encode_times: Dict[str, List[float]] = {}  # tok_name -> per-sample seconds

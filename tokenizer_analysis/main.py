@@ -90,15 +90,17 @@ class UnifiedTokenizerAnalyzer:
             self.plot_tokenizers = self.tokenizer_names
         
         # Pre-load code data once for BasicTokenizationMetrics
+        # No try/except: a code config the caller named explicitly either loads
+        # or aborts. Swallowing the failure here left the operator-isolation
+        # code domain with zero samples and no signal beyond one warning line,
+        # while the same malformed config crashed uncaught 50 lines later with a
+        # raw AttributeError that named neither the flag nor the file.
         code_texts: Dict[str, List[str]] = {}
         if code_ast_config:
-            try:
-                from .loaders.code_data import CodeDataLoader
-                _loader = CodeDataLoader(code_ast_config)
-                _loader.load_all()
-                code_texts = _loader.code_snippets
-            except Exception as e:
-                logger.warning(f"Could not load code data: {e}")
+            from .loaders.code_data import CodeDataLoader
+            _loader = CodeDataLoader(code_ast_config)
+            _loader.load_all()
+            code_texts = _loader.code_snippets
 
         # Initialize metrics classes
         self.basic_metrics = BasicTokenizationMetrics(
@@ -148,8 +150,12 @@ class UnifiedTokenizerAnalyzer:
                 self.ast_boundary_metrics = ASTBoundaryMetrics(
                     input_provider, code_config=code_ast_config
                 )
-            except (ImportError, ValueError) as e:
-                logger.warning(f"AST boundary metrics disabled: {e}")
+            except ImportError as e:
+                # tree-sitter missing is the one condition that disables these
+                # metrics rather than failing the run. A bad code config raises
+                # ValueError or TypeError and is no longer caught here: it named
+                # data the caller asked to be measured.
+                logger.warning(f"AST boundary metrics disabled, tree-sitter unavailable: {e}")
 
         # Initialize visualizer
         self.visualizer = TokenizerVisualizer(self.plot_tokenizers, plot_save_dir, show_global_lines, per_language_plots, faceted_plots)

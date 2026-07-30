@@ -19,7 +19,10 @@ from typing import Dict, List, Optional
 from tokenizer_analysis import create_analyzer_from_raw_inputs, create_analyzer_from_tokenized_data
 from tokenizer_analysis.utils import setup_environment
 from tokenizer_analysis.config.language_metadata import LanguageMetadata
-from tokenizer_analysis.loaders.multilingual_data import load_multilingual_data
+from tokenizer_analysis.loaders.multilingual_data import (
+    load_multilingual_data,
+    ParquetEngineMissing,
+)
 from tokenizer_analysis.core.input_utils import InputLoader
 from tokenizer_analysis.metrics.redundancy import MERGES as _MERGES
 from tokenizer_analysis.constants import (
@@ -29,6 +32,25 @@ from tokenizer_analysis.constants import (
     MIN_TOKENIZERS_FOR_PLOTS,
 )
 from tokenizer_analysis.visualization.visualization_config import LaTeXFormatting
+
+
+class ConfigurationError(ValueError):
+    """A config file the user named has the wrong shape or contents.
+
+    Kept separate from the package's own exceptions so main() can print it
+    without a traceback: the message names the flag, the file and the expected
+    shape, which is the whole of what a caller needs.
+    """
+
+
+class OutputGenerationError(RuntimeError):
+    """A requested output artifact could not be written.
+
+    Raised at the end of a run so the results file is still saved and reported.
+    main() turns it into exit 1 with the message and no traceback, since the
+    cause is already logged and names the flag and the path.
+    """
+
 
 logger = logging.getLogger(__name__)
 
@@ -155,7 +177,17 @@ def _resolve_code_ast_config(args) -> Optional[Dict]:
     corrupted every downstream correlation that used it. Warn loudly.
     """
     if args.code_ast_config:
-        return load_config_from_file(args.code_ast_config)
+        config = load_config_from_file(args.code_ast_config)
+        # Check the shape here, where the flag and the file path are both in
+        # hand. Left to the loader, a JSON array surfaced two files later as
+        # AttributeError: 'list' object has no attribute 'items', swallowed at
+        # one call site and uncaught at the other.
+        from tokenizer_analysis.loaders.code_data import CodeDataLoader
+        try:
+            CodeDataLoader._validate_config(config)
+        except (TypeError, ValueError) as e:
+            raise ConfigurationError(f"--code-ast-config {args.code_ast_config}: {e}")
+        return config
     if not args.no_code_ast:
         logger.warning(
             "=" * 78 + "\n"
@@ -1320,6 +1352,13 @@ def run_from_args(args: argparse.Namespace):
         with open(full_results_file, 'w') as f:
             json.dump(full_results_json, f, indent=2)
     
+    # Requested outputs that could not be produced. The analysis itself and its
+    # results file are unaffected, so the run finishes and reports where they
+    # are, then exits non-zero naming what is missing. Exiting 0 here published
+    # a "Results saved to" line for a run that skipped an output the user asked
+    # for by name.
+    unproduced_outputs: List[str] = []
+
     # Generate LaTeX tables if requested
     if args.generate_latex_tables:
         logger.info("Generating LaTeX tables...")
@@ -1344,7 +1383,10 @@ def run_from_args(args: argparse.Namespace):
                 print(f"LaTeX {table_type} table: {latex_output_dir}/{table_type}_metrics_table.tex")
                 
         except Exception as e:
-            logger.error(f"Error generating LaTeX tables: {e}")
+            logger.error(
+                f"--generate-latex-tables: no table was written to {latex_output_dir}: {e}"
+            )
+            unproduced_outputs.append(f"--generate-latex-tables ({latex_output_dir})")
     
     # Generate custom LaTeX tables if config provided
     if args.custom_latex_config:
@@ -1393,13 +1435,27 @@ def run_from_args(args: argparse.Namespace):
                     logger.warning(f"Custom LaTeX table '{table_name}' generation failed")
                     
         except Exception as e:
-            logger.error(f"Error generating custom LaTeX tables: {e}")
+            logger.error(
+                f"--custom-latex-config {args.custom_latex_config}: no table was "
+                f"written: {e}"
+            )
+            unproduced_outputs.append(
+                f"--custom-latex-config {args.custom_latex_config}"
+            )
     
     logger.info("Analysis complete!")
     print(f"\nResults saved to: {args.output_dir}")
     if not args.no_plots:
         print(f"Plots saved to: {args.output_dir}")
     print(f"Summary results: {results_file}")
+
+    if unproduced_outputs:
+        raise OutputGenerationError(
+            "The analysis finished and its results were written, but these "
+            "requested outputs were not produced: "
+            + "; ".join(unproduced_outputs)
+            + ". See the errors above."
+        )
     if args.save_full_results:
         print(f"Full detailed results: {Path(args.output_dir) / 'analysis_results_full.json'}")
 
@@ -1409,7 +1465,14 @@ def main(argv: Optional[List[str]] = None):
     parser = build_parser()
     args = parser.parse_args(argv)
     _configure_cli_logging()
-    run_from_args(args)
+    try:
+        run_from_args(args)
+    except (ParquetEngineMissing, ConfigurationError, OutputGenerationError) as e:
+        # Both already name the artifact and what to do about it, so a
+        # traceback adds only noise. Every other exception keeps its traceback:
+        # it is a defect in this package and the stack is the useful part.
+        logger.error(str(e))
+        raise SystemExit(1)
 
 if __name__ == "__main__":
     main()

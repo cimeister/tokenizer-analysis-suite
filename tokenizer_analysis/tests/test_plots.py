@@ -157,16 +157,35 @@ def test_plot_vocab_util_cov_smoke_and_none_skip(tmp_path):
     assert out.exists() and out.stat().st_size > 0
 
 
+_EXPECTED_PLOTS = {
+    'bigram_entropy_individual.svg',
+    'compression_rate_individual.svg',
+    'fertility_individual.svg',
+    'lorenz_curves_individual.svg',
+    'morphscore_individual.svg',
+    'tokenizer_fairness_gini_individual.svg',
+    'utf8_integrity.svg',
+    'vocab_util_cross_lingual_cov_individual.svg',
+    'vocabulary_utilization_individual.svg',
+}
+
+
 def test_every_generated_plot_draws_content(captured_plots, tmp_path):
     """Catch a plot reading a key that a results-schema change has moved.
 
-    generate_all_plots writes a figure whether or not a panel drew anything, so
-    a plot pointed at a moved key produces a normal-looking file with a blank
-    panel and no warning. The 1.0 merge (metrics/redundancy.py) folds
-    utf8_char_split into utf8_token_integrity and lorenz_curve_data into
-    tokenizer_fairness_gini, so both the pre-merge and post-merge shapes must
-    draw. The merge runs here for real, not as a hand-written imitation of its
-    output, so a change to MERGES that a plot does not follow fails this test.
+    A moved key shows up in one of two ways, so the test checks both. Some
+    plots write a figure regardless and leave the panel blank, which the
+    per-axes assertion catches. Others find nothing to draw and return before
+    writing anything at all, which no per-figure assertion can see: that is why
+    the set of files written is compared against _EXPECTED_PLOTS rather than
+    only asserted non-empty. Adding a plot to generate_all_plots means adding
+    its filename there.
+
+    The 1.0 merge (metrics/redundancy.py) folds utf8_char_split into
+    utf8_token_integrity and lorenz_curve_data into tokenizer_fairness_gini, so
+    both the pre-merge and post-merge shapes must draw the same set. The merge
+    runs here for real, not as a hand-written imitation of its output, so a
+    change to MERGES that a plot does not follow fails this test.
     """
     cases = [
         ("pre-merge", _full_results()),
@@ -176,7 +195,11 @@ def test_every_generated_plot_draws_content(captured_plots, tmp_path):
         start = len(captured_plots)
         generate_all_plots(results, str(tmp_path), _TOKS)
         produced = captured_plots[start:]
-        assert produced, f"{label}: generate_all_plots wrote no figure at all"
+        names = {os.path.basename(path) for path, _ in produced}
+        assert names == _EXPECTED_PLOTS, (
+            f"{label}: missing {sorted(_EXPECTED_PLOTS - names)}, "
+            f"unexpected {sorted(names - _EXPECTED_PLOTS)}"
+        )
         for path, fig in produced:
             for i, ax in enumerate(fig.axes):
                 if not ax.get_visible():

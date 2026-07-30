@@ -379,7 +379,7 @@ class HuggingFaceTokenizer(TokenizerWrapper):
         result = self._tokenizer.encode(text, add_special_tokens=False)
         if hasattr(result, 'ids') and hasattr(result, 'offsets'):
             return result.ids, result.offsets
-        # transformers.PreTrainedTokenizerFast — use __call__ with offset mapping
+        # transformers.PreTrainedTokenizerFast: use __call__ with offset mapping
         if callable(getattr(self._tokenizer, '__call__', None)):
             try:
                 enc = self._tokenizer(text, return_offsets_mapping=True,
@@ -390,7 +390,7 @@ class HuggingFaceTokenizer(TokenizerWrapper):
                     return ids, offsets
             except Exception:
                 pass
-        # Reuse result — don't call encode() again
+        # Reuse result, do not call encode() again
         if hasattr(result, 'ids'):
             return result.ids, None
         elif isinstance(result, list):
@@ -414,7 +414,7 @@ class HuggingFaceTokenizer(TokenizerWrapper):
                     results.append((enc.ids, None))
             return results
 
-        # Path B: transformers.PreTrainedTokenizerFast — batched __call__
+        # Path B: transformers.PreTrainedTokenizerFast, batched __call__
         if callable(getattr(self._tokenizer, '__call__', None)):
             try:
                 batch_enc = self._tokenizer(
@@ -764,7 +764,7 @@ class SentencePieceTokenizer(TokenizerWrapper):
             b_start = piece.begin
             b_end = piece.end
             if b_start == b_end:
-                # Special token or unknown — no source coverage
+                # Special token or unknown: no source coverage
                 offsets.append((0, 0))
             else:
                 c_start = byte_to_char[b_start] if b_start < len(byte_to_char) else len(text)
@@ -863,17 +863,60 @@ class SentencePieceTokenizer(TokenizerWrapper):
         decode them to that byte. SentencePiece types them BYTE, not CONTROL, so
         the scan below already excludes them; likewise UNUSED pieces, which are
         pruned merges rather than special tokens.
+
+        Same ``answered`` structure as :func:`hf_special_token_strings`: a probe
+        that raises or is unavailable does not count as an answer, and an empty
+        result is reported as ``None`` (cannot determine) rather than ``set()``
+        (declares none). A processor whose bos/eos/unk/pad probes all raise and
+        whose build exposes no IsControl/IsUnknown predicate has not reported
+        that it has no special tokens, only that it could not be asked.
         """
-        specials: Set[str] = set()
+        ids, answered = self._declared_special_ids()
+        if not ids:
+            return None
+        specials = {self._sp.id_to_piece(piece_id) for piece_id in ids}
+        return specials if answered else None
+
+    def get_special_token_ids(self) -> set:
+        """The ids of the pieces get_special_token_strings reports.
+
+        Both read the same scan, so the two representations cannot disagree.
+        The base TokenizerWrapper returns a bare ``set()``, so without this
+        override every SentencePiece model reported zero special ids and the
+        callers that exclude them (the unused-vocabulary statistic in
+        metrics/basic.py, the visualizer, the sanity checker) counted <unk>,
+        <s> and </s> as ordinary vocabulary entries.
+        """
+        return self._declared_special_ids()[0]
+
+    def _declared_special_ids(self) -> Tuple[Set[int], bool]:
+        """Ids SentencePiece declares special, and whether any probe answered.
+
+        Two channels. The four role ids (bos, eos, unk, pad), skipping any the
+        model reports unset, which sentencepiece signals with a negative id.
+        Then every piece the model itself types as control or unknown, which
+        covers user-defined control symbols such as <|im_start|> added at
+        training time with --control_symbols, without matching on surface form.
+
+        Byte-fallback pieces (<0xNN>) are deliberately left out although they
+        look like markup: each stands for one content byte, and the UTF-8
+        metrics decode them to that byte. SentencePiece types them BYTE, not
+        CONTROL, so the scan already excludes them, as it does UNUSED pieces,
+        which are pruned merges rather than special tokens.
+        """
+        ids: Set[int] = set()
+        answered = False
 
         for id_getter in ('bos_id', 'eos_id', 'unk_id', 'pad_id'):
             try:
                 piece_id = getattr(self._sp, id_getter)()
-                if piece_id is not None and piece_id >= 0:
-                    specials.add(self._sp.id_to_piece(piece_id))
             except Exception as e:
                 logger.debug("SentencePiece %s() failed for %s: %s",
                              id_getter, self._name, e)
+                continue
+            answered = True
+            if piece_id is not None and piece_id >= 0:
+                ids.add(int(piece_id))
 
         # Older sentencepiece bindings name these IsControl/IsUnknown, newer ones
         # also expose the snake_case spelling.
@@ -885,7 +928,8 @@ class SentencePieceTokenizer(TokenizerWrapper):
             try:
                 for piece_id in range(self._sp.get_piece_size()):
                     if is_control(piece_id) or is_unknown(piece_id):
-                        specials.add(self._sp.id_to_piece(piece_id))
+                        ids.add(int(piece_id))
+                answered = True
             except Exception as e:
                 logger.debug("SentencePiece piece-type scan failed for %s: %s",
                              self._name, e)
@@ -894,7 +938,7 @@ class SentencePieceTokenizer(TokenizerWrapper):
                 "SentencePiece build for %s exposes no piece-type predicate; "
                 "special tokens are the bos/eos/unk/pad pieces only.", self._name,
             )
-        return specials
+        return ids, answered
 
     def get_unk_token_id(self) -> Optional[int]:
         """Get the UNK token ID from SentencePiece tokenizer."""
@@ -932,7 +976,8 @@ class SentencePieceTokenizer(TokenizerWrapper):
         except ImportError as e:
             raise RuntimeError(
                 "sentencepiece is required to build SentencePieceTokenizer "
-                "from model files. Install with `pip install sentencepiece`."
+                "from model files. Install the optional extra with "
+                "`uv sync --extra sentencepiece` (or `pip install sentencepiece`)."
             ) from e
         sp = None
         if "path" not in config:

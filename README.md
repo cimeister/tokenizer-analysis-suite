@@ -123,6 +123,9 @@ uv pip install -e ./morphscore
 
 # Optional: reading code corpora from parquet files
 uv sync --extra parquet
+
+# Optional: loading SentencePiece model files (the `sentencepiece` tokenizer class)
+uv sync --extra sentencepiece
 ```
 
 **MorphScore note**: Only `<ISO 639-3>_<script>` language codes are automatically mapped. Data files must be downloaded separately (see [MorphScore README](morphscore/README.md)) and placed in `morphscore_data/`.

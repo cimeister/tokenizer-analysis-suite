@@ -300,8 +300,21 @@ class ASTBoundaryMetrics(BaseMetrics):
 
         if code_config:
             self.code_loader.load_all()
+            # Synthetic samples are the documented behaviour for an empty
+            # code_config only. Substituting them for a config that named real
+            # paths reports code metrics computed on toy snippets under the name
+            # of the corpus the user asked for: measured 0.562 full AST
+            # alignment on synthetic against 0.493 on StarCoder for the same
+            # tokenizer.
+            if not self.code_loader.code_snippets:
+                raise ValueError(
+                    "The code config named "
+                    f"{', '.join(sorted(code_config))} but no snippet was read "
+                    "from any of those paths. Check that the directories hold "
+                    "files with the expected extensions."
+                )
 
-        # If no data was loaded from config, use synthetic samples
+        # With no code config, synthetic samples are the documented input.
         if not self.code_loader.code_snippets:
             synthetic = CodeDataLoader.generate_synthetic_samples()
             for lang, snippets in synthetic.items():
@@ -827,6 +840,10 @@ class ASTBoundaryMetrics(BaseMetrics):
         # deletes these from the reconstruction, so they have to be the ones this
         # tokenizer declares rather than anything matched on surface form.
         special_tokens = {n: self._resolve_special_tokens(t) for n, t in active_tokenizers}
+        # Pre-resolve each tokenizer's subword-marker set. _process_token strips
+        # a marker (WordPiece '##', CLIP-BPE '</w>', subword-nmt '@@') only when
+        # this tokenizer is shown to use it; see _detect_subword_markers.
+        subword_markers = {n: self._resolve_subword_markers(t) for n, t in active_tokenizers}
 
         for code_lang, spans_list in parsed_spans.items():
             snippets = code_snippets[code_lang]
@@ -876,8 +893,11 @@ class ASTBoundaryMetrics(BaseMetrics):
 
                 # -- Per-tokenizer work --
                 for tok_name, tokenizer in active_tokenizers:
-                    self._char_decode_table = decode_tables[tok_name]
-                    self._special_tokens = special_tokens[tok_name]
+                    self._set_tokenizer_context(
+                        decode_tables[tok_name],
+                        special_tokens[tok_name],
+                        subword_markers[tok_name],
+                    )
                     try:
                         token_ids, enc_offsets = tokenizer.encode_with_offsets(
                             snippet
@@ -989,8 +1009,7 @@ class ASTBoundaryMetrics(BaseMetrics):
                                 "ws_width": ws_width,
                             })
 
-        self._char_decode_table = None
-        self._special_tokens = None
+        self._clear_tokenizer_context()
 
         # Log Phase 2 summary: how many AST nodes contributed per tokenizer
         for tok_name in self.tokenizer_names:
@@ -1448,8 +1467,8 @@ class ASTBoundaryMetrics(BaseMetrics):
         ``_check_boundary_alignment_fast``, ``_count_identifier_tokens_fast``,
         and ``_build_char_to_token_map`` at single-snippet granularity. The
         standard ``compute()`` workflow is unaffected: this method snapshots
-        and restores ``self._char_decode_table`` and ``self._special_tokens``
-        and does not touch the aggregator state.
+        and restores ``self._char_decode_table``, ``self._special_tokens`` and
+        ``self._subword_markers`` and does not touch the aggregator state.
 
         Parsing goes through the same subprocess fence ``compute()`` uses. An
         earlier version parsed in-process on the theory that a single snippet
@@ -1553,13 +1572,15 @@ class ASTBoundaryMetrics(BaseMetrics):
         # Snapshot + restore aggregator state so compute() callers are unaffected.
         saved_table = getattr(self, "_char_decode_table", None)
         saved_specials = getattr(self, "_special_tokens", None)
+        saved_markers = getattr(self, "_subword_markers", None)
         try:
-            self._char_decode_table = (
+            self._set_tokenizer_context(
                 char_decode_table
                 if char_decode_table is not None
-                else self._build_char_decode_table(tokenizer_obj)
+                else self._build_char_decode_table(tokenizer_obj),
+                self._resolve_special_tokens(tokenizer_obj),
+                self._resolve_subword_markers(tokenizer_obj),
             )
-            self._special_tokens = self._resolve_special_tokens(tokenizer_obj)
 
             # Encode source (with offsets for the indentation path; we don't
             # use indentation here, but encode_with_offsets is the standard
@@ -1657,5 +1678,4 @@ class ASTBoundaryMetrics(BaseMetrics):
                 result[f"{cat}_full_alignment_rate"] = _rate(per_cat_full.get(cat, []))
             return result
         finally:
-            self._char_decode_table = saved_table
-            self._special_tokens = saved_specials
+            self._set_tokenizer_context(saved_table, saved_specials, saved_markers)

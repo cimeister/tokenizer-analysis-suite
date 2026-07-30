@@ -407,8 +407,11 @@ class DigitBoundaryMetrics(BaseMetrics):
                 continue
 
             tokenizer_obj = self.input_provider.get_tokenizer(tok_name)
-            self._char_decode_table = self._decode_table_for(tok_name, tokenizer_obj)
-            self._special_tokens = self._resolve_special_tokens(tokenizer_obj)
+            self._set_tokenizer_context(
+                self._decode_table_for(tok_name, tokenizer_obj),
+                self._resolve_special_tokens(tokenizer_obj),
+                self._resolve_subword_markers(tokenizer_obj),
+            )
             lang_groups = TokenizedDataProcessor.group_by_language(
                 tokenized_data[tok_name]
             )
@@ -721,8 +724,11 @@ class DigitBoundaryMetrics(BaseMetrics):
                 continue
 
             tokenizer_obj = self.input_provider.get_tokenizer(tok_name)
-            self._char_decode_table = self._decode_table_for(tok_name, tokenizer_obj)
-            self._special_tokens = self._resolve_special_tokens(tokenizer_obj)
+            self._set_tokenizer_context(
+                self._decode_table_for(tok_name, tokenizer_obj),
+                self._resolve_special_tokens(tokenizer_obj),
+                self._resolve_subword_markers(tokenizer_obj),
+            )
             lang_groups = TokenizedDataProcessor.group_by_language(
                 tokenized_data[tok_name]
             )

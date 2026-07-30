@@ -111,6 +111,13 @@ def load_multilingual_data(language_metadata: LanguageMetadata,
 
         try:
             texts = load_language_data(data_path, max_texts_per_language)
+        except ParquetEngineMissing:
+            # Not a property of this language's path: no parquet source in the
+            # config can be read until the extra is installed, so listing it as
+            # one language's failure buries a message about the environment
+            # inside a per-language report. Propagate it; the CLI prints it
+            # without a traceback.
+            raise
         except Exception as e:
             failures[lang_code] = f"{type(e).__name__}: {e}"
             continue

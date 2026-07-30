@@ -107,6 +107,39 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   although `<unk>`, `<s>`, `</s>` and `<pad>` sit at ids 0 to 3. The model's
   unknown token is now consulted as well, and an empty result falls back to
   `GENERIC_SPECIAL_TOKENS` with a warning.
+- `--generate-latex-tables` and `--custom-latex-config` exit 1 when the table
+  could not be written, naming the flag and the path. Both logged the error and
+  then printed `Results saved to: ...` with exit 0. The results file is still
+  written and still reported, so only the exit code and a closing error line
+  change.
+- A malformed `--code-ast-config` is rejected up front, naming the flag, the
+  file and the expected shape. A JSON array was swallowed at one call site
+  (`code_texts = {}`, leaving the operator-isolation code domain empty) and
+  uncaught at the other (`AttributeError: 'list' object has no attribute
+  'items'`, mentioning neither the flag nor the file).
+- A code-data path that does not exist aborts instead of dropping that language,
+  matching the natural-language loader. A code config that reads no snippet at
+  all is an error rather than a silent switch to the bundled synthetic samples:
+  measured 0.562 full AST alignment on synthetic against 0.493 on StarCoder for
+  the same tokenizer.
+- `RawTokenizationProvider` copies the `InputSpecification` objects it is given.
+  It released the corpus by setting `texts = None` on the caller's own objects,
+  which left each one neither raw nor pre-tokenized: `is_raw_mode` returned
+  False afterwards and reusing the specification raised `ValueError:
+  Specification for <name> is not in raw mode`.
+- A missing parquet engine is reported once, as an environment problem, instead
+  of being folded into the per-language load report. The CLI prints it without
+  a traceback.
+- `SentencePieceTokenizer.get_special_token_ids()` reads the model's own
+  declared ids. It inherited the base `set()`, so the callers that exclude
+  special ids (the unused-vocabulary statistic, the visualizer, the sanity
+  checker) counted `<unk>`, `<s>` and `</s>` as ordinary vocabulary. The id and
+  string forms now come from one scan. On a model trained with
+  `--control_symbols <|im_start|> <|im_end|>`: `set()` before, six ids after.
+- `SentencePieceTokenizer.get_special_token_strings()` returns `None` when every
+  probe failed, so the caller warns and falls back to `GENERIC_SPECIAL_TOKENS`.
+  It returned an empty set, which asserts that the model declares no special
+  tokens.
 - MorphScore reports `null` rather than `0.0` for a tokenizer it evaluated on
   zero languages, which happens whenever the data directory is missing or holds
   no CSV for any requested language. The run exits 0 and otherwise looks
@@ -125,6 +158,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   indent space. That happens when the pre-tokenizer groups a leading space with
   the following word and a merge for the pair was learned; it depends on the
   pre-tokenizer and the merges, not on byte-level encoding as such.
+
+### Added
+- `sentencepiece` is declared as an optional extra
+  (`uv sync --extra sentencepiece`). `SentencePieceTokenizer` is a first-class
+  tokenizer class but the package was never listed, so it was installable only
+  by accident and its tests skipped in a clean checkout.
 
 ### Changed (Python API, breaking)
 - `TokenizerWrapper` subclasses must implement `get_special_token_strings()`.

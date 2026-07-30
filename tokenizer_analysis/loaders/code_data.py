@@ -92,19 +92,67 @@ class CodeDataLoader:
                 language.  ``None`` uses :attr:`DEFAULT_MAX_SNIPPETS_PER_LANG`.
                 Set to ``0`` to disable the cap entirely.
         """
-        self.config = code_config or {}
+        self.config = self._validate_config(code_config)
         self.code_snippets: Dict[str, List[str]] = {}
         if max_snippets_per_lang is None:
             self.max_snippets_per_lang = self.DEFAULT_MAX_SNIPPETS_PER_LANG
         else:
             self.max_snippets_per_lang = max_snippets_per_lang
 
+    @staticmethod
+    def _validate_config(code_config: Optional[Dict[str, str]]) -> Dict[str, str]:
+        """Check the shape of *code_config* here, where the name is known.
+
+        A JSON array reaching this constructor used to surface two files later
+        as ``AttributeError: 'list' object has no attribute 'items'``, swallowed
+        in one caller and uncaught in the other, with neither mentioning the
+        config or the flag that supplied it.
+        """
+        if code_config is None:
+            return {}
+        if not isinstance(code_config, dict):
+            raise TypeError(
+                "code_config must be an object mapping a language name to a "
+                f"file or directory path, got {type(code_config).__name__}. "
+                "From the CLI this is the --code-ast-config file, which must "
+                'look like {"python": "code_data/python/"}.'
+            )
+        bad = {k: v for k, v in code_config.items() if not isinstance(v, str)}
+        if bad:
+            detail = ", ".join(
+                f"{k}: {type(v).__name__}" for k, v in sorted(bad.items())
+            )
+            raise TypeError(
+                f"Every code_config value must be a path string. Got {detail}."
+            )
+        unknown = sorted(set(code_config) - set(CodeDataLoader._LANG_EXTENSIONS))
+        if unknown:
+            raise ValueError(
+                f"Unknown code language(s) in code_config: {', '.join(unknown)}. "
+                "Supported: "
+                f"{', '.join(sorted(CodeDataLoader._LANG_EXTENSIONS))}."
+            )
+        return dict(code_config)
+
     def load_all(self) -> None:
-        """Load all configured code datasets."""
+        """Load all configured code datasets.
+
+        A configured path that does not exist aborts. Skipping it produced a
+        results file whose code metrics were computed over fewer languages than
+        the config named, with nothing in the output recording the difference.
+        """
+        missing = {
+            lang: path for lang, path in self.config.items()
+            if not os.path.exists(path)
+        }
+        if missing:
+            detail = "; ".join(f"{lang}: {path}" for lang, path in sorted(missing.items()))
+            raise FileNotFoundError(
+                f"Code data path not found for {len(missing)} of "
+                f"{len(self.config)} configured language(s): {detail}. Fix the "
+                "path, or remove the language from the code config."
+            )
         for lang, path in self.config.items():
-            if not os.path.exists(path):
-                logger.warning("Code data path not found for %s: %s", lang, path)
-                continue
             try:
                 self._load_language(lang, path)
             except ParquetEngineMissing:

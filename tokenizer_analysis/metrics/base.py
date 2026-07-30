@@ -23,6 +23,19 @@ from ..constants import (
 
 logger = logging.getLogger(__name__)
 
+# Subword-marker strings that _process_token strips, and only when the
+# tokenizer being processed actually shows it uses that marker (see
+# BaseMetrics._detect_subword_markers). Each name records the tokenizer
+# family the marker comes from. Stripping any of these unconditionally, from
+# every tokenizer regardless of family, is the defect this module fixes: a
+# byte-level BPE vocabulary that uses none of them still has ordinary content
+# tokens matching the patterns (e.g. a markdown heading '###', a comment
+# banner '################', or a bare '@@'), and unconditional stripping
+# truncated or emptied them.
+_WORDPIECE_CONTINUATION_PREFIX = '##'    # BERT / WordPiece continuing-subword prefix
+_CLIP_BPE_END_OF_WORD_SUFFIX = '</w>'    # CLIP-style BPE end-of-word suffix
+_SUBWORD_NMT_CONTINUATION_SUFFIX = '@@'  # subword-nmt continuation suffix
+
 
 class BaseMetrics(ABC):
     """Base class for tokenizer metrics using TokenizedData interface."""
@@ -93,6 +106,17 @@ class BaseMetrics(ABC):
         # uses GENERIC_SPECIAL_TOKENS.
         self._special_tokens: Optional[Set[str]] = None
         self._special_token_cache: Dict[int, Tuple[Any, Set[str]]] = {}
+        # Subword-marker strings ('##', '</w>', '@@') the tokenizer currently
+        # being processed actually uses, set by the same per-tokenizer loops
+        # that set _char_decode_table and _special_tokens (see
+        # _set_tokenizer_context). None means "not resolved for a specific
+        # tokenizer"; _process_token treats that the same as an empty set --
+        # strip nothing -- unlike _special_tokens, which falls back to
+        # GENERIC_SPECIAL_TOKENS. There is no equivalent generic guess here:
+        # a guessed marker is exactly the defect being fixed, so an
+        # unresolved or undetected marker set both mean "strip nothing".
+        self._subword_markers: Optional[Set[str]] = None
+        self._subword_marker_cache: Dict[int, Tuple[Any, Set[str]]] = {}
 
     def _resolve_special_tokens(self, tokenizer: Any) -> Set[str]:
         """Special-token strings declared by *tokenizer*, memoized per object.
@@ -107,6 +131,178 @@ class BaseMetrics(ABC):
         resolved = resolve_special_token_strings(tokenizer)
         self._special_token_cache[key] = (tokenizer, resolved)
         return resolved
+
+    def _resolve_subword_markers(self, tokenizer: Any) -> Set[str]:
+        """Subword-marker strings *tokenizer* actually uses, memoized per object.
+
+        Same identity-keyed cache pattern as _resolve_special_tokens (the
+        object reference, not just id(tokenizer), is stored -- see the
+        comment on _special_token_cache in __init__ for why: CPython can
+        recycle a freed object's id, and without the reference check a
+        long-lived metrics instance would hand one tokenizer another,
+        already-collected tokenizer's marker set).
+        """
+        key = id(tokenizer)
+        cached = self._subword_marker_cache.get(key)
+        if cached is not None and cached[0] is tokenizer:
+            return cached[1]
+        resolved = self._detect_subword_markers(tokenizer)
+        self._subword_marker_cache[key] = (tokenizer, resolved)
+        return resolved
+
+    @staticmethod
+    def _detect_subword_markers(tokenizer: Any) -> Set[str]:
+        """Which of the three known subword markers *tokenizer* actually emits.
+
+        Two channels, declared checked first:
+
+        1. Declared. Unwrap to the backend tokenizer the same way
+           UTF8IntegrityMetrics._has_bytelevel_component does (via
+           get_underlying_tokenizer(), then backend_tokenizer), and read the
+           backend model's own continuing_subword_prefix / end_of_word_suffix
+           fields. Both are real fields on tokenizers.models.BPE and
+           tokenizers.models.WordPiece (and on the model block of a
+           serialized tokenizer.json) -- verified by construction against the
+           installed tokenizers version: a fresh WordPiece defaults
+           continuing_subword_prefix to '##' even with no arguments, and a
+           fresh BPE defaults both fields to None. subword-nmt's '@@' has no
+           such field: its marker is baked into the vocabulary strings
+           themselves, not a model parameter, so this channel cannot see it.
+
+        2. Behavioral. Encode a probe word certain to fragment into several
+           subwords under any trained vocabulary, and look at the raw piece
+           strings for one of the three known marker forms. The probe is
+           'supercalifragilisticexpialidocious': a 34-character invented word
+           (from Mary Poppins) that essentially no trained subword vocabulary
+           holds as a single token, so it reliably fragments regardless of
+           tokenizer family -- verified against a real bert-base-uncased
+           WordPiece vocabulary (11 pieces, continuation pieces '##'-prefixed)
+           and a small BPE trained with end_of_word_suffix='</w>' (30 pieces,
+           last one '</w>'-suffixed).
+
+        Returns the empty set when neither channel finds a marker in use.
+        That is a deliberate default, not a gap in coverage: applying a
+        WordPiece rule to a non-WordPiece vocabulary silently corrupts
+        ordinary content tokens (measured: 35 cl100k_base vocabulary entries
+        altered, 24 for o200k_base, 1 for the bundled tokenizers/bpe.json),
+        whereas failing to strip a marker a tokenizer genuinely uses only
+        leaves that marker in the reconstruction, where it surfaces as an
+        unmappable span rather than as a silently wrong number.
+        """
+        markers: Set[str] = set()
+
+        # -- Channel 1: declared --
+        backend = tokenizer
+        if hasattr(backend, 'get_underlying_tokenizer'):
+            try:
+                backend = backend.get_underlying_tokenizer() or backend
+            except Exception as e:
+                logger.debug(
+                    "Could not unwrap tokenizer for subword-marker detection: %s", e
+                )
+        backend = getattr(backend, 'backend_tokenizer', backend)
+        model = getattr(backend, 'model', None)
+        if model is not None:
+            prefix = getattr(model, 'continuing_subword_prefix', None)
+            if prefix == _WORDPIECE_CONTINUATION_PREFIX:
+                markers.add(_WORDPIECE_CONTINUATION_PREFIX)
+            elif not prefix and type(model).__name__ == 'WordPiece':
+                # A WordPiece model whose binding does not expose the field
+                # (or exposes it empty) still defaults to '##' in every
+                # tokenizers version checked; this only covers that binding
+                # gap, not a genuinely custom prefix (handled below).
+                markers.add(_WORDPIECE_CONTINUATION_PREFIX)
+            elif prefix:
+                logger.debug(
+                    "Tokenizer declares a non-standard continuing_subword_prefix "
+                    "%r; _process_token only recognizes '##', so it is left in "
+                    "place rather than guessed at.", prefix,
+                )
+
+            suffix = getattr(model, 'end_of_word_suffix', None)
+            if suffix == _CLIP_BPE_END_OF_WORD_SUFFIX:
+                markers.add(_CLIP_BPE_END_OF_WORD_SUFFIX)
+            elif suffix:
+                logger.debug(
+                    "Tokenizer declares a non-standard end_of_word_suffix %r; "
+                    "_process_token only recognizes '</w>', so it is left in "
+                    "place rather than guessed at.", suffix,
+                )
+
+        if markers:
+            return markers
+
+        # -- Channel 2: behavioral --
+        if not hasattr(tokenizer, 'encode'):
+            return markers
+        probe = "supercalifragilisticexpialidocious"
+        try:
+            encoded = tokenizer.encode(probe)
+        except Exception as e:
+            logger.debug("Subword-marker probe encode failed: %s", e)
+            return markers
+        ids = list(encoded.ids if hasattr(encoded, 'ids') else encoded)
+        if len(ids) < 2:
+            return markers
+        pieces: Optional[List[str]] = None
+        try:
+            if hasattr(tokenizer, 'convert_ids_to_tokens'):
+                pieces = tokenizer.convert_ids_to_tokens(ids)
+        except Exception as e:
+            logger.debug(
+                "Subword-marker probe convert_ids_to_tokens failed: %s", e
+            )
+        if not pieces:
+            return markers
+        # continuing_subword_prefix marks every piece but the first;
+        # subword-nmt's '@@' marks every piece but the last;
+        # end_of_word_suffix marks only the last.
+        for piece in pieces[1:]:
+            if not isinstance(piece, str):
+                continue
+            if piece.startswith(_WORDPIECE_CONTINUATION_PREFIX):
+                markers.add(_WORDPIECE_CONTINUATION_PREFIX)
+        for piece in pieces[:-1]:
+            if isinstance(piece, str) and piece.endswith(_SUBWORD_NMT_CONTINUATION_SUFFIX):
+                markers.add(_SUBWORD_NMT_CONTINUATION_SUFFIX)
+        last = pieces[-1]
+        if isinstance(last, str) and last.endswith(_CLIP_BPE_END_OF_WORD_SUFFIX):
+            markers.add(_CLIP_BPE_END_OF_WORD_SUFFIX)
+        return markers
+
+    def _set_tokenizer_context(
+        self,
+        char_decode_table: Optional[Dict[str, str]],
+        special_tokens: Optional[Set[str]],
+        subword_markers: Optional[Set[str]],
+    ) -> None:
+        """Assign the three per-tokenizer attributes _process_token reads, together.
+
+        One entry point for _char_decode_table, _special_tokens and
+        _subword_markers so a call site cannot update two of them and forget
+        the third -- which is what happened before _subword_markers existed:
+        every _char_decode_table assignment in this codebase had a
+        _special_tokens assignment next to it, added by hand at each site.
+
+        Takes already-resolved values rather than a tokenizer to resolve
+        itself, because some call sites (ASTBoundaryMetrics.compute()'s
+        per-snippet loop) resolve once per tokenizer into a dict outside a
+        per-snippet loop and only assign per snippet; resolving here on every
+        call would reintroduce the repeated tokenizer.encode() probing that
+        precompute step exists to avoid.
+        """
+        self._char_decode_table = char_decode_table
+        self._special_tokens = special_tokens
+        self._subword_markers = subword_markers
+
+    def _clear_tokenizer_context(self) -> None:
+        """Reset the three per-tokenizer attributes to the "none resolved" state.
+
+        _process_token's fallbacks then apply: GENERIC_SPECIAL_TOKENS for
+        special tokens, the bundled default char-decode table, and "strip no
+        subword marker" -- the same state as __init__.
+        """
+        self._set_tokenizer_context(None, None, None)
 
     def get_tokenized_data(self) -> Dict[str, List[TokenizedData]]:
         """Get tokenized data organized by tokenizer."""
@@ -279,12 +475,23 @@ class BaseMetrics(ABC):
         # Apply character decode table to ALL characters
         decoded = ''.join(table.get(ch, ch) for ch in raw_token)
 
-        # Check subword markers on the decoded result
-        if self._CONTINUATION.match(decoded):
+        # Check subword markers on the decoded result, but only the ones this
+        # specific tokenizer actually uses (self._subword_markers, resolved by
+        # _detect_subword_markers). self._subword_markers is None on the paths
+        # that never resolve a tokenizer; `or set()` treats that the same as
+        # "resolved, uses none" -- strip nothing -- rather than falling back
+        # to stripping all three unconditionally. Applying, say, the WordPiece
+        # '##' rule to a tokenizer that never declared or exhibited it is the
+        # defect this gate exists to prevent: see _detect_subword_markers for
+        # the measured damage (35 cl100k_base vocabulary entries altered, 24
+        # for o200k_base, 1 for tokenizers/bpe.json) and for why "strip
+        # nothing" is the safe default when detection is inconclusive.
+        markers = self._subword_markers or set()
+        if _WORDPIECE_CONTINUATION_PREFIX in markers and self._CONTINUATION.match(decoded):
             return decoded[2:]
-        if self._END_WORD.search(decoded):
+        if _CLIP_BPE_END_OF_WORD_SUFFIX in markers and self._END_WORD.search(decoded):
             return decoded[:-4]
-        if self._CONTINUATION_END.search(decoded):
+        if _SUBWORD_NMT_CONTINUATION_SUFFIX in markers and self._CONTINUATION_END.search(decoded):
             return decoded[:-2]
 
         # Handle leading space

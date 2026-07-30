@@ -60,11 +60,13 @@ value throughout the aggregate pipeline. `per_example.py` uses `float("nan")`
 for the same condition and `utf8_integrity.py:703-709` returns `None`, so three
 conventions coexist.
 
-### S7. A malformed `--custom-latex-config` reports success: **open**
-`cli/run_analysis.py:1148`. A file the user named explicitly, containing
-invalid JSON, logs `ERROR - Error generating custom LaTeX tables: ...` and then
-prints `Results saved to: ...`. Exit 0. Same shape at line 1099 for
-`--generate-latex-tables`.
+### S7. A malformed `--custom-latex-config` reports success: **fixed**
+`cli/run_analysis.py`. A file the user named explicitly, containing invalid
+JSON, logged `ERROR - Error generating custom LaTeX tables: ...` and then
+printed `Results saved to: ...`. Exit 0. Same shape for
+`--generate-latex-tables`. Both now record the failure, name the flag and the
+path, finish the run so the results file is still written and reported, and
+exit 1 listing the outputs that were requested and not produced.
 
 ### S8. `tokenizer-visualize` exits 0 when every tokenizer fails: **open**
 `cli/visualize_tokenization.py:586`. A config whose tokenizer paths do not
@@ -72,11 +74,14 @@ exist prints `Skipping <name>: ...` per tokenizer, then the source samples with
 no tokenization at all, and exits 0. No count of how many of N tokenizers
 loaded.
 
-### S9. A list-shaped `--code-ast-config` silently drops code data: **open**
-`main.py:99`. Catches `Exception`, logs `Could not load code data: 'list'
-object has no attribute 'items'`, and continues with `code_texts = {}`. The
-operator-isolation code domain then has zero samples with no further signal.
-See L1 for the other half of this.
+### S9. A list-shaped `--code-ast-config` silently drops code data: **fixed**
+`main.py`. Caught `Exception`, logged `Could not load code data: 'list' object
+has no attribute 'items'`, and continued with `code_texts = {}`. The
+operator-isolation code domain then had zero samples with no further signal.
+The shape is now checked once in `CodeDataLoader._validate_config`, called from
+`_resolve_code_ast_config` where the flag and the path are both known, and the
+`try/except` around the load is gone: a code config the caller named either
+loads or aborts. Same fix closes L1.
 
 ### S10. Grouped plots swallow failures, individual plots do not: **partly fixed**
 `visualization/plots.py:579`. The only guarded call among roughly 15 in
@@ -89,6 +94,34 @@ propagates. Same failure class, opposite handling.
 pandas raises an `ImportError` that names pyarrow and fastparquet, but both
 call sites catch it, log, and return `[]`. A user without the `parquet` extra
 gets a run that completes with silently zero data for every parquet source.
+
+### S16. A missing code-data path dropped that language: **fixed**
+`loaders/code_data.py`. `load_all` logged `Code data path not found for
+<lang>: <path>` and continued, so the code metrics were computed over fewer
+languages than the config named with nothing in the output recording the
+difference. This is the same defect as S3 on the natural-language side and now
+has the same resolution: the run aborts and names every configured path that
+does not exist.
+
+### S17. A code config that read no snippet fell back to synthetic samples: **fixed**
+`metrics/code_ast.py`. `ASTBoundaryMetrics.__init__` substituted the bundled
+synthetic snippets whenever `code_loader.code_snippets` came back empty, which
+included the case where the caller passed a real config whose directories held
+no matching file. Synthetic samples are the documented input for an empty
+config only. Measured divergence between the two sources for one tokenizer:
+0.562 full AST alignment on synthetic against 0.493 on StarCoder. A non-empty
+config that yields no snippet is now an error naming the configured languages.
+
+### S18. SentencePiece models reported zero special token ids: **fixed**
+`core/tokenizer_wrapper.py`. `SentencePieceTokenizer` did not override
+`get_special_token_ids()`, so it inherited the base `set()`. The three callers
+that exclude special ids (the unused-vocabulary statistic in `metrics/basic.py`,
+the visualizer, the sanity checker) counted `<unk>`, `<s>` and `</s>` as
+ordinary vocabulary entries. Both the id and the string form now come from one
+scan, `_declared_special_ids`, so they cannot disagree. Measured on a
+SentencePiece model trained with `--control_symbols <|im_start|> <|im_end|>`:
+ids `set()` before, `{0, 1, 2, 3, 4, 5}` after, matching the six strings the
+string form reports.
 
 ### S12. `include_empty_splits` is ignored for two counting methods: **open**
 
@@ -113,22 +146,28 @@ BOM. A Windows-authored source file reaches tree-sitter with embedded `\r`, and
 a BOM-prefixed file with a leading `﻿`, both feeding the AST-boundary and
 indentation-consistency metrics as if they were part of the code's layout.
 
-### S15. `RawTokenizationProvider` mutates the caller's specs: **open**
-`core/input_providers.py:111-117`. `spec.texts = None` is applied to the dict
-the caller passed in, not a copy. After one `get_tokenized_data()` call the
-caller's `InputSpecification` is neither raw nor pre-tokenized, so its own
-validator reports it invalid and `spec.get_languages()` raises `TypeError`.
+### S15. `RawTokenizationProvider` mutates the caller's specs: **fixed**
+`core/input_providers.py`. `spec.texts = None`, which releases the corpus after
+encoding, was applied to the objects the caller passed in. Measured before the
+fix: after one `get_tokenized_data()` call the caller's `InputSpecification`
+reported `is_raw_mode` False, and constructing a second provider from it raised
+`ValueError: Specification for bpe is not in raw mode`. The provider now holds
+`dataclasses.replace` copies, so it releases its own reference and the caller's
+object is unchanged. Re-measured: `is_raw_mode` True, `texts` intact.
 
 ---
 
 ## loud but unhelpful
 
-### L1. A list-shaped `--code-ast-config` crashes with a raw `AttributeError`: **open**
-`main.py:145-151`. The narrow `except (ImportError, ValueError)` does not catch
-the `AttributeError` from `CodeDataLoader.load_all()`. Exit 1 with
+### L1. A list-shaped `--code-ast-config` crashes with a raw `AttributeError`: **fixed**
+`main.py`. The narrow `except (ImportError, ValueError)` did not catch the
+`AttributeError` from `CodeDataLoader.load_all()`. Exit 1 with
 `AttributeError: 'list' object has no attribute 'items'`: no mention of
-`--code-ast-config`, the file path, or that an object was expected. The same
-input is swallowed 50 lines earlier (S9). Validate the shape once, up front.
+`--code-ast-config`, the file path, or that an object was expected. Now exits 1
+with `--code-ast-config <path>: code_config must be an object mapping a
+language name to a file or directory path, got list`, and no traceback. The AST
+init handler catches only `ImportError` (tree-sitter absent), so a bad config is
+no longer reported as "AST boundary metrics disabled".
 
 ### L2. `--filter-script-family` with an unknown name: **open**
 `cli/run_analysis.py`. `--filter-script-family Klingon` exits 1 with `No valid
