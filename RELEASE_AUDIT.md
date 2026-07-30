@@ -68,11 +68,12 @@ printed `Results saved to: ...`. Exit 0. Same shape for
 path, finish the run so the results file is still written and reported, and
 exit 1 listing the outputs that were requested and not produced.
 
-### S8. `tokenizer-visualize` exits 0 when every tokenizer fails: **open**
-`cli/visualize_tokenization.py:586`. A config whose tokenizer paths do not
-exist prints `Skipping <name>: ...` per tokenizer, then the source samples with
-no tokenization at all, and exits 0. No count of how many of N tokenizers
-loaded.
+### S8. `tokenizer-visualize` exits 0 when every tokenizer fails: **fixed**
+`cli/visualize_tokenization.py`. A config whose tokenizer paths do not exist
+printed `Skipping <name>: ...` per tokenizer, then the source samples with no
+tokenization at all, and exited 0. It now prints `Loaded N of M requested
+tokenizer(s).` on every run and exits 1 when N is zero. Re-measured on a config
+naming one nonexistent path: exit 1.
 
 ### S9. A list-shaped `--code-ast-config` silently drops code data: **fixed**
 `main.py`. Caught `Exception`, logged `Could not load code data: 'list' object
@@ -83,11 +84,13 @@ The shape is now checked once in `CodeDataLoader._validate_config`, called from
 `try/except` around the load is gone: a code config the caller named either
 loads or aborts. Same fix closes L1.
 
-### S10. Grouped plots swallow failures, individual plots do not: **partly fixed**
-`visualization/plots.py:579`. The only guarded call among roughly 15 in
-`generate_all_plots`. A malformed grouped result logs `Failed to plot <metric>
-for group type <type>` and returns normally; the same failure in any other plot
-propagates. Same failure class, opposite handling.
+### S10. Grouped plots swallow failures, individual plots do not: **fixed**
+`visualization/plots.py`. The only guarded call among roughly 15 in
+`generate_all_plots`. A malformed grouped result logged `Failed to plot <metric>
+for group type <type>` and returned normally; the same failure in any other plot
+propagated. The handler is gone. `plot_grouped_analysis` already returns early
+and logs when a metric is absent from the grouped results, which is the case the
+handler was covering.
 
 ### S11. Missing parquet engine yields an empty corpus: **fixed**
 `loaders/code_data.py:225-229`, `loaders/multilingual_data.py:241,269`.
@@ -123,13 +126,35 @@ SentencePiece model trained with `--control_symbols <|im_start|> <|im_end|>`:
 ids `set()` before, `{0, 1, 2, 3, 4, 5}` after, matching the six strings the
 string form reports.
 
-### S12. `include_empty_splits` is ignored for two counting methods: **open**
+### S20. Grouped results carried an unfiltered copy of a merged block: **fixed**
+`main.py`. `_filter_digit_boundary_results` passes keys it does not recognize
+through untouched. The 1.0 merge nested `digit_split_variability` under
+`three_digit_boundary_alignment` as `split_variability`, which made it one of
+those keys although it holds per-language numbers, so each language group would
+have inherited values computed over every language in the run. Nested blocks of
+the same shape are now filtered by the same rule. This was masked by L5 below,
+which crashed first.
 
-`config/text_measurement.py`. The flag is honoured by `python_split`,
-`regex_whitespace` and `custom_regex` line counting, but not by
-`hf_whitespace` word counting or `newline_split` line counting. Setting it
-there is a silent no-op. Measured on `"  hello   world  "`: `regex_whitespace`
-gives 2 then 4 as the flag flips; `hf_whitespace` gives 2 both times.
+### S19. The C16 example list changed between identical runs: **fixed**
+`diagnostics/sanity_check.py`. C16 iterated `get_vocab()`, a dict built from the
+tokenizer library's own hash map, so its order varies between processes. The
+bucket counts were stable but the `examples` list differed on every run.
+Measured on `tokenizers/bpe.json` under three values of `PYTHONHASHSEED`: three
+different example lists before, one identical entry after. The scan is now
+ordered by token id.
+
+### S12. `include_empty_splits` is ignored for two counting methods: **fixed**
+
+`config/text_measurement.py`. The flag was honoured by `python_split`,
+`regex_whitespace` and `custom_regex` line counting, but not by `hf_whitespace`
+word counting or `newline_split` line counting. Setting it there was a silent
+no-op. Measured on `"  hello   world  "`: `regex_whitespace` gives 2 then 4 as
+the flag flips; `hf_whitespace` gave 2 both times. `newline_split` now honours
+it (measured on a 5-line text with 2 blank lines: 3 with the flag off, 5 with
+it on), and `hf_whitespace` with `include_empty_splits: true` is rejected at
+config load, because the HuggingFace Whitespace pretokenizer does not emit
+empty pieces and so cannot honour it. Only configs that select `newline_split`
+change value; the four configs in `configs/` do not.
 
 ### S13. Config paths resolve against the process CWD: **open**
 `config/language_metadata.py`, `loaders/multilingual_data.py`. `data_path` is
@@ -169,15 +194,31 @@ language name to a file or directory path, got list`, and no traceback. The AST
 init handler catches only `ImportError` (tree-sitter absent), so a bad config is
 no longer reported as "AST boundary metrics disabled".
 
-### L2. `--filter-script-family` with an unknown name: **open**
-`cli/run_analysis.py`. `--filter-script-family Klingon` exits 1 with `No valid
-language texts loaded`, which never says the group name was unknown or lists
-the valid ones.
+### L5. `--run-grouped-analysis` exited 1 with a bare `KeyError`: **fixed**
+`main.py`. `run_analysis` folds six metrics into their primaries before
+returning, and `run_grouped_analysis` then filtered those base results while
+still reading the pre-merge top-level key: `KeyError:
+'digit_split_variability'`, naming no flag. The flag was broken outright from
+the merge onwards, and nothing in the suite exercised it. Now reads the merged
+location, and a grouped run is covered by
+`test_output_contract.py::test_grouped_analysis_runs_after_the_metric_merge`.
 
-### L3. `--language-config` pointed at a directory: **open**
-`config/language_metadata.py:39-47`. Raises an unhandled `IsADirectoryError`,
-not one of the two errors `_load_config` handles. A comment at
-`cli/run_analysis.py:1029` claims directories are supported; no code path does.
+### L2. `--filter-script-family` with an unknown name: **fixed**
+`loaders/multilingual_data.py`. `--filter-script-family Klingon` exited 1 with
+`No valid language texts loaded`, which never said the group name was unknown
+or listed the valid ones. It now exits 1 with `No language in the config has
+script_family=Klingon. The config defines: Arabic, Cyrillic, Devanagari,
+Han_Simplified, Japanese, Korean, Latin.` and no traceback. A language in the
+selected group with no `data_path` is now an error too, on the same grounds as
+S3.
+
+### L3. `--language-config` pointed at a directory: **fixed**
+`config/language_metadata.py`. Raised an unhandled `IsADirectoryError`, not one
+of the two errors `_load_config` handles, and a comment in `cli/run_analysis.py`
+claimed directories were supported although no code path read one. Now exits 1
+with `Language metadata configuration must be a JSON file, but configs is a
+directory. Name the file inside it.` and the comment is corrected. `main()`
+prints this class of error without a traceback.
 
 ### L4. MorphScore's ImportError gives no install instruction: **fixed**
 `metrics/morphscore.py:20,72`. Names the package but not how to get it, unlike
@@ -220,22 +261,35 @@ for the whole corpus; no metric was reading it. Every place that inferred a
 source-to-token correspondence from token surfaces now uses offsets or raises.
 See the offsets entries below.
 
-### X11. Subword markers are stripped for every tokenizer family: **open**
-`metrics/base.py` `_process_token`. The WordPiece and BPE marker rules
-(`##` prefix, `</w>` suffix, `@@` suffix) are applied whatever the tokenizer,
-so for a byte-level BPE they corrupt real content: `_clean_token('###')`
-returns `'#'` and `_clean_token('##')` returns `''`. `###` is an ordinary
-Markdown heading token. Measured: 8 vocabulary entries in apertus and 31 in
-llama3 begin with `##`, and 2 and 3 respectively end with `</w>` or `@@`.
+### X11. Subword markers are stripped for every tokenizer family: **fixed**
+`metrics/base.py` `_process_token`. The WordPiece and BPE marker rules (`##`
+prefix, `</w>` suffix, `@@` suffix) were applied whatever the tokenizer, so for
+a byte-level BPE they truncated real content: `_clean_token('###')` returned
+`'#'`, `_clean_token('################')` returned a 14-character run, and
+`_clean_token('@@')` returned the empty string. Those are Markdown headings,
+comment banners and ordinary punctuation runs. Measured vocabulary entries
+matching a marker pattern: 35 in `cl100k_base`, 24 in `o200k_base`, 1 in the
+bundled `tokenizers/bpe.json`, none of which uses any of the three markers.
 
-This is the same shape as the special-token fix that landed in 18cfb28, and the
-same call sites are affected: reconstructions and the UTF-8 content-token
-denominator. The fix needs a per-tokenizer decision about whether the marker
-convention applies at all, which the wrapper can now answer the way it answers
-the special-token question.
+The marker set is now resolved per tokenizer, alongside the character decode
+table and the special-token set, through one `_set_tokenizer_context` entry
+point so a call site cannot update two of the three. Detection reads the
+backend model's own `continuing_subword_prefix` and `end_of_word_suffix`
+fields, then falls back to encoding a probe word certain to fragment and
+inspecting the pieces. When neither channel finds a marker, nothing is
+stripped: applying a WordPiece rule to a non-WordPiece vocabulary changes a
+content token into a different one, while leaving a real marker in place shows
+up as an unmappable span rather than as a wrong number.
 
-Found by the agent implementing the special-token accessor; not fixed there
-because it is a separate metric-affecting change.
+Re-measured after the fix: 0 altered entries for all three vocabularies. A
+WordPiece model still resolves to `{'##'}` and `##ing` still cleans to `ing`; a
+BPE trained with `end_of_word_suffix='</w>'` resolves to `{'</w>'}`. On the
+demo run, 23 of 2389 values in the results file moved: 16 in
+`ast_boundary_alignment` and `identifier_fragmentation`, all for tokenizer
+`bpe` on the R sample, whose comments start with `##`; 4 in `encoding_speed`
+(wall-clock); 3 in `tokenizer_fairness_gini` at 1e-15 relative magnitude.
+
+Found by the agent implementing the special-token accessor.
 
 ### X13. `id()`-keyed caches returned another tokenizer's data: **fixed**
 `metrics/base.py`. `_special_token_cache` and the pre-existing
@@ -258,16 +312,12 @@ content: 20479 of 37892 `_process_token` calls in one run used an empty set. The
 model's own unknown token is now a third channel, and an empty result returns
 None so the caller warns and uses `GENERIC_SPECIAL_TOKENS`.
 
-### X12. `SentencePieceTokenizer.get_special_token_ids()` is not overridden: **open**
-`core/tokenizer_wrapper.py`. It falls through to the base implementation, which
-returns an empty set, so no SentencePiece token is recognised as special by id.
-`get_special_token_strings()` was implemented for that class in 18cfb28, so the
-string path is correct and the id path is not. The visualizer works around it by
-also treating a raw zero-length offset as a special-token signal.
-
-Note: `sentencepiece` is not installed in the working venv, so the SentencePiece
-paths are covered only by stubs and the SP fixtures in `test_tokenizer_wrapper.py`
-skip. That gap should be closed before release.
+### X12. `SentencePieceTokenizer.get_special_token_ids()` is not overridden: **fixed**
+`core/tokenizer_wrapper.py`. See S18: both forms now come from one scan.
+`sentencepiece` was also not installed in the working venv, so those paths were
+covered only by stubs and the SP fixtures in `test_tokenizer_wrapper.py`
+skipped. It is now declared as an optional extra and in the dev group, and the
+SP tests run.
 
 ### X10. Reconstruction guessing, four further instances: **fixed**
 A dedicated sweep found four more places inferring source positions from token
@@ -338,20 +388,29 @@ tokens is fitted as `(10, 5.0)`. Measured: slope 0.607 and R-squared 0.794
 against a true 0.587 and 0.980. The rho and R-squared also rest on 4 bucket
 points, and take 3 and 4 distinct values across 37 tokenizers.
 
-### X7. `avg_tokens_per_line` mismatched numerator and denominator: **open**
-`metrics/basic.py:522-531`. Blank lines are filtered from the denominator while
-the numerator keeps the tokens they produced. A 4-line text with 2 non-blank
-lines and 8 tokens reports 4.0 rather than 2.0. No effect on line-per-item
-corpora such as FLORES; it matters for document corpora.
+### X7. `avg_tokens_per_line` mismatched numerator and denominator: **fixed**
+`metrics/basic.py`. Blank lines were filtered from the denominator while the
+numerator kept the tokens they produced. A 4-line text with 2 non-blank lines
+and 8 tokens reported 4.0 rather than 2.0. Lines are now counted with
+`str.splitlines()`, so blank lines count and a single trailing newline does not
+add a phantom empty line. A blank line contributes its newline token to the
+numerator and cannot be removed from it. No effect on line-per-item corpora
+such as FLORES; it matters for document corpora. The unmeasured case reports
+null rather than 0.0.
 
-### X8. Digit metrics silently use the prose corpus: **open**
-`metrics/math.py:382-393`. Without `--math-data` or `--use-builtin-math-data`
-the digit metrics run on whatever corpus was loaded, with no log line on that
-branch. On FLORES the observed digit lengths are 1 to 4 only, so the metric
-named for three-digit grouping never exercises a single ideal boundary, and
-74.2% of the sample falls in the vacuous length-3-or-under case. `avg_recall`
-and `avg_uniform_chunk` then equal the corpus short-number share, identically
-for every non-splitting tokenizer.
+### X8. Digit metrics silently use the prose corpus: **fixed**
+`metrics/math.py`. Without `--math-data` or `--use-builtin-math-data` the digit
+metrics run on whatever corpus was loaded, and that branch had no log line. On
+FLORES the observed digit lengths are 1 to 4 only, so the metric named for
+three-digit grouping never exercises a single ideal boundary, and 74.2% of the
+sample falls in the vacuous length-3-or-under case. `avg_recall` and
+`avg_uniform_chunk` then equal the corpus short-number share, identically for
+every non-splitting tokenizer. The branch now prints the same shape of warning
+`_resolve_code_ast_config` prints for a missing `--code-ast-config`: it names
+the three metrics affected, says the numbers are not comparable with a run that
+supplied math data, and points at `--no-digit-boundary`. The substitution
+itself is kept, because the prose corpus is a legitimate input for these
+metrics and the alternative is to disable them by default.
 
 ### X9. Dead code
 
@@ -370,11 +429,17 @@ are defined, exported from nowhere, and imported by nothing. The
 `core/input_utils.py`. 472 lines of code that never runs, including the only
 logic that handles the single-language case explicitly.
 
-### C3. `InputSpecification.get_vocab_size()` crashes on its own documented shape: **open**
-`core/input_types.py:177-182`. The pre-tokenized branch reads
-`self.vocabulary.vocab_size`, which is `None` for the `tokenizer +
-tokenized_data` shape that `main.py:create_analyzer_from_tokenized_data`
-constructs. Unreachable through the CLI, reachable by any API caller.
+### C3. `InputSpecification.get_vocab_size()` crashes on its own documented shape: **fixed**
+`core/input_types.py`. Both branches were wrong, not just the one first found.
+The pre-tokenized branch read `self.vocabulary.vocab_size`, which is None for
+the `tokenizer + tokenized_data` shape that
+`main.py:create_analyzer_from_tokenized_data` constructs, and the raw branch
+read `tokenizer.vocab_size`, an attribute `TokenizerWrapper` does not have. So
+the method raised `AttributeError` on every specification the package itself
+builds. It now reads `tokenizer.get_vocab_size()` when a tokenizer is present
+and falls back to the legacy `vocabulary` provider, whose protocol declares
+`vocab_size` as a property. Measured on all three shapes: 128000, 128000, 4242.
+Unreachable through the CLI, reachable by any API caller.
 
 ### C4. Dead branches: **partly fixed**
 `_build_indentation_consistency_results` never writes `overall`, so the slim

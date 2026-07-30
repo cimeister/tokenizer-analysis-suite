@@ -140,6 +140,66 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   probe failed, so the caller warns and falls back to `GENERIC_SPECIAL_TOKENS`.
   It returned an empty set, which asserts that the model declares no special
   tokens.
+- `include_empty_splits` is honoured by `newline_split` line counting, which
+  counted blank lines whatever the flag said. Only configs selecting
+  `newline_split` change value; none of the four in `configs/` does. Measured on
+  a 5-line text with 2 blank lines: 3 with the flag off, 5 with it on.
+  `word_counting: hf_whitespace` with `include_empty_splits: true` is now
+  rejected at config load: the HuggingFace Whitespace pretokenizer does not emit
+  empty pieces, so the flag was a no-op there.
+- `--filter-script-family` and `--filter-resource-level` name the unknown group
+  and list the ones the config defines. Both exited with `No valid language
+  texts loaded`, which said neither. A language in the selected group with no
+  `data_path` is now an error rather than a silent drop.
+- `--language-config` pointed at a directory exits with a message saying a JSON
+  file is expected, instead of an unhandled `IsADirectoryError`.
+- The CLI prints config and corpus errors without a traceback. The message
+  already names the flag, the file and what was expected; every other exception
+  keeps its stack.
+- A subword marker is stripped only from a tokenizer shown to use it. The
+  WordPiece `##` prefix, the CLIP-style `</w>` suffix and the subword-nmt `@@`
+  suffix were stripped from every tokenizer, so a byte-level BPE had ordinary
+  content truncated: `###` became `#`, a 16-character `#` banner lost two
+  characters, and `@@` became the empty string. Vocabulary entries matching a
+  marker pattern: 35 in `cl100k_base`, 24 in `o200k_base`, 1 in the bundled
+  `tokenizers/bpe.json`, none of which uses any of the three. The marker set is
+  read from the backend model's `continuing_subword_prefix` and
+  `end_of_word_suffix`, then from a probe encoding; when neither answers,
+  nothing is stripped. On the demo run this moved 16 values in
+  `ast_boundary_alignment` and `identifier_fragmentation`, all for the R sample,
+  whose comments start with `##`.
+- `avg_tokens_per_line` (now `compression_rate.tokens_per_line`) counts lines
+  with `str.splitlines()`. Blank lines were dropped from the denominator while
+  their newline tokens stayed in the numerator, so `"a\n\nb\n\n"` with 4 tokens
+  reported 2.0 against the 1.0 its four lines give. Line-per-item corpora such as
+  FLORES are unaffected; document corpora are not. A text with no content reports
+  null rather than 0.0.
+- `InputSpecification.get_vocab_size()` works. Both of its branches raised
+  `AttributeError`: the raw one read `tokenizer.vocab_size`, which
+  `TokenizerWrapper` does not define, and the pre-tokenized one read
+  `self.vocabulary`, which is None for the `tokenizer + tokenized_data` shape the
+  package itself builds. Unreachable from the CLI, reachable from the API.
+- A run with no `--math-data` and no `--use-builtin-math-data` warns that the
+  digit metrics are being computed on the prose corpus. On FLORES the observed
+  digit lengths are 1 to 4, so the metric named for three-digit grouping never
+  sees an ideal boundary and 74.2% of the sample falls in the vacuous
+  length-3-or-under case. The warning matches the one `--code-ast-config`
+  already prints.
+- `--run-grouped-analysis` works again. It read `digit_split_variability` as a
+  top-level key after the metric merge had nested it under
+  `three_digit_boundary_alignment`, so the flag exited 1 with a bare `KeyError`.
+  The nested block is also language-filtered now; passing it through untouched
+  gave each language group numbers computed over every language in the run.
+- The grouped-plot loop no longer wraps its calls in `except Exception`. It was
+  the only guarded call among roughly fifteen in `generate_all_plots`, so a real
+  failure there logged a warning and returned normally while the same failure in
+  any other plot propagated.
+- The C16 vocabulary-reachability check scans in token-id order, so its example
+  list is the same on every run. It iterated `get_vocab()`, whose order varies
+  between processes, so two reports on the same tokenizer showed different
+  examples beside identical counts.
+- `_fill_offsets` in the visualizer no longer takes an unused `text_len`
+  argument.
 - MorphScore reports `null` rather than `0.0` for a tokenizer it evaluated on
   zero languages, which happens whenever the data directory is missing or holds
   no CSV for any requested language. The run exits 0 and otherwise looks

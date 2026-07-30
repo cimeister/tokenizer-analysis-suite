@@ -10,14 +10,14 @@ respective tokens, the model can learn a consistent positional mapping.
 
 Four failure modes are measured here:
 
-1. **Three-Digit Boundary Alignment Score** -- the tokenizer splits at the
+1. **Three-Digit Boundary Alignment Score**: the tokenizer splits at the
    wrong positions inside a number.
-2. **Digit Split Variability** -- the tokenizer splits numbers of
+2. **Digit Split Variability**: the tokenizer splits numbers of
    the same digit length at *different* positions depending on the
    specific digit values (value-dependent BPE merges).
-3. **Numeric Magnitude Consistency** -- does fertility (tokens per digit)
+3. **Numeric Magnitude Consistency**: does fertility (tokens per digit)
    scale predictably across digit magnitudes?
-4. **Operator Isolation Rate** -- are mathematical operators tokenized as
+4. **Operator Isolation Rate**: are mathematical operators tokenized as
    isolated units?
 """
 
@@ -41,22 +41,22 @@ logger = logging.getLogger(__name__)
 class DigitBoundaryMetrics(BaseMetrics):
     """Digit boundary alignment and digit split variability.
 
-    Worked examples -- Three-Digit Boundary Alignment
+    Worked examples: Three-Digit Boundary Alignment
     =============================================
 
-    ``"1234567"`` (L=7) -- ideal boundaries: {1, 4}  (i.e. ``"1|234|567"``)
+    ``"1234567"`` (L=7), ideal boundaries: {1, 4}  (i.e. ``"1|234|567"``)
 
     * Tokenized as ``"1" "234" "567"``   -> actual {1,4} -> P=1.0 R=1.0 F1=1.0
     * Tokenized as ``"1234" "567"``      -> actual {4}   -> P=1.0 R=0.5 F1=0.67
     * Tokenized as ``"12" "345" "67"``   -> actual {2,5} -> P=0.0 R=0.0 F1=0.0
     * Tokenized as ``"1234567"``         -> actual {}    -> P=1.0 R=0.0 F1=0.0
 
-    ``"42"`` (L=2) -- ideal boundaries: {}
+    ``"42"`` (L=2), ideal boundaries: {}
 
     * Tokenized as ``"42"``   -> actual {} -> P=1.0 R=1.0 F1=1.0
     * Tokenized as ``"4" "2"`` -> actual {1} -> P=0.0 R=1.0 F1=0.0
 
-    Worked examples -- Digit Split Variability
+    Worked examples: Digit Split Variability
     =================================================
 
     L=4, numbers ``["1234","5678","9012","3456"]`` all tokenized as
@@ -237,14 +237,14 @@ class DigitBoundaryMetrics(BaseMetrics):
         ========  =====  ===  ===  ===  =========================================
         actual    ideal   P    R   F1   Rationale
         --------  -----  ---  ---  ---  -----------------------------------------
-        empty     empty  1.0  1.0  1.0  Short number, single token -- nothing to
+        empty     empty  1.0  1.0  1.0  Short number, single token: nothing to
                                          get wrong, nothing to miss.
-        non-empty empty  0.0  1.0  0.0  Short number needlessly split -- all
+        non-empty empty  0.0  1.0  0.0  Short number needlessly split: all
                                          boundaries are spurious (P=0).  R=1 by
                                          vacuous truth (zero ideal boundaries
                                          were all trivially recovered).  F1=0
                                          because precision dominates.
-        empty     non-∅  1.0  0.0  0.0  Long number kept as single token -- no
+        empty     non-∅  1.0  0.0  0.0  Long number kept as single token: no
                                          spurious boundaries (P=1) but none of
                                          the ideal ones were produced (R=0).
         non-empty non-∅  TP/(TP+FP)  TP/(TP+FN)  harmonic mean
@@ -390,7 +390,26 @@ class DigitBoundaryMetrics(BaseMetrics):
                 len(self._math_texts),
             )
         else:
+            # No dedicated math corpus, so the digit metrics run on whatever
+            # prose corpus was loaded. This branch used to be silent. On
+            # FLORES the observed digit lengths are 1 to 4 only, so a metric
+            # named for three-digit grouping never sees a single ideal
+            # boundary, and 74.2% of the sample falls in the vacuous
+            # length-3-or-under case, where avg_recall and avg_uniform_chunk
+            # equal the corpus short-number share identically for every
+            # tokenizer that does not split digits. Numbers from this branch
+            # are not comparable with numbers from a run that passed
+            # --math-data or --use-builtin-math-data.
             tokenized_data = prose_data
+            logger.warning(
+                "%s\nNO MATH CORPUS GIVEN: the digit metrics "
+                "(three_digit_boundary_alignment, digit_split_variability, "
+                "numeric_magnitude_consistency) will be computed on the prose "
+                "corpus, which carries few long numbers. These numbers are NOT "
+                "comparable to a run that passed --math-data or "
+                "--use-builtin-math-data. Pass --no-digit-boundary to disable "
+                "them outright.\n%s", "=" * 78, "=" * 78,
+            )
 
         # ---- accumulators ----
         # alignment: tok -> lang -> digit_length_str -> list of per-number dicts
@@ -457,7 +476,7 @@ class DigitBoundaryMetrics(BaseMetrics):
                             if source_to_recon[i] is not None
                         ]
                         if len(recon_positions) != num_digits:
-                            # Not all digits mapped — skip this span
+                            # Not all digits mapped: skip this span
                             continue
                         span_start = recon_positions[0]
                         span_end = recon_positions[-1] + 1
@@ -502,8 +521,7 @@ class DigitBoundaryMetrics(BaseMetrics):
                         pattern = tuple(sorted(boundaries))
                         entropy_acc[tok_name][lang][bucket].append(pattern)
 
-        self._char_decode_table = None
-        self._special_tokens = None
+        self._clear_tokenizer_context()
 
         # ---- operator isolation: prose / code / math, reported separately ----
         domain_accs = {
@@ -828,8 +846,7 @@ class DigitBoundaryMetrics(BaseMetrics):
                 skipped_no_offsets,
             )
 
-        self._char_decode_table = None
-        self._special_tokens = None
+        self._clear_tokenizer_context()
         return acc
 
     @staticmethod
@@ -1520,14 +1537,15 @@ class DigitBoundaryMetrics(BaseMetrics):
         Mirrors the per-text body inside ``compute()`` but does not pool across
         a corpus. Used by per-example correlation analysis. The standard
         ``compute()`` workflow is unaffected; this method snapshots and
-        restores ``self._char_decode_table`` and ``self._special_tokens`` so
-        calling it does not mutate aggregator state.
+        restores ``self._char_decode_table``, ``self._special_tokens`` and
+        ``self._subword_markers`` so calling it does not mutate aggregator
+        state.
 
         Returns a dict with keys: ``n_digit_spans``, ``mean_digit_f1``,
         ``mean_fertility_per_digit``, ``single_token_number_rate``,
         ``uniform_chunk_rate``, ``n_operators``, ``operator_isolation_rate``,
         ``n_compound_operators``, ``compound_operator_preserved_rate``,
-        ``n_tokens`` (the token count produced for the whole text — useful
+        ``n_tokens`` (the token count produced for the whole text, useful
         as a regression covariate).
         NaN is returned for ratios with empty denominators (e.g. no digit
         spans in the text).
@@ -1552,13 +1570,15 @@ class DigitBoundaryMetrics(BaseMetrics):
         # Snapshot + restore aggregator state so compute() callers are unaffected.
         saved_table = getattr(self, "_char_decode_table", None)
         saved_specials = getattr(self, "_special_tokens", None)
+        saved_markers = getattr(self, "_subword_markers", None)
         try:
-            self._char_decode_table = (
+            self._set_tokenizer_context(
                 char_decode_table
                 if char_decode_table is not None
-                else self._build_char_decode_table(tokenizer_obj)
+                else self._build_char_decode_table(tokenizer_obj),
+                self._resolve_special_tokens(tokenizer_obj),
+                self._resolve_subword_markers(tokenizer_obj),
             )
-            self._special_tokens = self._resolve_special_tokens(tokenizer_obj)
 
             # ---- Encode and build char→token map (mirrors compute() body) ----
             try:
@@ -1698,5 +1718,4 @@ class DigitBoundaryMetrics(BaseMetrics):
                 "parse_status": "ok",
             }
         finally:
-            self._char_decode_table = saved_table
-            self._special_tokens = saved_specials
+            self._set_tokenizer_context(saved_table, saved_specials, saved_markers)

@@ -73,6 +73,21 @@ class TextMeasurementConfig:
             (self.method == NormalizationMethod.LINES and self.line_counting == LineCountingMethod.CUSTOM_REGEX)):
             if not self.custom_regex:
                 raise ValueError("custom_regex must be provided when using CUSTOM_REGEX counting method")
+
+        # The HuggingFace Whitespace pretokenizer never emits an empty piece, so
+        # include_empty_splits=True cannot change its count. Setting it there was
+        # a silent no-op: on "  hello   world  ", regex_whitespace goes from 2 to
+        # 4 as the flag flips while hf_whitespace stays at 2 either way.
+        if (self.include_empty_splits
+                and self.method == NormalizationMethod.WORDS
+                and self.word_counting == WordCountingMethod.HUGGINGFACE_WHITESPACE):
+            raise ValueError(
+                "include_empty_splits=True cannot be honoured with "
+                "word_counting='hf_whitespace': the HuggingFace Whitespace "
+                "pretokenizer does not emit empty pieces. Use "
+                "word_counting='python_split' or 'regex_whitespace', or set "
+                "include_empty_splits=False."
+            )
         
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> 'TextMeasurementConfig':
@@ -163,7 +178,13 @@ class TextMeasurer:
         if self.config.line_counting == LineCountingMethod.SINGLE:
             return 1
         elif self.config.line_counting == LineCountingMethod.NEWLINE_SPLIT:
-            return len(text.split('\n'))
+            parts = text.split('\n')
+            if not self.config.include_empty_splits:
+                # Blank lines were counted as lines whatever the flag said,
+                # which made include_empty_splits a no-op here while the other
+                # two line-counting methods honoured it.
+                parts = [p for p in parts if p.strip()]
+            return len(parts)
         elif self.config.line_counting == LineCountingMethod.CUSTOM_REGEX:
             parts = self._compiled_regex.split(text)
             if not self.config.include_empty_splits:

@@ -43,6 +43,14 @@ class LanguageMetadata:
                 return json.load(f)
         except FileNotFoundError:
             raise FileNotFoundError(f"Language metadata configuration file not found: {config_path}")
+        except IsADirectoryError:
+            # A comment in cli/run_analysis.py used to claim directories were
+            # supported here; no code path ever read one, and the unhandled
+            # IsADirectoryError named the path but not what was expected of it.
+            raise IsADirectoryError(
+                f"Language metadata configuration must be a JSON file, but "
+                f"{config_path} is a directory. Name the file inside it."
+            )
         except json.JSONDecodeError as e:
             raise ValueError(f"Invalid JSON in language metadata configuration: {e}")
     

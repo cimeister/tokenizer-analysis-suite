@@ -238,10 +238,7 @@ def _ws_visible(ch: str) -> str:
     return ch
 
 
-def _fill_offsets(
-    offsets: list[tuple[int, int]],
-    text_len: int,
-) -> list[tuple[int, int]]:
+def _fill_offsets(offsets: list[tuple[int, int]]) -> list[tuple[int, int]]:
     """Fill gaps in offsets and clamp overlaps.
 
     Pre-tokenizers (e.g. GPT-2 ByteLevel) may consume whitespace that
@@ -317,7 +314,7 @@ def visualize_tokens(
     # If offsets are available, use them for a character-span view.
     if offsets:
         raw_offsets = offsets
-        offsets = _fill_offsets(raw_offsets, len(text))
+        offsets = _fill_offsets(raw_offsets)
         spans = [text[s:e] for s, e in offsets]
     else:
         raw_offsets = None

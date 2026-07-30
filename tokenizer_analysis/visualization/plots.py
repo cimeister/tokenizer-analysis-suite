@@ -633,12 +633,14 @@ def generate_all_plots(results: Dict[str, Any], save_dir: str, tokenizer_names: 
         for group_type, group_data in grouped_results.items():
             if not group_data:  # Skip empty group data
                 continue
+            # Unguarded, like the other roughly fifteen plot calls in this
+            # function. plot_grouped_analysis already returns early and logs
+            # when a metric is absent from the grouped results, which is what
+            # the handler here was covering; what it also covered was a real
+            # failure, which returned normally and left the figure missing.
             for metric in ['fertility', 'vocabulary_utilization', 'compression_rate', 'morphscore']:
-                try:
-                    plot_grouped_analysis(grouped_results, grouped_dir, metric, group_type,
-                                          tokenizer_names=tokenizer_names)
-                except Exception as e:
-                    logger.warning(f"Failed to plot {metric} for group type {group_type}: {e}")
+                plot_grouped_analysis(grouped_results, grouped_dir, metric, group_type,
+                                      tokenizer_names=tokenizer_names)
 
 
 def _generate_per_language_plots(results: Dict[str, Any], save_dir: str, 

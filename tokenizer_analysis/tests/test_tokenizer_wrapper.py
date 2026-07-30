@@ -54,7 +54,7 @@ def trained_hf_tokenizer():
 
     tok = Tokenizer(BPE(unk_token="<unk>"))
     # add_prefix_space=False so ByteLevel does not prepend a space to the
-    # first token — this ensures decode(encode(text)) == text exactly,
+    # first token. This ensures decode(encode(text)) == text exactly,
     # without needing whitespace stripping in roundtrip assertions.
     tok.pre_tokenizer = ByteLevel(add_prefix_space=False)
     tok.decoder = ByteLevelDecoder()
@@ -302,7 +302,7 @@ class TestConvertIdsRoundtrip:
                 f"Token {i} is {type(tok_str)}, expected str"
             )
             assert not tok_str.startswith("<UNK_"), (
-                f"Token ID {ids[i]} from encode() mapped to {tok_str!r} — "
+                f"Token ID {ids[i]} from encode() mapped to {tok_str!r}, "
                 f"all IDs from encode() should be in the vocabulary"
             )
 
@@ -316,7 +316,7 @@ class TestDecodeRoundtrip:
     - SentencePiece: normalization_rule_name="identity", add_dummy_prefix=False,
       remove_extra_whitespaces=False (no NFKC normalization, no dummy prefix)
 
-    This ensures the roundtrip test is strict — any mismatch is a real bug,
+    This ensures the roundtrip test is strict: any mismatch is a real bug,
     not an artifact of pretokenization normalization.
     """
 

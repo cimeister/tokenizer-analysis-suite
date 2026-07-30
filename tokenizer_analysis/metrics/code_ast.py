@@ -7,11 +7,11 @@ delimiters) that coincide with token boundaries produced by the tokenizer.
 
 Five AST node categories are tracked independently:
 
-1. **Identifiers** -- variable names, function names, class names, etc.
-2. **Keywords** -- language keywords (``if``, ``for``, ``return``, ...).
-3. **Operators** -- ``+``, ``==``, ``&&``, etc.
-4. **Literals** -- string, numeric, and boolean literals.
-5. **Delimiters** -- ``(``, ``)``, ``{``, ``}``, ``[``, ``]``, ``;``, ``,``.
+1. **Identifiers**: variable names, function names, class names, etc.
+2. **Keywords**: language keywords (``if``, ``for``, ``return``, ...).
+3. **Operators**: ``+``, ``==``, ``&&``, etc.
+4. **Literals**: string, numeric, and boolean literals.
+5. **Delimiters**: ``(``, ``)``, ``{``, ``}``, ``[``, ``]``, ``;``, ``,``.
 """
 
 import math
@@ -443,7 +443,7 @@ class ASTBoundaryMetrics(BaseMetrics):
         result: List[Optional[int]] = [None] * source_len
         for tok_idx, (start, end) in enumerate(offsets):
             if start == end:
-                # Special token (e.g. <s>, </s>) — no source coverage
+                # Special token (e.g. <s>, </s>): no source coverage
                 continue
             for pos in range(start, min(end, source_len)):
                 result[pos] = tok_idx
@@ -544,8 +544,8 @@ class ASTBoundaryMetrics(BaseMetrics):
         Parameters use *source-code* character coordinates following the
         half-open ``[start, end)`` convention (mirrors tree-sitter):
 
-        * *char_start* — inclusive start in source-code character coordinates
-        * *char_end* — exclusive end in source-code character coordinates
+        * *char_start*: inclusive start in source-code character coordinates
+        * *char_end*: exclusive end in source-code character coordinates
 
         Positions are translated to the reconstructed-text coordinate space
         via *source_to_recon* before checking against *char_to_token*.
@@ -690,7 +690,7 @@ class ASTBoundaryMetrics(BaseMetrics):
 
         .. note::
 
-           *tokenized_data* is **not used** — the metric loads its own code
+           *tokenized_data* is **not used**: the metric loads its own code
            snippets and encodes them with each tokenizer.
         """
         if not self._ensure_treesitter():
@@ -852,7 +852,7 @@ class ASTBoundaryMetrics(BaseMetrics):
             for si, categorized_spans in enumerate(spans_list):
                 snippet = snippets[si]
 
-                # -- Tokenizer-independent pre-computation (ONCE per snippet) --
+                # Tokenizer-independent pre-computation (ONCE per snippet)
                 source_bytes = snippet.encode("utf-8")
                 byte_to_char = self._byte_to_char_offsets(source_bytes)
 
@@ -891,7 +891,7 @@ class ASTBoundaryMetrics(BaseMetrics):
                     code_lang, si + 1, len(spans_list),
                 )
 
-                # -- Per-tokenizer work --
+                # Per-tokenizer work
                 for tok_name, tokenizer in active_tokenizers:
                     self._set_tokenizer_context(
                         decode_tables[tok_name],

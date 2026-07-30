@@ -57,6 +57,8 @@ def _make_instance():
     inst._char_decode_table = None
     inst._special_tokens = None
     inst._special_token_cache = {}
+    inst._subword_markers = None
+    inst._subword_marker_cache = {}
     return inst
 
 
@@ -356,7 +358,7 @@ class TestClassifyNode:
         node = _MockNode("expression_statement", "x + 1", is_named=True)
         assert ASTBoundaryMetrics._classify_node(node) is None
 
-    # -- Punctuation exclusion from operator category --
+    # Punctuation exclusion from operator category
 
     def test_colon_not_operator(self):
         node = _MockNode(":", ":", is_named=False)
@@ -496,8 +498,8 @@ class TestParquetLoading:
             "content": [
                 "<reponame>u/r<filename>a.py<gh_stars>0\ndef foo(): pass\n",
                 "class Bar:\n    x = 1\n",
-                "",       # empty — should be skipped
-                "  \t  ", # whitespace-only — should be skipped
+                "",       # empty: should be skipped
+                "  \t  ", # whitespace-only: should be skipped
             ]
         })
         path = tmp_path / "test.parquet"
@@ -787,6 +789,8 @@ class TestEndToEnd:
         inst._char_decode_table = None
         inst._special_tokens = None
         inst._special_token_cache = {}
+        inst._subword_markers = None
+        inst._subword_marker_cache = {}
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -826,6 +830,8 @@ class TestEndToEnd:
         inst._char_decode_table = None
         inst._special_tokens = None
         inst._special_token_cache = {}
+        inst._subword_markers = None
+        inst._subword_marker_cache = {}
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -863,6 +869,8 @@ class TestEndToEnd:
         inst._char_decode_table = None
         inst._special_tokens = None
         inst._special_token_cache = {}
+        inst._subword_markers = None
+        inst._subword_marker_cache = {}
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -895,6 +903,8 @@ class TestEndToEnd:
         inst._char_decode_table = None
         inst._special_tokens = None
         inst._special_token_cache = {}
+        inst._subword_markers = None
+        inst._subword_marker_cache = {}
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -936,6 +946,8 @@ class TestEndToEnd:
         inst._char_decode_table = None
         inst._special_tokens = None
         inst._special_token_cache = {}
+        inst._subword_markers = None
+        inst._subword_marker_cache = {}
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -1039,10 +1051,18 @@ class TestPrintResults:
 # ======================================================================
 
 class TestDecodeRawToken:
-    """Verify whitespace-preserving token decoding."""
+    """Verify whitespace-preserving token decoding.
+
+    All three subword markers are set active on self.inst so the
+    marker-stripping tests below exercise _process_token's per-marker
+    branches directly, the same simplification TestProcessToken uses. Marker
+    gating itself (only strip a marker a specific tokenizer is shown to use)
+    is covered separately in TestSubwordMarkerGating.
+    """
 
     def setup_method(self):
         self.inst = _make_instance()
+        self.inst._subword_markers = {"##", "</w>", "@@"}
 
     def test_g_prefix_to_space(self):
         assert self.inst._decode_raw_token("Ġdef") == " def"
@@ -1096,12 +1116,18 @@ class TestDecodeRawToken:
 class TestProcessToken:
     """Verify the shared _process_token helper produces results consistent
     with both _clean_token (preserve_space=False) and _decode_raw_token
-    (preserve_space=True)."""
+    (preserve_space=True).
+
+    All three subword markers are set active on self.inst (see
+    TestDecodeRawToken's docstring); marker gating itself is covered
+    separately in TestSubwordMarkerGating.
+    """
 
     def setup_method(self):
         self.inst = _make_instance()
+        self.inst._subword_markers = {"##", "</w>", "@@"}
 
-    # -- preserve_space=False (mirrors _clean_token) --
+    # preserve_space=False (mirrors _clean_token)
 
     def test_strip_g_prefix(self):
         assert self.inst._process_token("Ġdef", preserve_space=False) == "def"
@@ -1124,7 +1150,7 @@ class TestProcessToken:
     def test_plain_unchanged(self):
         assert self.inst._process_token("abc", preserve_space=False) == "abc"
 
-    # -- preserve_space=True (mirrors _decode_raw_token) --
+    # preserve_space=True (mirrors _decode_raw_token)
 
     def test_preserve_g_prefix(self):
         assert self.inst._process_token("Ġdef", preserve_space=True) == " def"
@@ -1147,7 +1173,7 @@ class TestProcessToken:
     def test_preserve_plain_unchanged(self):
         assert self.inst._process_token("abc", preserve_space=True) == "abc"
 
-    # -- Multi-char decode (byte-level BPE) --
+    # Multi-char decode (byte-level BPE)
 
     def test_multi_g_preserve(self):
         """ĠĠĠĠ should decode to 4 spaces with preserve_space=True."""
@@ -1180,7 +1206,7 @@ class TestProcessToken:
         """▁▁▁▁ should decode to 3 spaces with preserve_space=False."""
         assert self.inst._process_token("▁▁▁▁", preserve_space=False) == "   "
 
-    # -- Consistency: _clean_token and _decode_raw_token delegate correctly --
+    # Consistency: _clean_token and _decode_raw_token delegate correctly
 
     def test_clean_token_matches_process_token(self):
         tokens = ["Ġdef", "▁x", "##ing", "word</w>", "tok@@", "<|pad|>", "abc"]
@@ -1192,7 +1218,7 @@ class TestProcessToken:
         for t in tokens:
             assert self.inst._decode_raw_token(t) == self.inst._process_token(t, preserve_space=True)
 
-    # -- SentencePiece byte-fallback decoding (<0xNN> → chr(NN)) --
+    # SentencePiece byte-fallback decoding (<0xNN> → chr(NN))
 
     def test_sp_byte_fallback_newline(self):
         """<0x0A> should decode to a literal newline (the bug that broke EuroLLM)."""
@@ -1224,6 +1250,54 @@ class TestProcessToken:
         recon, c2t = self.inst._build_char_to_token_map(tokens)
         assert recon == "def\nx"
         assert c2t == [0, 0, 0, 1, 2]
+
+
+# ======================================================================
+# Subword-marker gating (the defect: unconditional stripping)
+# ======================================================================
+
+class TestSubwordMarkerGating:
+    """_process_token strips a marker only when the tokenizer being
+    processed is shown to use it (self._subword_markers). A bare
+    _make_instance() never resolved a real tokenizer, so by default no
+    marker is stripped, reproducing the reported defect: a byte-level BPE
+    vocabulary's ordinary content tokens ('###', '################', '@@')
+    must survive _process_token unchanged.
+    """
+
+    def setup_method(self):
+        self.inst = _make_instance()
+
+    def test_markdown_heading_survives_by_default(self):
+        assert self.inst._process_token("###", preserve_space=False) == "###"
+
+    def test_comment_banner_survives_by_default(self):
+        assert self.inst._process_token(
+            "################", preserve_space=False
+        ) == "################"
+
+    def test_bare_at_at_survives_by_default(self):
+        assert self.inst._process_token("@@", preserve_space=False) == "@@"
+
+    def test_end_of_word_suffix_survives_by_default(self):
+        assert self.inst._process_token("word</w>", preserve_space=False) == "word</w>"
+
+    def test_empty_marker_set_behaves_like_unresolved(self):
+        self.inst._subword_markers = set()
+        assert self.inst._process_token("###", preserve_space=False) == "###"
+
+    def test_markers_gated_independently(self):
+        """Resolving '##' active does not also strip '</w>' or '@@'."""
+        self.inst._subword_markers = {"##"}
+        assert self.inst._process_token("##ing", preserve_space=False) == "ing"
+        assert self.inst._process_token("word</w>", preserve_space=False) == "word</w>"
+        assert self.inst._process_token("word@@", preserve_space=False) == "word@@"
+
+    def test_stripping_activates_once_marker_resolved(self):
+        self.inst._subword_markers = {"##", "</w>", "@@"}
+        assert self.inst._process_token("##ing", preserve_space=False) == "ing"
+        assert self.inst._process_token("word</w>", preserve_space=False) == "word"
+        assert self.inst._process_token("word@@", preserve_space=False) == "word"
 
 
 # ======================================================================
@@ -1482,6 +1556,8 @@ class TestIdentifierFragmentationE2E:
         inst._char_decode_table = None
         inst._special_tokens = None
         inst._special_token_cache = {}
+        inst._subword_markers = None
+        inst._subword_marker_cache = {}
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -1519,6 +1595,8 @@ class TestIdentifierFragmentationE2E:
         inst._char_decode_table = None
         inst._special_tokens = None
         inst._special_token_cache = {}
+        inst._subword_markers = None
+        inst._subword_marker_cache = {}
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -1562,6 +1640,8 @@ class TestIndentationConsistencyE2E:
         inst._char_decode_table = None
         inst._special_tokens = None
         inst._special_token_cache = {}
+        inst._subword_markers = None
+        inst._subword_marker_cache = {}
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -1595,6 +1675,8 @@ class TestIndentationConsistencyE2E:
         inst._char_decode_table = None
         inst._special_tokens = None
         inst._special_token_cache = {}
+        inst._subword_markers = None
+        inst._subword_marker_cache = {}
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -1639,6 +1721,8 @@ class TestIndentationConsistencyE2E:
         inst._char_decode_table = None
         inst._special_tokens = None
         inst._special_token_cache = {}
+        inst._subword_markers = None
+        inst._subword_marker_cache = {}
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -1689,6 +1773,8 @@ class TestIndentationConsistencyE2E:
         inst._char_decode_table = None
         inst._special_tokens = None
         inst._special_token_cache = {}
+        inst._subword_markers = None
+        inst._subword_marker_cache = {}
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -1735,6 +1821,8 @@ class TestIndentationConsistencyE2E:
         inst._char_decode_table = None
         inst._special_tokens = None
         inst._special_token_cache = {}
+        inst._subword_markers = None
+        inst._subword_marker_cache = {}
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -1773,6 +1861,8 @@ class TestIndentationConsistencyE2E:
         inst._char_decode_table = None
         inst._special_tokens = None
         inst._special_token_cache = {}
+        inst._subword_markers = None
+        inst._subword_marker_cache = {}
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -1822,6 +1912,8 @@ class TestIndentationConsistencyE2E:
         inst._char_decode_table = None
         inst._special_tokens = None
         inst._special_token_cache = {}
+        inst._subword_markers = None
+        inst._subword_marker_cache = {}
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -2055,6 +2147,8 @@ class TestWhitespaceStrippingTokenizer:
         inst._char_decode_table = None
         inst._special_tokens = None
         inst._special_token_cache = {}
+        inst._subword_markers = None
+        inst._subword_marker_cache = {}
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -2145,6 +2239,8 @@ class TestIndentationConsistencyBPE:
         inst._char_decode_table = None
         inst._special_tokens = None
         inst._special_token_cache = {}
+        inst._subword_markers = None
+        inst._subword_marker_cache = {}
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -2180,6 +2276,8 @@ class TestIndentationConsistencyBPE:
         inst._char_decode_table = None
         inst._special_tokens = None
         inst._special_token_cache = {}
+        inst._subword_markers = None
+        inst._subword_marker_cache = {}
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -2225,6 +2323,8 @@ class TestIndentationConsistencyBPE:
         inst._char_decode_table = None
         inst._special_tokens = None
         inst._special_token_cache = {}
+        inst._subword_markers = None
+        inst._subword_marker_cache = {}
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -2285,6 +2385,8 @@ class TestIndentationConsistencySP:
         inst._char_decode_table = None
         inst._special_tokens = None
         inst._special_token_cache = {}
+        inst._subword_markers = None
+        inst._subword_marker_cache = {}
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -2616,7 +2718,7 @@ class TestPerSnippetTimeout:
             pytest.skip("tree-sitter-language-pack not installed")
 
         good_snippet = "def foo():\n    return 42\n"
-        bad_snippet = "x = 1\n"  # content doesn't matter — we'll make it hang
+        bad_snippet = "x = 1\n"  # content doesn't matter: we'll make it hang
 
         code_snippets = {"python": [good_snippet, bad_snippet, good_snippet]}
         lang_to_ts = CodeDataLoader._LANG_TO_TREESITTER
@@ -2643,7 +2745,7 @@ class TestPerSnippetTimeout:
         assert "python" in result
         spans_list = result["python"]
 
-        # Must have exactly 3 entries — one per input snippet
+        # Must have exactly 3 entries: one per input snippet
         assert len(spans_list) == 3, f"Expected 3 entries, got {len(spans_list)}"
 
         # First and third (good) should have real spans
@@ -2665,7 +2767,7 @@ class TestPerSnippetTimeout:
         """End-to-end: the subprocess worker skips a genuinely slow snippet
         without stalling the entire language.
 
-        We send two snippets — one normal and one enormous — and verify
+        We send two snippets (one normal and one enormous) and verify
         that the worker completes within its per-snippet timeout window
         and that both entries are present (the slow one with empty spans).
         """
@@ -2738,7 +2840,7 @@ class TestPerSnippetTimeout:
             for cat in ("identifier", "keyword", "literal")
         ), "Good snippet should produce AST spans"
 
-        # Second snippet (stress) — whether it parsed or timed out,
+        # Second snippet (stress), whether it parsed or timed out,
         # it must be a valid spans dict with all categories present
         stress_spans = spans_list[1]
         assert isinstance(stress_spans, dict)

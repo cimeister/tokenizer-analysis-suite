@@ -5,8 +5,8 @@ faithful pipeline (the tokenizer's configured normalizer + pretokenizer are
 never bypassed).  No silent fallbacks: anything that cannot be verified is
 surfaced as ``unverifiable`` (which forces overall >= warn), never hidden.
 
-Design principle (see plan): a multibyte char — or base char + combining
-mark — split across tokens is fine when the byte stream stays valid UTF-8
+Design principle (see plan): a multibyte char (or base char + combining
+mark) split across tokens is fine when the byte stream stays valid UTF-8
 and the text roundtrips losslessly.  The only defect is an
 incomplete/orphaned multibyte grouping (the Character Boundary Crossing Rate
 semantics).  A vocab token non-self-reproducing in isolation is normal for
@@ -53,7 +53,12 @@ from ..core.tokenizer_wrapper import (
     UniMixLMTokenizer,
     resolve_special_token_strings,
 )
-from ..metrics.base import BaseMetrics
+from ..metrics.base import (
+    BaseMetrics,
+    _CLIP_BPE_END_OF_WORD_SUFFIX,
+    _SUBWORD_NMT_CONTINUATION_SUFFIX,
+    _WORDPIECE_CONTINUATION_PREFIX,
+)
 from ..metrics.basic import BasicTokenizationMetrics
 from ..metrics.math import DigitBoundaryMetrics
 from ..metrics.utf8_integrity import (
@@ -106,7 +111,7 @@ def severity_to_exit_code(overall: str) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Local token cleaning (audit B2: _process_token is an instance method —
+# Local token cleaning (audit B2: _process_token is an instance method,
 # reimplemented here per decision 3, no metrics/ edits).
 # ---------------------------------------------------------------------------
 
@@ -124,21 +129,29 @@ def is_special_token(raw: str,
 
 
 def clean_token(raw: str, char_decode_table: Dict[str, str],
-                special_tokens: Optional[Set[str]] = None) -> Optional[str]:
+                special_tokens: Optional[Set[str]] = None,
+                subword_markers: Optional[Set[str]] = None) -> Optional[str]:
     """Strip subword markers; return ``None`` for special tokens.
 
-    Mirrors ``BaseMetrics._process_token(preserve_space=False)``.
+    Mirrors ``BaseMetrics._process_token(preserve_space=False)``. A marker
+    ('##', '</w>', '@@') is stripped only when *subword_markers* says the
+    owning tokenizer actually uses it (see
+    ``BaseMetrics._detect_subword_markers``); ``None`` or an empty
+    *subword_markers* strips none, matching ``_process_token``'s
+    "unresolved / not detected" default: unconditional stripping is the
+    defect both this function and ``_process_token`` were fixed for.
     """
     if is_special_token(raw, special_tokens):
         return None
     table = {**BaseMetrics._DEFAULT_CHAR_DECODE, **(char_decode_table or {})}
     decoded = "".join(table.get(ch, ch) for ch in raw)
-    if decoded.startswith("##"):
-        return decoded[2:]
-    if decoded.endswith("</w>"):
-        return decoded[:-4]
-    if decoded.endswith("@@"):
-        return decoded[:-2]
+    markers = subword_markers or set()
+    if _WORDPIECE_CONTINUATION_PREFIX in markers and decoded.startswith(_WORDPIECE_CONTINUATION_PREFIX):
+        return decoded[len(_WORDPIECE_CONTINUATION_PREFIX):]
+    if _CLIP_BPE_END_OF_WORD_SUFFIX in markers and decoded.endswith(_CLIP_BPE_END_OF_WORD_SUFFIX):
+        return decoded[:-len(_CLIP_BPE_END_OF_WORD_SUFFIX)]
+    if _SUBWORD_NMT_CONTINUATION_SUFFIX in markers and decoded.endswith(_SUBWORD_NMT_CONTINUATION_SUFFIX):
+        return decoded[:-len(_SUBWORD_NMT_CONTINUATION_SUFFIX)]
     if decoded and decoded[0] == " ":
         return decoded[1:]
     return decoded
@@ -162,7 +175,7 @@ def detect_byte_encoding(vocab: Dict[str, int],
 
     The authoritative signal for GPT-2-style byte mapping is a ``ByteLevel``
     pre-tokenizer or decoder (HF ByteLevel uses exactly the GPT-2 byte<->
-    unicode table).  The vocab marker-count heuristic is only a fallback —
+    unicode table).  The vocab marker-count heuristic is only a fallback:
     it under-counts on small / tiktoken-converted vocabs (observed: a
     ByteLevel gpt4 tokenizer with 37 single-char markers < the threshold).
     """
@@ -256,7 +269,7 @@ def get_normalizer_view(wrapper: TokenizerWrapper) -> NormalizerView:
             return NormalizerView(norm.normalize_str, True, "",
                                   type(norm).__name__, pre_repr, dec_repr)
         if has_norm_attr and norm is None:
-            # Verified "no normalization configured" — identity is the truth,
+            # Verified "no normalization configured": identity is the truth,
             # not a fallback.
             return NormalizerView(lambda s: s, True, "",
                                   "Identity(no normalizer configured)",
@@ -319,13 +332,22 @@ class TokenizerSanityChecker:
             )
         except Exception:
             self.char_decode = {}
+        # Passed the wrapper, not `underlying`: BaseMetrics._detect_subword_markers
+        # does its own get_underlying_tokenizer() unwrap for the declared channel
+        # (model.continuing_subword_prefix / end_of_word_suffix), and its
+        # behavioral fallback probe needs .encode() + .convert_ids_to_tokens(),
+        # which the wrapper always has and a raw tokenizers.Tokenizer does not.
+        try:
+            self.subword_markers = BaseMetrics._detect_subword_markers(self.wrapper)
+        except Exception:
+            self.subword_markers = set()
         _backend = (getattr(underlying, "backend_tokenizer", None)
                     or underlying)
         self.byte_enc = detect_byte_encoding(self.vocab, _backend)
         self.normview = get_normalizer_view(self.wrapper)
         self.lowercasing_normalizer = self._detect_lowercasing()
 
-    # -- small encode/decode helpers (always faithful) -------------------
+    # small encode/decode helpers (always faithful) -------------------
 
     def _encode(self, text: str) -> List[int]:
         return list(self.wrapper.encode(text))
@@ -339,12 +361,12 @@ class TokenizerSanityChecker:
         return _token_string_to_bytes(raw, self.byte_enc["unicode_to_byte"],
                                       self.special_strings)
 
-    # -- C16 helper ------------------------------------------------------
+    # C16 helper ------------------------------------------------------
 
     def _is_cross_boundary(self) -> bool:
         """True if the tokenizer merges across pretokenizer boundaries (e.g. SuperBPE
         superwords). Detected behaviorally: encode a fixed probe and check whether any
-        emitted token's surface contains internal whitespace -- impossible for a normal
+        emitted token's surface contains internal whitespace: impossible for a normal
         within-pretoken BPE/Unigram, routine for a superword tokenizer. Cached.
 
         This must be behavioral, not based on pretokenize(): a SuperBPE pretokenizer
@@ -367,7 +389,7 @@ class TokenizerSanityChecker:
         self._cross_boundary_cache = result
         return result
 
-    # -- C9 helper -------------------------------------------------------
+    # C9 helper -------------------------------------------------------
 
     def _detect_lowercasing(self) -> bool:
         nv = self.normview
@@ -383,7 +405,7 @@ class TokenizerSanityChecker:
             return False
 
     # ===================================================================
-    # C1 — byte-level 256 coverage
+    # C1: byte-level 256 coverage
     # ===================================================================
 
     def check_byte_coverage(self) -> Dict[str, Any]:
@@ -411,7 +433,7 @@ class TokenizerSanityChecker:
         missing = sorted(set(range(256)) - representable)
         # Behavioral roundtrip is authoritative: a byte-level tokenizer may
         # not store every byte as an isolated single-char vocab key yet still
-        # encode/decode every byte losslessly (observed: gpt-neox-20b — 13
+        # encode/decode every byte losslessly (observed for gpt-neox-20b: 13
         # vocab-"missing" bytes, 0 behavioral failures).  Only a real
         # roundtrip failure is a defect.
         if self.wrapper.can_decode():
@@ -455,7 +477,7 @@ class TokenizerSanityChecker:
                    "byte-level tokenizer covers the full byte range")
 
     # ===================================================================
-    # C17 — strict byte-alphabet vocab presence
+    # C17: strict byte-alphabet vocab presence
     # ===================================================================
     # C1 is round-trip-based: it returns PASS when every byte round-trips
     # via fallback, even if some byte-alphabet tokens are absent. C17 is the
@@ -512,7 +534,7 @@ class TokenizerSanityChecker:
                    "byte-level tokenizer has a complete 256-byte alphabet")
 
     # ===================================================================
-    # C2 — combining-mark mishandling (static is the real signal)
+    # C2: combining-mark mishandling (static is the real signal)
     # ===================================================================
 
     def check_combining_marks(self) -> Dict[str, Any]:
@@ -521,7 +543,8 @@ class TokenizerSanityChecker:
         leading = 0
         considered = 0
         for raw in self.vocab:
-            cleaned = clean_token(str(raw), self.char_decode, self.special_strings)
+            cleaned = clean_token(str(raw), self.char_decode, self.special_strings,
+                                  self.subword_markers)
             if not cleaned:
                 continue
             considered += 1
@@ -546,13 +569,13 @@ class TokenizerSanityChecker:
                    SANITY_MARK_LEADING_TOKEN_WARN_FRAC,
                    f"{leading}/{considered} tokens begin with a combining mark; "
                    "behavioral mark/byte defects are judged by C3 byte_bug "
-                   "(Character Boundary Crossing semantics) — legitimate "
+                   "(Character Boundary Crossing semantics): legitimate "
                    "split-but-roundtrips is never penalized",
                    "systematic base+mark splitting corrupts diacritic-heavy "
                    "scripts")
 
     # ===================================================================
-    # C3 — lossy-text root-cause (core) + feeds C5/C12 breakdown
+    # C3: lossy-text root-cause (core) + feeds C5/C12 breakdown
     # ===================================================================
 
     def _classify_roundtrip(self, text: str) -> str:
@@ -660,7 +683,7 @@ class TokenizerSanityChecker:
                    "tokenization/decode bugs (red flag)", ex)
 
     # ===================================================================
-    # C4 — faithful-pipeline conformance / transparency
+    # C4: faithful-pipeline conformance / transparency
     # ===================================================================
 
     def check_faithful_pipeline(self) -> Dict[str, Any]:
@@ -697,7 +720,7 @@ class TokenizerSanityChecker:
                    "the configured pipeline is applied and introspectable")
 
     # ===================================================================
-    # C5 — whitespace handling + vocab share
+    # C5: whitespace handling + vocab share
     # ===================================================================
 
     def check_whitespace(self) -> Dict[str, Any]:
@@ -706,7 +729,8 @@ class TokenizerSanityChecker:
         ws_any = 0
         considered = 0
         for raw in self.vocab:
-            cleaned = clean_token(str(raw), self.char_decode, self.special_strings)
+            cleaned = clean_token(str(raw), self.char_decode, self.special_strings,
+                                  self.subword_markers)
             if cleaned is None:
                 continue
             considered += 1
@@ -755,7 +779,7 @@ class TokenizerSanityChecker:
                    None)
 
     # ===================================================================
-    # C6 — digit handling + vocab share
+    # C6: digit handling + vocab share
     # ===================================================================
 
     def check_digits(self) -> Dict[str, Any]:
@@ -764,7 +788,8 @@ class TokenizerSanityChecker:
         max_run = 0
         considered = 0
         for raw in self.vocab:
-            cleaned = clean_token(str(raw), self.char_decode, self.special_strings)
+            cleaned = clean_token(str(raw), self.char_decode, self.special_strings,
+                                  self.subword_markers)
             if cleaned is None or cleaned == "":
                 continue
             considered += 1
@@ -841,7 +866,7 @@ class TokenizerSanityChecker:
         return text, c2t
 
     # ===================================================================
-    # C7 — special-token sanity
+    # C7: special-token sanity
     # ===================================================================
 
     def check_special_tokens(self) -> Dict[str, Any]:
@@ -890,7 +915,7 @@ class TokenizerSanityChecker:
                    "silent config bugs")
 
     # ===================================================================
-    # C8 — determinism / idempotency
+    # C8: determinism / idempotency
     # ===================================================================
 
     def check_determinism(self) -> Dict[str, Any]:
@@ -920,7 +945,7 @@ class TokenizerSanityChecker:
                    "deterministic tokenization is required for reproducibility")
 
     # ===================================================================
-    # C10 — pretokenizer char conservation
+    # C10: pretokenizer char conservation
     # ===================================================================
 
     def check_pretok_conservation(self) -> Dict[str, Any]:
@@ -996,7 +1021,7 @@ class TokenizerSanityChecker:
                    "loss", worst)
 
     # ===================================================================
-    # C11 — NFC/NFD roundtrip
+    # C11: NFC/NFD roundtrip
     # ===================================================================
 
     def check_nfc_nfd(self) -> Dict[str, Any]:
@@ -1024,7 +1049,7 @@ class TokenizerSanityChecker:
                    "canonical-equivalence handling")
 
     # ===================================================================
-    # C12 — emoji / ZWJ / control
+    # C12: emoji / ZWJ / control
     # ===================================================================
 
     def check_emoji_control(self) -> Dict[str, Any]:
@@ -1047,7 +1072,7 @@ class TokenizerSanityChecker:
                    "handling of astral/ZWJ/control input")
 
     # ===================================================================
-    # C13 — UNK incidence per script
+    # C13: UNK incidence per script
     # ===================================================================
 
     def check_unk_per_script(self) -> Dict[str, Any]:
@@ -1080,7 +1105,7 @@ class TokenizerSanityChecker:
                    "high per-script UNK rate indicates an undertrained script")
 
     # ===================================================================
-    # C14 — vocab integrity
+    # C14: vocab integrity
     # ===================================================================
 
     def check_vocab_integrity(self) -> Dict[str, Any]:
@@ -1109,7 +1134,7 @@ class TokenizerSanityChecker:
                    "corrupt vocab files surface as id gaps / size mismatch")
 
     # ===================================================================
-    # C15 — absurd token-length outliers
+    # C15: absurd token-length outliers
     # ===================================================================
 
     def check_token_outliers(self) -> Dict[str, Any]:
@@ -1117,7 +1142,8 @@ class TokenizerSanityChecker:
         can_decode = self.wrapper.can_decode()
         outliers = []
         for raw in self.vocab:
-            cleaned = clean_token(str(raw), self.char_decode, self.special_strings)
+            cleaned = clean_token(str(raw), self.char_decode, self.special_strings,
+                                  self.subword_markers)
             if cleaned and len(cleaned) > SANITY_MAX_REASONABLE_TOKEN_CHARS:
                 # Store the human-readable decoded form (the byte-level surface
                 # is unreadable mojibake for non-ASCII tokens); fall back to the
@@ -1141,13 +1167,13 @@ class TokenizerSanityChecker:
                    outliers)
 
     # ===================================================================
-    # C16 — vocab reachability under the faithful pipeline
+    # C16: vocab reachability under the faithful pipeline
     # ===================================================================
 
     # Representative "breaker" characters, one per major regex branch class
     # (letter, digit, ASCII punctuation, space, newline). A token whose
     # standalone surface the pretokenizer splits may still be emitted when it
-    # sits next to a character of a different class -- the neighbour lets a
+    # sits next to a character of a different class: the neighbour lets a
     # different arm capture the surface as one pre-token. This is generic to any
     # split regex; it is NOT specific to repeat-run caps.
     _REACH_BREAKERS = ("a", "0", ".", " ", "\n")
@@ -1209,7 +1235,12 @@ class TokenizerSanityChecker:
         can_pretok = self.wrapper.can_pretokenize()
         cross_boundary = can_pretok and self._is_cross_boundary()
         special_ids = self.wrapper.get_special_token_ids()
-        for tok_str, tid in self.vocab.items():
+        # Sorted by id. get_vocab() returns a dict built from the tokenizer
+        # library's own hash map, so its iteration order varies between
+        # processes: the bucket counts were stable across runs but the example
+        # list was different every time, which makes two reports of the same
+        # tokenizer look like different results.
+        for tok_str, tid in sorted(self.vocab.items(), key=lambda kv: kv[1]):
             tok_str = str(tok_str)
             if tid in special_ids or is_special_token(tok_str, self.special_strings):
                 continue
@@ -1255,7 +1286,7 @@ class TokenizerSanityChecker:
                     if cross_boundary:
                         # SuperBPE-style: stage-2 merges cross *whitespace* only, so a token is
                         # unreachable only if some whitespace-delimited chunk of its surface is
-                        # itself split by the pretokenizer -- a non-whitespace boundary (e.g. a
+                        # itself split by the pretokenizer: a non-whitespace boundary (e.g. a
                         # digit cap or punctuation split) it cannot bridge. Whitespace-spanning
                         # superwords (e.g. ' over the', 'Aug ') are reachable and not flagged.
                         chunks = [c for c in re.split(r"\s+", eff) if c]
@@ -1289,9 +1320,9 @@ class TokenizerSanityChecker:
             else:
                 buckets["unverifiable"] += 1
         # Normalization-dead vocab FAILs: the introspectable normalizer folds the surface,
-        # so NO input can ever produce the token -- it signals a vocab built without applying
+        # so NO input can ever produce the token: it signals a vocab built without applying
         # the normalizer. Pretokenizer-dead vocab is only a WARN: the slot is wasted but, like
-        # the normalizer case, never corrupts text or emits UNK -- it is a capacity issue, not
+        # the normalizer case, never corrupts text or emits UNK: it is a capacity issue, not
         # a construction defect.
         if buckets["normalization_unreachable"] > SANITY_VOCAB_NORMALIZATION_DEAD_FAIL_COUNT:
             sev = Severity.FAIL

@@ -27,6 +27,8 @@ def _make_instance():
     inst._char_decode_table = None
     inst._special_tokens = None
     inst._special_token_cache = {}
+    inst._subword_markers = None
+    inst._subword_marker_cache = {}
     return inst
 
 
@@ -73,19 +75,19 @@ class TestIdealBoundaries:
 
 
 # ======================================================================
-# _score_boundaries — vacuous cases
+# _score_boundaries: vacuous cases
 # ======================================================================
 
 class TestScoreBoundariesVacuous:
     """The four vacuous-case rows from the docstring table."""
 
     def test_both_empty(self):
-        # Short number, single token — perfect.
+        # Short number, single token: perfect.
         result = DigitBoundaryMetrics._score_boundaries(set(), set())
         assert result == {"precision": 1.0, "recall": 1.0, "f1": 1.0}
 
     def test_actual_nonempty_ideal_empty(self):
-        # Short number needlessly split — all boundaries spurious.
+        # Short number needlessly split: all boundaries spurious.
         result = DigitBoundaryMetrics._score_boundaries({1}, set())
         assert result == {"precision": 0.0, "recall": 1.0, "f1": 0.0}
 
@@ -94,13 +96,13 @@ class TestScoreBoundariesVacuous:
         assert result == {"precision": 0.0, "recall": 1.0, "f1": 0.0}
 
     def test_actual_empty_ideal_nonempty(self):
-        # Long number kept as single token — no wrong boundaries but ideal missed.
+        # Long number kept as single token: no wrong boundaries but ideal missed.
         result = DigitBoundaryMetrics._score_boundaries(set(), {1, 4})
         assert result == {"precision": 1.0, "recall": 0.0, "f1": 0.0}
 
 
 # ======================================================================
-# _score_boundaries — normal cases
+# _score_boundaries: normal cases
 # ======================================================================
 
 class TestScoreBoundariesNormal:
@@ -141,7 +143,16 @@ class TestScoreBoundariesNormal:
 # ======================================================================
 
 class TestCleanToken:
-    """Subword marker stripping."""
+    """Subword marker stripping.
+
+    A marker is stripped only when inst._subword_markers says the tokenizer
+    being processed actually uses it (BaseMetrics._detect_subword_markers).
+    The marker-stripping tests below set that attribute explicitly, the same
+    way TestBuildCharToTokenMap.test_skips_special_tokens sets
+    inst._special_tokens: a bare _make_instance() never resolved a real
+    tokenizer, so without this the marker set defaults to empty and nothing
+    is stripped.
+    """
 
     @pytest.fixture()
     def inst(self):
@@ -157,12 +168,15 @@ class TestCleanToken:
         assert inst._clean_token(" foo") == "foo"
 
     def test_bert_continuation(self, inst):
+        inst._subword_markers = {"##"}
         assert inst._clean_token("##bar") == "bar"
 
     def test_bpe_end_of_word(self, inst):
+        inst._subword_markers = {"</w>"}
         assert inst._clean_token("baz</w>") == "baz"
 
     def test_bpe_continuation_suffix(self, inst):
+        inst._subword_markers = {"@@"}
         assert inst._clean_token("qux@@") == "qux"
 
     def test_special_token_angle(self, inst):
@@ -176,6 +190,33 @@ class TestCleanToken:
 
     def test_digit_token(self, inst):
         assert inst._clean_token("1234") == "1234"
+
+    # Marker gating: the actual defect (unconditional stripping)
+
+    def test_continuation_not_stripped_when_marker_unresolved(self, inst):
+        """A token matching '##...' is left alone when no tokenizer has been
+        shown to use the WordPiece prefix (inst._subword_markers is None,
+        _make_instance()'s default). This is the reported defect: '###' (a
+        markdown heading in a byte-level BPE vocabulary) must not become '#'."""
+        assert inst._clean_token("###") == "###"
+
+    def test_continuation_not_stripped_when_marker_absent_from_set(self, inst):
+        """A tokenizer resolved to use '</w>' does not also strip '##': the
+        two markers are independent, gated separately."""
+        inst._subword_markers = {"</w>"}
+        assert inst._clean_token("##bar") == "##bar"
+
+    def test_end_word_not_stripped_when_marker_unresolved(self, inst):
+        assert inst._clean_token("baz</w>") == "baz</w>"
+
+    def test_continuation_suffix_not_stripped_when_marker_unresolved(self, inst):
+        assert inst._clean_token("@@") == "@@"
+
+    def test_continuation_suffix_not_stripped_when_marker_empty_set(self, inst):
+        """An explicitly empty marker set (a tokenizer resolved to use none of
+        the three) behaves the same as the unresolved None default."""
+        inst._subword_markers = set()
+        assert inst._clean_token("qux@@") == "qux@@"
 
 
 # ======================================================================
@@ -227,10 +268,155 @@ class TestBuildCharToTokenMap:
         assert mapping == []
 
     def test_mixed_markers(self, inst):
+        inst._subword_markers = {"##"}
         tokens = ["hello", "##123", "Ġ456"]
         text, mapping = inst._build_char_to_token_map(tokens)
         assert text == "hello123456"
         assert mapping == [0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 2]
+
+
+# ======================================================================
+# _detect_subword_markers / _resolve_subword_markers
+# ======================================================================
+
+class _FakeModel:
+    """Duck-typed stand-in for a tokenizers.models.{BPE,WordPiece} model."""
+
+    def __init__(self, continuing_subword_prefix=None, end_of_word_suffix=None):
+        self.continuing_subword_prefix = continuing_subword_prefix
+        self.end_of_word_suffix = end_of_word_suffix
+
+
+class _FakeBackend:
+    """Duck-typed stand-in for a raw tokenizers.Tokenizer: exposes .model."""
+
+    def __init__(self, model):
+        self.model = model
+
+
+class _FakeWrapper:
+    """Duck-typed stand-in for a TokenizerWrapper wrapping _FakeBackend."""
+
+    def __init__(self, backend):
+        self._backend = backend
+
+    def get_underlying_tokenizer(self):
+        return self._backend
+
+
+class _BehavioralOnlyTokenizer:
+    """No .model at all (like a raw tiktoken.Encoding or a stub): the
+    declared channel must find nothing, forcing the behavioral probe."""
+
+    def __init__(self, piece_map):
+        """piece_map: {probe_text: [piece_strings]} for the encode() calls
+        _detect_subword_markers will make."""
+        self._piece_map = piece_map
+
+    def encode(self, text):
+        return list(range(len(self._piece_map.get(text, []))))
+
+    def convert_ids_to_tokens(self, ids):
+        # ids are just range(n); use the length to look up the one registered probe.
+        for pieces in self._piece_map.values():
+            if len(pieces) == len(ids):
+                return pieces
+        return []
+
+
+class TestDetectSubwordMarkers:
+    """Declared and behavioral detection channels, checked independently."""
+
+    # Declared channel
+
+    def test_declared_wordpiece_prefix(self):
+        backend = _FakeBackend(_FakeModel(continuing_subword_prefix="##"))
+        assert DigitBoundaryMetrics._detect_subword_markers(backend) == {"##"}
+
+    def test_declared_bpe_end_of_word_suffix(self):
+        backend = _FakeBackend(_FakeModel(end_of_word_suffix="</w>"))
+        assert DigitBoundaryMetrics._detect_subword_markers(backend) == {"</w>"}
+
+    def test_declared_both_markers(self):
+        backend = _FakeBackend(_FakeModel(continuing_subword_prefix="##",
+                                          end_of_word_suffix="</w>"))
+        assert DigitBoundaryMetrics._detect_subword_markers(backend) == {"##", "</w>"}
+
+    def test_declared_empty_fields_strip_nothing(self):
+        """The bpe.json / cl100k_base / o200k_base case: both fields declared
+        but empty ('' or None), same as the real tokenizers.models.BPE default."""
+        backend = _FakeBackend(_FakeModel(continuing_subword_prefix="",
+                                          end_of_word_suffix=""))
+        assert DigitBoundaryMetrics._detect_subword_markers(backend) == set()
+
+    def test_declared_wordpiece_binding_gap_defaults_to_hash_hash(self):
+        """A model of type WordPiece whose binding leaves
+        continuing_subword_prefix unpopulated still defaults to '##': every
+        tokenizers-library WordPiece does, even with the field readable, so
+        this only covers a binding that does not populate it."""
+        class WordPiece:
+            continuing_subword_prefix = None
+        backend = _FakeBackend(WordPiece())
+        assert DigitBoundaryMetrics._detect_subword_markers(backend) == {"##"}
+
+    def test_declared_non_standard_prefix_not_guessed(self):
+        """A declared but non-'##' prefix is not translated into a strip
+        rule: _process_token only knows the three canonical forms."""
+        backend = _FakeBackend(_FakeModel(continuing_subword_prefix="**"))
+        assert DigitBoundaryMetrics._detect_subword_markers(backend) == set()
+
+    def test_declared_unwraps_wrapper(self):
+        """A wrapper exposing get_underlying_tokenizer() is unwrapped to reach
+        the backend's .model, the same path _has_bytelevel_component uses."""
+        backend = _FakeBackend(_FakeModel(continuing_subword_prefix="##"))
+        wrapper = _FakeWrapper(backend)
+        assert DigitBoundaryMetrics._detect_subword_markers(wrapper) == {"##"}
+
+    def test_no_model_falls_through_to_behavioral(self):
+        """No .model at all and no .encode(): empty set, no crash."""
+        assert DigitBoundaryMetrics._detect_subword_markers(object()) == set()
+
+    # Behavioral channel (declared channel silent: no .model)
+
+    def test_behavioral_wordpiece_prefix(self):
+        probe = "supercalifragilisticexpialidocious"
+        tok = _BehavioralOnlyTokenizer({probe: ["super", "##cal", "##ious"]})
+        assert DigitBoundaryMetrics._detect_subword_markers(tok) == {"##"}
+
+    def test_behavioral_end_of_word_suffix(self):
+        probe = "supercalifragilisticexpialidocious"
+        tok = _BehavioralOnlyTokenizer({probe: ["su", "per", "cali", "ous</w>"]})
+        assert DigitBoundaryMetrics._detect_subword_markers(tok) == {"</w>"}
+
+    def test_behavioral_continuation_suffix(self):
+        probe = "supercalifragilisticexpialidocious"
+        tok = _BehavioralOnlyTokenizer({probe: ["su@@", "per@@", "cious"]})
+        assert DigitBoundaryMetrics._detect_subword_markers(tok) == {"@@"}
+
+    def test_behavioral_single_piece_inconclusive(self):
+        """A probe that does not fragment (whole word as one piece) gives no
+        evidence either way, so the marker set stays empty."""
+        probe = "supercalifragilisticexpialidocious"
+        tok = _BehavioralOnlyTokenizer({probe: ["supercalifragilisticexpialidocious"]})
+        assert DigitBoundaryMetrics._detect_subword_markers(tok) == set()
+
+    def test_behavioral_no_markers_in_pieces(self):
+        probe = "supercalifragilisticexpialidocious"
+        tok = _BehavioralOnlyTokenizer({probe: ["su", "per", "cal", "ious"]})
+        assert DigitBoundaryMetrics._detect_subword_markers(tok) == set()
+
+    # Memoization (mirrors _resolve_special_tokens's identity-cache test)
+
+    def test_resolve_memoizes_per_tokenizer_object(self):
+        inst = _make_instance()
+        backend = _FakeBackend(_FakeModel(continuing_subword_prefix="##"))
+        first = inst._resolve_subword_markers(backend)
+        # Mutate the backend after the first call; a cached second call must
+        # still return the first result, proving the cache (not a fresh
+        # detection) answered.
+        backend.model.continuing_subword_prefix = None
+        second = inst._resolve_subword_markers(backend)
+        assert first == second == {"##"}
 
 
 # ======================================================================
@@ -433,7 +619,7 @@ class TestComputePatternEntropy:
 class TestDocstringWorkedExamples:
     """Verify every worked example from the class docstring."""
 
-    # -- "1234567" (L=7), ideal = {1, 4} --
+    # "1234567" (L=7), ideal = {1, 4}
 
     def test_1234567_perfect(self):
         # "1" "234" "567" -> actual {1, 4}
@@ -461,7 +647,7 @@ class TestDocstringWorkedExamples:
         assert r["recall"] == pytest.approx(0.0)
         assert r["f1"] == pytest.approx(0.0)
 
-    # -- "42" (L=2), ideal = {} --
+    # "42" (L=2), ideal = {}
 
     def test_42_single_token(self):
         # "42" -> actual {}
@@ -578,6 +764,7 @@ class TestEndToEndBoundaryPipeline:
         # -> recon "12345", boundaries at 3
         # ideal for L=5: {2} (5-3=2)
         # actual: {3} -> TP=0, FP=1, FN=1 -> F1=0
+        inst._subword_markers = {"##"}
         results = self._run_pipeline(inst, ["123", "##45"])
         assert len(results) == 1
         _, boundaries, scores = results[0]
@@ -947,7 +1134,7 @@ from .conftest import MockTokenizer as _MockTokenizer, MockProvider as _MockProv
 
 
 # ======================================================================
-# TestGoodVsBadTokenizer — end-to-end compute() demonstration
+# TestGoodVsBadTokenizer: end-to-end compute() demonstration
 # ======================================================================
 
 def _offsets_for(text: str, token_strings) -> list:
@@ -1116,7 +1303,7 @@ class TestGoodVsBadTokenizer:
         m, td = self._build("bad_cmp", self._BAD_COMPOUND_DATA)
         return m.compute(td)
 
-    # -- Three-Digit Boundary Alignment --
+    # Three-Digit Boundary Alignment
 
     def test_good_alignment_perfect_f1(self, good_results):
         """Good tokenizer: all 12 numbers get F1=1.0."""
@@ -1137,7 +1324,7 @@ class TestGoodVsBadTokenizer:
         assert iso["avg_f1"] == pytest.approx(1.0)
         assert cmp["avg_f1"] == pytest.approx(1.0)
 
-    # -- Digit Split Variability --
+    # Digit Split Variability
 
     def test_good_consistent_patterns_zero_entropy(self, good_results):
         """Good tokenizer: three 4-digit numbers all share pattern (1,)."""
@@ -1153,7 +1340,7 @@ class TestGoodVsBadTokenizer:
             "per_tokenizer"]["bad_bnd"]["by_digit_length"]
         assert by_dl["4"]["en"]["entropy"] > 0.0
 
-    # -- Operator Isolation --
+    # Operator Isolation
 
     def test_good_operator_isolation_perfect(self, good_results):
         """Good tokenizer: all operators isolated and compounds preserved."""
@@ -1181,7 +1368,7 @@ class TestGoodVsBadTokenizer:
         assert summary["overall_isolation_rate"] == pytest.approx(1.0)
         assert summary["overall_compound_preservation_rate"] == pytest.approx(0.0)
 
-    # -- Magnitude Consistency --
+    # Magnitude Consistency
 
     def test_magnitude_results_present(
         self, good_results, bad_boundary_results,
@@ -1224,7 +1411,7 @@ class TestGoodVsBadTokenizer:
 
 
 # ======================================================================
-# T1: Regression test for C1 bug — adjacent numbers must not merge
+# T1: Regression test for C1 bug: adjacent numbers must not merge
 # ======================================================================
 
 class TestAdjacentNumbersNotMerged:

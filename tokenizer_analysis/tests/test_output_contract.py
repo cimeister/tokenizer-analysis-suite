@@ -163,3 +163,50 @@ def test_single_corpus_does_not_report_perfect_fairness(tmp_path):
     assert "warning" in gini
     # mean_cost is a real measurement even with one corpus, so it stays a number.
     assert isinstance(gini["mean_cost"], float) and gini["mean_cost"] > 0
+
+
+def test_grouped_analysis_runs_after_the_metric_merge(tmp_path):
+    """--run-grouped-analysis must read the merged results, not the old keys.
+
+    run_analysis folds six metrics into the metric that owns the measurement
+    before returning, and run_grouped_analysis then filters those base results
+    by language group. It went on reading the pre-merge top-level key
+    digit_split_variability, so the whole flag exited 1 with
+    KeyError: 'digit_split_variability'. Nothing covered the flag, so the merge
+    shipped with it broken.
+    """
+    out = tmp_path / "grouped"
+    proc = subprocess.run(
+        [sys.executable, "-m", "tokenizer_analysis.cli.run_analysis",
+         "--use-sample-data", "--samples-per-lang", "5",
+         "--run-grouped-analysis", "--no-plots", "--no-code-ast",
+         "--output-dir", str(out)],
+        cwd=REPO_ROOT, capture_output=True, timeout=900,
+    )
+    assert proc.returncode == 0, proc.stderr.decode(errors="replace")[-3000:]
+
+
+def test_a_nested_merged_block_is_filtered_to_the_group_languages():
+    """The block the merge nested must be language-filtered like its parent.
+
+    _filter_digit_boundary_results passes unrecognized keys through untouched.
+    After the merge, split_variability is one of those keys and holds
+    per-language numbers, so a language group inherited values computed over
+    every language in the run.
+    """
+    from tokenizer_analysis.main import UnifiedTokenizerAnalyzer
+
+    merged_shape = {'per_tokenizer': {'bpe': {
+        'by_digit_length': {'2': {'eng_Latn': 0.5, 'arb_Arab': 0.6}},
+        'overall': {'eng_Latn': 0.7, 'arb_Arab': 0.8},
+        'split_variability': {
+            'by_digit_length': {'2': {'eng_Latn': 0.1, 'arb_Arab': 0.3}},
+            'by_bucket': {'short': {'eng_Latn': 1.0, 'arb_Arab': 2.0}, 'long': {}},
+        },
+    }}}
+    filtered = UnifiedTokenizerAnalyzer._filter_digit_boundary_results(
+        object.__new__(UnifiedTokenizerAnalyzer), merged_shape, ['eng_Latn']
+    )
+    nested = filtered['per_tokenizer']['bpe']['split_variability']
+    assert list(nested['by_digit_length']['2']) == ['eng_Latn']
+    assert list(nested['by_bucket']['short']) == ['eng_Latn']

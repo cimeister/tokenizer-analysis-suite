@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # carriage-return PLUS every Unicode "space separator" (general category Zs:
 # NBSP U+00A0, thin space U+2009, ideographic space U+3000, ...).  Zero-width
 # *format* characters (category Cf, e.g. ZWSP U+200B) are deliberately NOT
-# whitespace — their loss is captured by exact_match_rate / CER instead, so
+# whitespace. Their loss is captured by exact_match_rate / CER instead, so
 # each loss type lands in the semantically correct measure.  Category-based
 # (not a hardcoded set) so all 17 Zs separators are covered and it is
 # future-proof.  This widened the metric from the historical ASCII-only set;
@@ -521,9 +521,14 @@ class BasicTokenizationMetrics(BaseMetrics):
             
             for data in tok_data:
                 if data.text and data.text.strip() and data.tokens:
-                    # Exclude blank lines from the count
-                    lines = [l for l in data.text.split('\n') if l.strip()]
-                    num_lines = len(lines)
+                    # str.splitlines(), so blank lines count and a single
+                    # trailing newline does not add a phantom empty line. The
+                    # numerator is the token count of the whole text, and a
+                    # blank line still contributes its newline token, so
+                    # dropping blank lines from the denominator alone made the
+                    # ratio larger than the text supports: 'a\n\nb\n\n' with 4
+                    # tokens reported 2.0 against the 1.0 its four lines give.
+                    num_lines = len(data.text.splitlines())
                     total_lines += num_lines
 
                     if num_lines > 0:
@@ -540,10 +545,12 @@ class BasicTokenizationMetrics(BaseMetrics):
                     'stats': tpl_stats
                 }
             else:
+                # Nothing measured, so null rather than a zero that reads as a
+                # measured rate of zero tokens per line.
                 results['avg_tokens_per_line']['per_tokenizer'][tok_name] = {
-                    'global_avg': 0.0,
-                    'global_std': 0.0,
-                    'global_std_err': 0.0,
+                    'global_avg': None,
+                    'global_std': None,
+                    'global_std_err': None,
                     'total_lines': 0,
                     'stats': self.empty_stats()
                 }
@@ -639,7 +646,7 @@ class BasicTokenizationMetrics(BaseMetrics):
             total_all_texts = total_lang_texts + total_code_math_texts
             texts_processed = 0
 
-            # Language data — reuse tokens/offsets already stored in TokenizedData
+            # Language data: reuse tokens/offsets already stored in TokenizedData
             if tok_name in tokenized_data:
                 for td in tokenized_data[tok_name]:
                     if not td.text or not td.text.strip():
@@ -712,7 +719,7 @@ class BasicTokenizationMetrics(BaseMetrics):
                                         cer_time_budget_s,
                                     )
 
-            # Code/math data — encode on the fly (not in TokenizedData)
+            # Code/math data: encode on the fly (not in TokenizedData)
             code_math_pairs: List[Tuple[str, str]] = []
             for lang, snippets in self._code_texts.items():
                 domain = f"code_{lang}"
@@ -857,7 +864,7 @@ class BasicTokenizationMetrics(BaseMetrics):
                 results['reconstruction_fidelity']['summary'][tok_name]['cer_skipped'] = True
             cer_msg = "SKIPPED" if cer_skipped else f"{tok_result['overall']['mean_cer']:.4f}"
             logger.info(
-                "Reconstruction fidelity: %s done — %d texts decoded, "
+                "Reconstruction fidelity: %s done, %d texts decoded, "
                 "exact_match=%.3f, mean_cer=%s",
                 tok_name, total,
                 tok_result['overall']['exact_match_rate'],

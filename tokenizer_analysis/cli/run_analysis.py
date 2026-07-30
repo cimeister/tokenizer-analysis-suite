@@ -1177,7 +1177,7 @@ def run_from_args(args: argparse.Namespace):
                 args.input, args.input_label
             )
         else:
-            # Load language configuration (supports both directory and file paths)
+            # Load language configuration. This is a JSON file; a directory is an error.
             language_config_path = args.language_config
 
         # Load text measurement configuration
@@ -1241,11 +1241,18 @@ def run_from_args(args: argparse.Namespace):
         elif args.filter_resource_level:
             filter_by_group = ('resource_level', args.filter_resource_level)
         
-        language_texts = load_multilingual_data(
-            language_metadata=language_metadata,
-            max_texts_per_language=args.samples_per_lang,
-            filter_by_group=filter_by_group
-        )
+        try:
+            language_texts = load_multilingual_data(
+                language_metadata=language_metadata,
+                max_texts_per_language=args.samples_per_lang,
+                filter_by_group=filter_by_group
+            )
+        except ValueError as e:
+            # Every ValueError this loader raises describes the config or the
+            # corpus it names: an unknown group, a language with no data path, a
+            # path that did not load. The message is the whole of what a caller
+            # needs, so print it without a stack.
+            raise ConfigurationError(str(e))
         
         if not language_texts:
             raise ValueError("No valid language texts loaded")
@@ -1467,8 +1474,9 @@ def main(argv: Optional[List[str]] = None):
     _configure_cli_logging()
     try:
         run_from_args(args)
-    except (ParquetEngineMissing, ConfigurationError, OutputGenerationError) as e:
-        # Both already name the artifact and what to do about it, so a
+    except (ParquetEngineMissing, ConfigurationError, OutputGenerationError,
+            FileNotFoundError, IsADirectoryError) as e:
+        # Each of these names the artifact and what to do about it, so a
         # traceback adds only noise. Every other exception keeps its traceback:
         # it is a defect in this package and the stack is the useful part.
         logger.error(str(e))

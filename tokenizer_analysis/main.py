@@ -407,9 +407,6 @@ class UnifiedTokenizerAnalyzer:
                     group_result['three_digit_boundary_alignment'] = self._filter_digit_boundary_results(
                         base_results['three_digit_boundary_alignment'], group_languages
                     )
-                    group_result['digit_split_variability'] = self._filter_digit_boundary_results(
-                        base_results['digit_split_variability'], group_languages
-                    )
                     # Magnitude consistency uses the same structure as digit boundary
                     if 'numeric_magnitude_consistency' in base_results:
                         group_result['numeric_magnitude_consistency'] = self._filter_digit_boundary_results(
@@ -489,9 +486,20 @@ class UnifiedTokenizerAnalyzer:
                     l: d for l, d in tok_data["overall"].items() if l in target_languages
                 }
 
-            # Pass through unknown keys (e.g. scaling) as-is
+            # Pass through unknown keys (e.g. scaling) as-is, except a nested
+            # block with the same shape, which is filtered by the same rule.
+            # The 1.0 merge moved digit_split_variability under this metric as
+            # split_variability, and copying it whole gave a language group a
+            # number computed over every language in the run.
             for key, value in tok_data.items():
-                if key not in _LANG_DICT_KEYS and key not in ftok:
+                if key in _LANG_DICT_KEYS or key in ftok:
+                    continue
+                if isinstance(value, dict) and _LANG_DICT_KEYS & set(value):
+                    nested = self._filter_digit_boundary_results(
+                        {"per_tokenizer": {tok_name: value}}, target_languages
+                    )
+                    ftok[key] = nested["per_tokenizer"].get(tok_name, {})
+                else:
                     ftok[key] = value
 
             if ftok:

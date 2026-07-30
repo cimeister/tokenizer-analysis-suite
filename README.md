@@ -387,7 +387,7 @@ records the merge and its evidence under `metadata.merged_metrics`.
 ### Information-Theoretic Metrics
 - **Rényi Efficiency** (`renyi_efficiency`): `H_alpha / log2(|V|)` following Zouhar et al. 2023, with `|V|` the declared vocabulary size. The pre-1.0 normalization, which divided by the number of token types observed in the corpus, is still published under `observed_normalization`; the two rank tokenizers at Spearman 0.678, so they are not interchangeable
 - **Average Token Rank** (`avg_token_rank`): Typical position of tokens within the frequency-ordered vocabulary
-- **Bigram Entropy** (`bigram_entropy`): For each token type, looks at what tokens follow it in the corpus and measures whether the followers are evenly spread or dominated by one or two tokens. A score of 1.0 means every token's followers are perfectly balanced; a score near 0 means most tokens are almost always followed by the same thing. Can interpret this as "how easy the tokenizer makes a very simple case of language modeling." Token types that appear too rarely (fewer than 3 times by default, configurable) are ignored to avoid noisy estimates. Bigrams do not cross document boundaries. Based on the Shannon efficiency metric (η) from [Poelman et al. 2025](https://aclanthology.org/2025.emnlp-main.369/), EMNLP.
+- **Bigram Entropy** (`bigram_entropy`): For each token type, looks at what tokens follow it in the corpus and measures whether the followers are evenly spread or concentrated on one or two tokens. A score of 1.0 means every token's followers are perfectly balanced; a score near 0 means most tokens are almost always followed by the same thing. Can interpret this as "how easy the tokenizer makes a very simple case of language modeling." Token types that appear too rarely (fewer than 3 times by default, configurable) are ignored to avoid noisy estimates. Bigrams do not cross document boundaries. Based on the Shannon efficiency metric (η) from [Poelman et al. 2025](https://aclanthology.org/2025.emnlp-main.369/), EMNLP.
 
 ### Morphological Metrics
 - **MorphScore V2** (`morphscore_recall`, `morphscore_precision`): Morphological evaluation ([Arnett et al. 2025](https://arxiv.org/abs/2507.06378)). Enable with `--morphscore` or `--morphscore-config` (requires raw tokenization and the MorphScore submodule).
@@ -523,7 +523,7 @@ Reports start-alignment rate, end-alignment rate, full-alignment rate, and cross
 
 Fraction of programmer-defined identifiers split into multiple tokens, plus average tokens per identifier. Computed occurrence-weighted from the same AST extraction pass.
 
-**Example:** A Python file contains identifiers `self` (x10 occurrences), `i` (x5), `process_data` (x3), and `MyAuthenticationFactory` (x1). The tokenizer keeps `self`, `i` as single tokens but splits `process_data` -> `process` | `_` | `data` (3 tokens) and `MyAuthenticationFactory` -> `My` | `Auth` | `entication` | `Factory` (4 tokens). Fragmentation rate: 4 fragmented occurrences out of 19 total = 0.21. Average tokens per identifier: (10x1 + 5x1 + 3x3 + 1x4) / 19 = 1.47. Note that the 10 occurrences of `self` dominate the metric and mask the fragmentation of the rarer, semantically richer identifiers.
+**Example:** A Python file contains identifiers `self` (x10 occurrences), `i` (x5), `process_data` (x3), and `MyAuthenticationFactory` (x1). The tokenizer keeps `self`, `i` as single tokens but splits `process_data` -> `process` | `_` | `data` (3 tokens) and `MyAuthenticationFactory` -> `My` | `Auth` | `entication` | `Factory` (4 tokens). Fragmentation rate: 4 fragmented occurrences out of 19 total = 0.21. Average tokens per identifier: (10x1 + 5x1 + 3x3 + 1x4) / 19 = 1.47. The 10 occurrences of `self` contribute 10 of the 19 terms in that average, so the metric mostly reports how the tokenizer handles the most frequent identifier rather than the rarer, longer ones.
 
 **Why it matters:** Identifiers carry domain-specific semantics. Fragmenting `getUserName` into arbitrary sub-pieces destroys meaningful structure, though the current implementation does not yet distinguish semantically-aligned splits (at camelCase/snake_case boundaries) from arbitrary ones.
 
@@ -641,7 +641,7 @@ Knobs to reduce encoding time:
 
 ### Reconstruction fidelity
 
-Reconstruction metrics (`mean_cer`, `whitespace_fidelity`) decode every tokenized text back to a string and compare it to the original. Some `transformers` and tiktoken-backed tokenizers add significant per-call Python overhead, so this can dominate runtime on large runs. Pass `--no-reconstruction` to skip.
+Reconstruction metrics (`mean_cer`, `whitespace_fidelity`) decode every tokenized text back to a string and compare it to the original. Some `transformers` and tiktoken-backed tokenizers add significant per-call Python overhead, so this can account for most of the runtime on large runs. Pass `--no-reconstruction` to skip.
 
 ### Skipping expensive metrics
 

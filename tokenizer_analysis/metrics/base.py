@@ -110,8 +110,8 @@ class BaseMetrics(ABC):
         # being processed actually uses, set by the same per-tokenizer loops
         # that set _char_decode_table and _special_tokens (see
         # _set_tokenizer_context). None means "not resolved for a specific
-        # tokenizer"; _process_token treats that the same as an empty set --
-        # strip nothing -- unlike _special_tokens, which falls back to
+        # tokenizer"; _process_token treats that the same as an empty set:
+        # strip nothing, unlike _special_tokens, which falls back to
         # GENERIC_SPECIAL_TOKENS. There is no equivalent generic guess here:
         # a guessed marker is exactly the defect being fixed, so an
         # unresolved or undetected marker set both mean "strip nothing".
@@ -136,7 +136,7 @@ class BaseMetrics(ABC):
         """Subword-marker strings *tokenizer* actually uses, memoized per object.
 
         Same identity-keyed cache pattern as _resolve_special_tokens (the
-        object reference, not just id(tokenizer), is stored -- see the
+        object reference, not just id(tokenizer), is stored. See the
         comment on _special_token_cache in __init__ for why: CPython can
         recycle a freed object's id, and without the reference check a
         long-lived metrics instance would hand one tokenizer another,
@@ -162,7 +162,7 @@ class BaseMetrics(ABC):
            backend model's own continuing_subword_prefix / end_of_word_suffix
            fields. Both are real fields on tokenizers.models.BPE and
            tokenizers.models.WordPiece (and on the model block of a
-           serialized tokenizer.json) -- verified by construction against the
+           serialized tokenizer.json), verified by construction against the
            installed tokenizers version: a fresh WordPiece defaults
            continuing_subword_prefix to '##' even with no arguments, and a
            fresh BPE defaults both fields to None. subword-nmt's '@@' has no
@@ -175,7 +175,7 @@ class BaseMetrics(ABC):
            'supercalifragilisticexpialidocious': a 34-character invented word
            (from Mary Poppins) that essentially no trained subword vocabulary
            holds as a single token, so it reliably fragments regardless of
-           tokenizer family -- verified against a real bert-base-uncased
+           tokenizer family, verified against a real bert-base-uncased
            WordPiece vocabulary (11 pieces, continuation pieces '##'-prefixed)
            and a small BPE trained with end_of_word_suffix='</w>' (30 pieces,
            last one '</w>'-suffixed).
@@ -191,7 +191,7 @@ class BaseMetrics(ABC):
         """
         markers: Set[str] = set()
 
-        # -- Channel 1: declared --
+        # Channel 1: declared
         backend = tokenizer
         if hasattr(backend, 'get_underlying_tokenizer'):
             try:
@@ -232,7 +232,7 @@ class BaseMetrics(ABC):
         if markers:
             return markers
 
-        # -- Channel 2: behavioral --
+        # Channel 2: behavioral
         if not hasattr(tokenizer, 'encode'):
             return markers
         probe = "supercalifragilisticexpialidocious"
@@ -280,7 +280,7 @@ class BaseMetrics(ABC):
 
         One entry point for _char_decode_table, _special_tokens and
         _subword_markers so a call site cannot update two of them and forget
-        the third -- which is what happened before _subword_markers existed:
+        the third, which is what happened before _subword_markers existed:
         every _char_decode_table assignment in this codebase had a
         _special_tokens assignment next to it, added by hand at each site.
 
@@ -300,7 +300,7 @@ class BaseMetrics(ABC):
 
         _process_token's fallbacks then apply: GENERIC_SPECIAL_TOKENS for
         special tokens, the bundled default char-decode table, and "strip no
-        subword marker" -- the same state as __init__.
+        subword marker" (the same state as __init__).
         """
         self._set_tokenizer_context(None, None, None)
 
@@ -436,9 +436,9 @@ class BaseMetrics(ABC):
         Args:
             raw_token: Raw token string from the tokenizer vocabulary.
             preserve_space: If ``False`` (default), space-prefix markers (Ġ, ▁,
-                leading space) are stripped entirely — the ``_clean_token`` path.
+                leading space) are stripped entirely: the ``_clean_token`` path.
                 If ``True``, space-prefix markers are replaced with a literal
-                space — the ``_decode_raw_token`` path used for
+                space: the ``_decode_raw_token`` path used for
                 whitespace-preserving alignment.
         """
         # Membership in the tokenizer's declared set, not a surface pattern. The
@@ -479,7 +479,7 @@ class BaseMetrics(ABC):
         # specific tokenizer actually uses (self._subword_markers, resolved by
         # _detect_subword_markers). self._subword_markers is None on the paths
         # that never resolve a tokenizer; `or set()` treats that the same as
-        # "resolved, uses none" -- strip nothing -- rather than falling back
+        # "resolved, uses none": strip nothing, rather than falling back
         # to stripping all three unconditionally. Applying, say, the WordPiece
         # '##' rule to a tokenizer that never declared or exhibited it is the
         # defect this gate exists to prevent: see _detect_subword_markers for

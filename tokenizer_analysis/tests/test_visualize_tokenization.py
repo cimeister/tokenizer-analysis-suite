@@ -12,6 +12,7 @@ from collections import Counter
 import pytest
 
 from tokenizer_analysis.cli.visualize_tokenization import (
+    _fill_offsets,
     _get_offsets,
     main,
     visualize_tokens,
@@ -220,3 +221,21 @@ def test_get_offsets_rejects_an_offset_count_mismatch():
     message = str(exc.value)
     assert "mismatched-tok" in message
     assert "3 tokens" in message and "2 offsets" in message
+
+
+@pytest.mark.parametrize("offsets, expected, case", [
+    ([(0, 3), (3, 7)],  [(0, 3), (3, 7)],  "exact fit, unchanged"),
+    ([(0, 3), (5, 9)],  [(0, 3), (3, 9)],  "gap: the skipped source goes to the next token"),
+    ([(0, 5), (3, 9)],  [(0, 5), (5, 9)],  "overlap: the second token starts where the first ended"),
+    ([(0, 3), (3, 3), (3, 7)], [(0, 3), (3, 3), (3, 7)], "zero-length span passes through"),
+])
+def test_fill_offsets_resolves_gaps_and_overlaps(offsets, expected, case):
+    """Pin what _fill_offsets does with each relation between adjacent spans.
+
+    Its one substantive line, ``real_start = prev_end``, replaced a three-branch
+    ternary that read as if gap, overlap and exact fit were handled separately.
+    They are not, and nothing tested any of the three. Every character between
+    two tokens is assigned to the later one, which is what makes the rendered
+    source reconstruct the input exactly.
+    """
+    assert _fill_offsets(offsets) == expected, case

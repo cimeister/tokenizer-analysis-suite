@@ -24,23 +24,35 @@ def _make_td(tok_name: str, text: str, tokens: List[int], lang: str = "en") -> T
 
 class TestBlankLineExclusion:
 
-    def test_blank_lines_not_counted(self):
-        """Blank lines should be excluded from line count."""
+    def test_blank_lines_are_counted_because_their_tokens_are(self):
+        """Every line counts, since the numerator is the whole text's tokens.
+
+        These two tests previously asserted that blank lines were dropped from
+        the denominator. That made the numerator and the denominator describe
+        different text: a blank line contributes a newline token, which stays
+        in the token count and cannot be taken out of it, so the reported rate
+        came out higher than the text supports.
+        """
         tok_name = "test_tok"
         provider = _SimpleProvider(tok_name)
         metrics = BasicTokenizationMetrics(provider)
 
-        # Text with 2 non-blank lines and 2 blank lines
+        # splitlines() gives 4: 'hello world', '', 'goodbye world', ''. The
+        # final newline ends the fourth line rather than starting a fifth.
         text = "hello world\n\ngoodbye world\n\n"
         td = {tok_name: [_make_td(tok_name, text, [1, 2, 3, 4])]}
 
         results = metrics.compute_avg_tokens_per_line_analysis(td)
         tpl_data = results["avg_tokens_per_line"]["per_tokenizer"][tok_name]
-        # 4 tokens / 2 non-blank lines = 2.0
-        assert tpl_data["global_avg"] == pytest.approx(2.0)
+        assert tpl_data["global_avg"] == pytest.approx(1.0)
 
-    def test_all_blank_lines(self):
-        """Text with only blank lines should produce 0 tokens per line."""
+    def test_a_whitespace_only_text_is_not_measured(self):
+        """A text with no content is skipped, so the result is null.
+
+        The loop guard requires text.strip(), so a whitespace-only text
+        contributes nothing. Reporting 0.0 said the tokenizer produced no
+        tokens per line, which is a measurement that was never taken.
+        """
         tok_name = "test_tok"
         provider = _SimpleProvider(tok_name)
         metrics = BasicTokenizationMetrics(provider)
@@ -50,7 +62,8 @@ class TestBlankLineExclusion:
 
         results = metrics.compute_avg_tokens_per_line_analysis(td)
         tpl_data = results["avg_tokens_per_line"]["per_tokenizer"][tok_name]
-        assert tpl_data["global_avg"] == 0.0
+        assert tpl_data["global_avg"] is None
+        assert tpl_data["total_lines"] == 0
 
 
 # ======================================================================

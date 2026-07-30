@@ -175,11 +175,27 @@ class InputSpecification:
             return list(set(td.language for td in self.tokenized_data))
     
     def get_vocab_size(self) -> int:
-        """Get vocabulary size."""
-        if self.is_raw_mode:
-            return self.tokenizer.vocab_size
-        else:
+        """Get vocabulary size, from whichever source this specification carries.
+
+        Both branches were wrong. The raw branch read ``tokenizer.vocab_size``,
+        an attribute ``TokenizerWrapper`` does not have (it exposes
+        ``get_vocab_size()``), and the pre-tokenized branch read
+        ``self.vocabulary``, which is None for the ``tokenizer +
+        tokenized_data`` shape that
+        ``main.create_analyzer_from_tokenized_data`` builds. So the method
+        raised ``AttributeError`` on every specification the package itself
+        constructs. The tokenizer is the preferred source in both modes, with
+        the legacy ``vocabulary`` provider, whose protocol declares
+        ``vocab_size`` as a property, as the fallback.
+        """
+        if self.tokenizer is not None:
+            return self.tokenizer.get_vocab_size()
+        if self.vocabulary is not None:
             return self.vocabulary.vocab_size
+        raise ValueError(
+            "This InputSpecification carries neither a tokenizer nor a "
+            "vocabulary provider, so its vocabulary size cannot be read."
+        )
 
 
 class InputProvider(ABC):

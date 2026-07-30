@@ -84,13 +84,39 @@ def load_multilingual_data(language_metadata: LanguageMetadata,
             all_groups = language_metadata.get_all_analysis_groups()
             groups = all_groups.get(group_type, {})
             target_languages = groups.get(group_name, [])
-        
-        # Filter to only languages that exist in the metadata and have data paths
+
+        # An unknown group name used to reach the loader as an empty language
+        # list, and the run then failed several steps later with "No valid
+        # language texts loaded", which does not say that the name was the
+        # problem or which names the config defines.
+        if not target_languages:
+            known = language_metadata.get_all_analysis_groups().get(group_type, {})
+            if known:
+                raise ValueError(
+                    f"No language in the config has {group_type}={group_name}. "
+                    f"The config defines: {', '.join(sorted(known))}."
+                )
+            raise ValueError(
+                f"The config defines no {group_type} groups, so "
+                f"{group_type}={group_name} selects nothing. Groups present: "
+                f"{', '.join(sorted(language_metadata.get_all_analysis_groups())) or 'none'}."
+            )
+
         language_paths = {}
+        no_path = []
         for lang_code in target_languages:
             data_path = language_metadata.get_data_path(lang_code)
             if data_path:
                 language_paths[lang_code] = data_path
+            else:
+                no_path.append(lang_code)
+        if no_path:
+            raise ValueError(
+                f"{len(no_path)} language(s) in {group_type}={group_name} have "
+                f"no data path in the config: {', '.join(sorted(no_path))}. "
+                "Dropping them would change what the cross-language metrics are "
+                "computed over without recording it."
+            )
     else:
         # Load all languages
         language_paths = language_metadata.get_language_paths()
