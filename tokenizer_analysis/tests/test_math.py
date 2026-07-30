@@ -932,6 +932,57 @@ from .conftest import MockTokenizer as _MockTokenizer, MockProvider as _MockProv
 # TestGoodVsBadTokenizer — end-to-end compute() demonstration
 # ======================================================================
 
+def _offsets_for(text: str, token_strings) -> list:
+    """Character spans for hand-written token strings, for the synthetic fixtures.
+
+    Real wrappers get offsets from the encoder. Here they are derived by walking
+    each token's surface through the source one character at a time, skipping
+    source whitespace that the surface omits. That matters because several
+    fixtures deliberately model a tokenizer that merges an operator with its
+    operand across a space: the token "a+" against the source "a + b" covers
+    characters 0 to 2, so the token carries the operand "a" and the operator is
+    correctly counted as not isolated. Concatenating surfaces instead would put
+    the "+" at index 1, inside a space, and the operator would look isolated.
+
+    Operator isolation resolves operators to tokens through offsets, so a
+    fixture without them is skipped rather than measured.
+    """
+    spans = []
+    pos = 0
+    for tok in token_strings:
+        surface = (
+            tok.replace("\u0120", " ")
+               .replace("\u2581", " ")
+               .replace("\u010a", "\n")
+        )
+        if not surface:
+            spans.append((pos, pos))
+            continue
+        first = None
+        i = pos
+        for ch in surface:
+            if ch.isspace():
+                # A space in the surface matches a space in the source if one is
+                # there, otherwise it contributed nothing.
+                if i < len(text) and text[i].isspace():
+                    if first is None:
+                        first = i
+                    i += 1
+                continue
+            while i < len(text) and text[i] != ch and text[i].isspace():
+                i += 1
+            if i < len(text) and text[i] == ch:
+                if first is None:
+                    first = i
+                i += 1
+        if first is None:
+            spans.append((pos, pos))
+        else:
+            spans.append((first, i))
+            pos = i
+    return spans
+
+
 class TestGoodVsBadTokenizer:
     """Axis-specific dummy tokenizers demonstrating metric independence.
 
@@ -1021,6 +1072,7 @@ class TestGoodVsBadTokenizer:
                 language="en",
                 tokens=[token_to_id[t] for t in toks],
                 text=text,
+                offsets=_offsets_for(text, toks),
             )
             for text, toks in samples
         ]
@@ -1182,6 +1234,7 @@ class TestAdjacentNumbersNotMerged:
                 language="en",
                 tokens=[token_to_id[t] for t in toks],
                 text=text,
+                offsets=_offsets_for(text, toks),
             )
             for text, toks in samples
         ]
@@ -1239,6 +1292,14 @@ class _CharTokenizer:
     def encode(self, text):
         return [self._id(c) for c in text]
 
+    def encode_with_offsets(self, text):
+        """One token per character, so each span is exactly one character.
+
+        Present because operator isolation resolves operators to tokens through
+        offsets; a tokenizer that reports none is skipped rather than measured.
+        """
+        return [self._id(c) for c in text], [(i, i + 1) for i in range(len(text))]
+
     def convert_ids_to_tokens(self, ids):
         return [self._rev[i] for i in ids]
 
@@ -1250,13 +1311,15 @@ class TestOperatorIsolationDomains:
     PROSE = "The total is 12 + 34 = 46 today."
 
     def _prose_data(self, tokenizer):
+        ids, offsets = tokenizer.encode_with_offsets(self.PROSE)
         return {
             self.TOK: [
                 TokenizedData(
                     tokenizer_name=self.TOK,
                     language="eng_Latn",
-                    tokens=tokenizer.encode(self.PROSE),
+                    tokens=ids,
                     text=self.PROSE,
+                    offsets=offsets,
                 )
             ]
         }
@@ -1292,14 +1355,23 @@ class TestOperatorIsolationDomains:
         # the code/math samples contribute operators, so pooling is not a no-op
         assert pooled > ops["by_domain"]["prose"]["summary"][self.TOK]["total_operators"]
 
-    def test_pretokenized_tokenizer_gets_prose_and_does_not_crash(self):
-        """A real pre-tokenized provider has no code/math domain, and must not crash.
+    def test_pretokenized_tokenizer_is_excluded_and_does_not_crash(self):
+        """A real pre-tokenized provider yields no operator domains, and must not crash.
 
         The code and math domains are derived corpora that have to be encoded.
         ``PreTokenizedDataTokenizer`` *defines* ``encode`` and raises from it, so
         the guard has to test ``can_encode()``; a ``hasattr(tok, "encode")``
         check would sail past this and blow up. This test uses the real wrapper
         rather than a mock precisely so that mistake cannot pass.
+
+        Prose is excluded too, which changed in 1.0. Operator isolation resolves
+        an operator to its covering tokens through character offsets, and a
+        pre-tokenized provider supplies ids and text but no offsets, so the
+        correspondence cannot be established. It used to be guessed by matching
+        token surfaces against a reconstruction, which is what produced wrong
+        isolation rates for any tokenizer whose special tokens the surface
+        pattern did not recognise. Declining to measure is the intended
+        behaviour; the metric is simply unavailable for this input.
         """
         from tokenizer_analysis.core.tokenizer_wrapper import PreTokenizedDataTokenizer
 
@@ -1325,12 +1397,13 @@ class TestOperatorIsolationDomains:
         }
         ops = metrics.compute(data)["operator_isolation_rate"]
 
-        assert tok_name in ops["by_domain"]["prose"]["summary"]
-        assert tok_name not in ops["by_domain"]["code"]["summary"]
-        assert tok_name not in ops["by_domain"]["math"]["summary"]
-        # with no code/math contribution the pooled view equals prose
-        assert (ops["summary"][tok_name]["total_operators"]
-                == ops["by_domain"]["prose"]["summary"][tok_name]["total_operators"])
+        # No domain can be measured without offsets, and nothing crashes.
+        for domain in ("prose", "code", "math"):
+            assert tok_name not in ops["by_domain"][domain]["summary"], (
+                f"{domain} should be unavailable for a pre-tokenized provider"
+            )
+        # Absent, not zero: a zero here would read as "no operator was isolated".
+        assert tok_name not in ops["summary"]
 
     def test_pooled_by_language_namespaces_code_and_math(self):
         """Code/math rows must not silently merge into the prose language namespace."""

@@ -642,21 +642,62 @@ class DigitBoundaryMetrics(BaseMetrics):
                     "operator-isolation domain (prose only).", tok_name,
                 )
                 continue
+            # Encode with offsets where the wrapper supports it. The corpus
+            # loader already does this for prose, and operator isolation resolves
+            # operators to tokens through offsets, so a derived corpus without
+            # them would be skipped entirely and the code and math domains would
+            # silently vanish from the results.
+            encode_offsets = getattr(tokenizer_obj, "encode_with_offsets", None)
             items: List[TokenizedData] = []
             for lang, texts in texts_by_lang.items():
                 for text in texts:
                     if not text or not text.strip():
                         continue
+                    offsets = None
+                    if callable(encode_offsets):
+                        try:
+                            ids, offsets = encode_offsets(text)
+                        except Exception as exc:
+                            logger.debug(
+                                "encode_with_offsets failed for %r: %s", tok_name, exc
+                            )
+                            ids = encode(text)
+                    else:
+                        ids = encode(text)
                     items.append(
                         TokenizedData(
                             tokenizer_name=tok_name,
                             language=lang,
-                            tokens=encode(text),
+                            tokens=ids,
                             text=text,
+                            offsets=offsets,
                         )
                     )
             out[tok_name] = items
         return out
+
+    @staticmethod
+    def _char_to_token_from_offsets(
+        n_chars: int, offsets: Optional[List[Tuple[int, int]]]
+    ) -> Optional[List[Optional[int]]]:
+        """Map each source character index to the token covering it.
+
+        Returns None when the tokenizer reported no offsets, so the caller can
+        skip rather than guess. Offsets are exact; inferring the same
+        correspondence from token surfaces is not, because a byte-level
+        vocabulary does not store the source characters.
+        """
+        if not offsets:
+            return None
+        mapping: List[Optional[int]] = [None] * n_chars
+        for tok_idx, span in enumerate(offsets):
+            if not span:
+                continue
+            start, end = span
+            for ci in range(max(0, start), min(end, n_chars)):
+                if mapping[ci] is None:
+                    mapping[ci] = tok_idx
+        return mapping
 
     def _accumulate_operators(
         self, tokenized_data: Dict[str, List[TokenizedData]]
@@ -671,6 +712,7 @@ class DigitBoundaryMetrics(BaseMetrics):
                 lambda: {"isolated": 0, "total": 0, "compound_ok": 0, "compound_total": 0}
             ))
         )
+        skipped_no_offsets = 0
 
         for tok_name in self.tokenizer_names:
             if tok_name not in tokenized_data:
@@ -689,19 +731,35 @@ class DigitBoundaryMetrics(BaseMetrics):
                     if not self._OPERATOR_SPAN.search(item.text):
                         continue
 
-                    token_strings = self._convert_ids_to_tokens(
-                        tokenizer_obj, item.tokens
+                    # Operators are located in the SOURCE and resolved to
+                    # tokens through the encoder's own offsets.
+                    #
+                    # This used to run the operator regex over a reconstruction
+                    # built by concatenating token strings, and every position
+                    # was a reconstruction coordinate. Two ways that gave wrong
+                    # answers. Special tokens the surface pattern does not
+                    # recognise were spliced in as literal text, so a Mistral-form
+                    # BOS token '<s>' contributed a '<' and a '>' that were
+                    # counted as two operators: apertus reported an isolation
+                    # rate of 6/8 = 0.750 on a sentence whose true rate is
+                    # 6/6 = 1.000, for every text. And a superword token like
+                    # 'G=G' reconstructs with a trailing space, which defeated
+                    # the isolation subset test even though the token covers only
+                    # '=' in the source.
+                    char_to_token = self._char_to_token_from_offsets(
+                        len(item.text), item.offsets
                     )
-                    recon_text, char_to_token = self._build_char_to_token_map(
-                        token_strings
-                    )
+                    if char_to_token is None:
+                        skipped_no_offsets += 1
+                        continue
 
                     # Reverse map: token_index -> set of char positions
                     token_to_chars: Dict[int, Set[int]] = defaultdict(set)
                     for ci, ti in enumerate(char_to_token):
-                        token_to_chars[ti].add(ci)
+                        if ti is not None:
+                            token_to_chars[ti].add(ci)
 
-                    for m in self._OPERATOR_SPAN.finditer(recon_text):
+                    for m in self._OPERATOR_SPAN.finditer(item.text):
                         op_str = m.group()
                         op_start = m.start()
                         op_end = m.end()
@@ -712,7 +770,7 @@ class DigitBoundaryMetrics(BaseMetrics):
                         # Token indices covering this operator
                         op_token_indices = set()
                         for i in range(op_start, op_end):
-                            if i < len(char_to_token):
+                            if i < len(char_to_token) and char_to_token[i] is not None:
                                 op_token_indices.add(char_to_token[i])
 
                         if not op_token_indices:
@@ -721,13 +779,29 @@ class DigitBoundaryMetrics(BaseMetrics):
                         cat_acc = acc[tok_name][lang][category]
                         cat_acc["total"] += 1
 
-                        # Isolated = every char of those tokens falls inside the
-                        # operator span (the operator is not glued to an operand)
+                        # Isolated = the covering tokens carry no non-whitespace
+                        # character from outside the operator span, i.e. the
+                        # operator is not glued to an operand.
+                        #
+                        # Whitespace is excluded from the test because these are
+                        # source coordinates. A token such as 'G=' covers the
+                        # space before the operator as well as the operator, and
+                        # that token is still an isolated operator: the space is
+                        # not an operand. The previous reconstruction-coordinate
+                        # version got this for free by stripping whitespace
+                        # before matching.
                         op_char_set = set(range(op_start, op_end))
-                        all_token_chars: Set[int] = set()
+                        outside_non_ws = False
                         for ti in op_token_indices:
-                            all_token_chars |= token_to_chars[ti]
-                        if all_token_chars.issubset(op_char_set):
+                            for ci in token_to_chars[ti]:
+                                if ci in op_char_set:
+                                    continue
+                                if not item.text[ci].isspace():
+                                    outside_non_ws = True
+                                    break
+                            if outside_non_ws:
+                                break
+                        if not outside_non_ws:
                             cat_acc["isolated"] += 1
 
                         # Compound preservation: multi-char operator -> 1 token
@@ -735,6 +809,15 @@ class DigitBoundaryMetrics(BaseMetrics):
                             cat_acc["compound_total"] += 1
                             if len(op_token_indices) == 1:
                                 cat_acc["compound_ok"] += 1
+
+        if skipped_no_offsets:
+            logger.warning(
+                "Operator isolation skipped %d document(s) whose tokenizer "
+                "reported no character offsets. Offsets are the only exact way "
+                "to say which token covers an operator; the metric is measured "
+                "on the remaining documents rather than estimated on these.",
+                skipped_no_offsets,
+            )
 
         self._char_decode_table = None
         return acc

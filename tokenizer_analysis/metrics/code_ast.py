@@ -436,37 +436,6 @@ class ASTBoundaryMetrics(BaseMetrics):
                 result[pos] = tok_idx
         return result
 
-    def _map_from_greedy_decode(
-        self, source_code: str, token_strings: List[str],
-    ) -> List[Optional[int]]:
-        """Fallback: greedy character-by-character alignment.
-
-        Decodes each raw token via :meth:`_decode_raw_token` and greedily
-        matches decoded characters against *source_code*.  Allows
-        space ↔ tab equivalence but NOT space ↔ newline.
-        """
-        result: List[Optional[int]] = [None] * len(source_code)
-        src_idx = 0
-
-        for tok_idx, raw_token in enumerate(token_strings):
-            decoded = self._decode_raw_token(raw_token)
-            if decoded is None:
-                continue
-            for ch in decoded:
-                if src_idx >= len(source_code):
-                    break
-                if source_code[src_idx] == ch:
-                    result[src_idx] = tok_idx
-                    src_idx += 1
-                elif (
-                    ch in (' ', '\t') and source_code[src_idx] in (' ', '\t')
-                ):
-                    result[src_idx] = tok_idx
-                    src_idx += 1
-                # else: skip character in decoded token (mismatch)
-
-        return result
-
     def _build_source_char_to_token_map(
         self,
         source_code: str,
@@ -475,16 +444,37 @@ class ASTBoundaryMetrics(BaseMetrics):
     ) -> List[Optional[int]]:
         """Map each source character (including whitespace) to a token index.
 
-        When *offsets* are provided (from ``encode_with_offsets``), uses
-        the direct offset-based mapping which is exact and cannot
-        desynchronise.  Otherwise falls back to greedy character decoding.
+        Requires *offsets* from ``encode_with_offsets``, which is exact.
+
+        There used to be a fallback that rebuilt the text by concatenating token
+        strings and walked the two in step. It advanced only on an exact
+        character match and never re-synchronized, so it stopped at the first
+        character a byte-level vocabulary renders differently and mapped
+        everything after it to None. Measured on a 45-character French snippet
+        with tokenizers/bpe.json: 19 of 45 characters agreed with the offsets
+        mapping and 26 were unmapped, against 0 unmapped from offsets. It
+        reported no warning, so its output was indistinguishable from a real
+        measurement.
+
+        Failing here is the right behaviour: the wrappers that return no offsets
+        (pre-tokenized data, script_bpe, mingram) cannot support a metric defined
+        on source character positions, and guessing produced numbers that looked
+        valid.
 
         Returns a list of length ``len(source_code)`` where entry *i* is
         the token index covering source char *i*, or ``None``.
         """
-        if offsets is not None:
-            return self._map_from_offsets(len(source_code), offsets)
-        return self._map_from_greedy_decode(source_code, token_strings)
+        if offsets is None:
+            raise ValueError(
+                "Code AST metrics need character offsets, and this tokenizer's "
+                "encode_with_offsets() returned none. Offsets are the only exact "
+                "way to say which token covers which source character; the "
+                "previous fallback guessed by matching token strings against the "
+                "source and silently mismapped most non-ASCII text. Use a "
+                "tokenizer that reports offsets, or disable the code metrics "
+                "with --no-code-ast."
+            )
+        return self._map_from_offsets(len(source_code), offsets)
 
     @staticmethod
     def _infer_indent_unit(

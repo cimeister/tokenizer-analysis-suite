@@ -1219,87 +1219,79 @@ class TestProcessToken:
 # ======================================================================
 
 class TestSourceCharToTokenMap:
-    """Verify whitespace-inclusive source → token mapping."""
+    """Source character to token mapping, which is offsets-only since 1.0.
+
+    There used to be a fallback that rebuilt the text from token strings and
+    walked the two in step, advancing only on an exact character match. It never
+    re-synchronized, so it stopped at the first character a byte-level
+    vocabulary renders differently and mapped the rest of the document to None,
+    without any warning. Measured on a 45-character French snippet with
+    tokenizers/bpe.json: 19 of 45 characters matched the offsets mapping and 26
+    were unmapped, against 0 unmapped from offsets. The tests that covered that
+    fallback are gone with it; these cover what replaced it.
+    """
 
     def setup_method(self):
         self.inst = _make_instance()
 
-    def test_simple_tokens(self):
-        source = "abc"
-        tokens = ["a", "b", "c"]
-        result = self.inst._build_source_char_to_token_map(source, tokens)
-        assert result == [0, 1, 2]
-
-    def test_g_prefix_tokens_with_whitespace(self):
+    def test_offsets_map_each_character_to_its_token(self):
         source = "a b"
-        tokens = ["a", "Ġb"]
-        result = self.inst._build_source_char_to_token_map(source, tokens)
-        assert result == [0, 1, 1]  # space is part of token 1
+        # Token 1 covers the space and the 'b', as a byte-level tokenizer would.
+        result = self.inst._build_source_char_to_token_map(
+            source, ["a", "Ġb"], offsets=[(0, 1), (1, 3)]
+        )
+        assert result == [0, 1, 1]
 
-    def test_special_tokens_skipped(self):
+    def test_indentation_maps_to_the_whitespace_token(self):
+        source = "    x"
+        result = self.inst._build_source_char_to_token_map(
+            source, ["Ġ   ", "x"], offsets=[(0, 4), (4, 5)]
+        )
+        assert result == [0, 0, 0, 0, 1]
+
+    def test_characters_no_token_covers_are_none(self):
+        """A gap in the offsets is unmapped, not attributed to a neighbour."""
+        source = "abc"
+        result = self.inst._build_source_char_to_token_map(
+            source, ["a", "c"], offsets=[(0, 1), (2, 3)]
+        )
+        assert result == [0, None, 1]
+
+    def test_zero_length_spans_do_not_claim_characters(self):
+        """Special tokens report empty spans and must not own source text."""
         source = "ab"
-        tokens = ["<|bos|>", "a", "b"]
-        result = self.inst._build_source_char_to_token_map(source, tokens)
+        result = self.inst._build_source_char_to_token_map(
+            source, ["<|bos|>", "a", "b"], offsets=[(0, 0), (0, 1), (1, 2)]
+        )
         assert result == [1, 2]
 
-    def test_indentation_mapping(self):
-        source = "    x"
-        # Four spaces as a single token, then 'x'
-        tokens = ["Ġ   ", "x"]  # Ġ decodes to space, so " " + "   " = "    "
-        result = self.inst._build_source_char_to_token_map(source, tokens)
-        assert result == [0, 0, 0, 0, 1]
+    def test_missing_offsets_fails_loudly(self):
+        """Without offsets the correspondence is unknowable, so refuse to guess.
 
-    def test_tab_space_mismatch(self):
-        """Source has tab but token decodes as space — pointer must not stall.
-
-        Without the whitespace-class fallback the space in the decoded
-        token never matches the tab in the source, so src_idx stays at 0
-        and every subsequent position is None.
+        The previous fallback returned a plausible-looking mapping that was
+        mostly None on non-ASCII text, and nothing downstream could tell that
+        from a real measurement.
         """
-        source = "\tx = 1"
-        # Token " x" decodes a leading space where source has a tab
-        tokens = [" x", "Ġ=", "Ġ1"]
-        result = self.inst._build_source_char_to_token_map(source, tokens)
-        # ' ' matches '\t' via whitespace-class fallback, then rest aligns
-        assert result == [0, 0, 1, 1, 2, 2]
+        with pytest.raises(ValueError) as excinfo:
+            self.inst._build_source_char_to_token_map("abc", ["a", "b", "c"])
+        message = str(excinfo.value)
+        assert "offsets" in message
+        assert "--no-code-ast" in message, "should say how to proceed"
 
-    def test_longer_than_source(self):
-        """Tokens with more characters than source should stop cleanly."""
-        source = "ab"
-        tokens = ["abc"]
-        result = self.inst._build_source_char_to_token_map(source, tokens)
-        assert result == [0, 0]
+    def test_non_ascii_maps_exactly_through_offsets(self):
+        """The case the old fallback got wrong: a byte-level vocabulary.
 
-    def test_bpe_multiline_no_none_gaps(self):
-        """Byte-level BPE tokens with ĠĠĠĠ and Ċ should map all chars."""
-        source = "if True:\n    x = 1"
-        # BPE-style encoding: Ċ for newline, ĠĠĠĠ for 4-space indentation
-        tokens = ["if", "ĠTrue", "Ġ:", "Ċ", "ĠĠĠĠ", "x", "Ġ=", "Ġ1"]
-        result = self.inst._build_source_char_to_token_map(source, tokens)
-        assert len(result) == len(source)
-        # No None gaps
+        'é' is stored as two remapped characters, so a reconstruction built from
+        token strings diverges from the source here. Offsets do not.
+        """
+        source = "café x"
+        result = self.inst._build_source_char_to_token_map(
+            source, ["caf", "Ã©", "Ġx"], offsets=[(0, 3), (3, 4), (4, 6)]
+        )
+        assert result == [0, 0, 0, 1, 2, 2]
         assert None not in result
 
-    def test_sentencepiece_multiline_no_none_gaps(self):
-        """SentencePiece tokens with ▁▁▁▁ should map all chars."""
-        source = "a b\n    c"
-        tokens = ["a", "▁b", "\n", "▁▁▁▁", "c"]
-        result = self.inst._build_source_char_to_token_map(source, tokens)
-        assert len(result) == len(source)
-        assert None not in result
 
-    def test_bpe_multi_g_whitespace(self):
-        """Multi-Ġ whitespace tokens should correctly map to source spaces."""
-        source = "    x"
-        tokens = ["ĠĠĠĠ", "x"]
-        result = self.inst._build_source_char_to_token_map(source, tokens)
-        # All 4 spaces should map to token 0, 'x' to token 1
-        assert result == [0, 0, 0, 0, 1]
-
-
-# ======================================================================
-# _extract_line_indentation
-# ======================================================================
 
 class TestExtractLineIndentation:
     """Verify line indentation extraction."""
