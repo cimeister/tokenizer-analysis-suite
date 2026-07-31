@@ -13,11 +13,12 @@ cd tokenizer-intrinsic-evals
 uv sync
 ```
 
-There is no PyPI release under the name `tokenizer-intrinsic-evals`:
-`pip install tokenizer-intrinsic-evals` returns HTTP 404. The checkout above is
-the documented install. The import name is `tokenizer_analysis`. The demo data
-and the example configs live in the checkout and are not part of an installable
-package, so a checkout is required for those in any case.
+This project is not published to PyPI, so there is nothing to `pip install` by
+name. To install it as a dependency rather than working in the checkout, use
+`pip install git+https://github.com/cimeister/tokenizer-intrinsic-evals.git`.
+The import name is `tokenizer_analysis`. The demo data and the example configs
+live in the checkout and are not part of an installable package, so a checkout
+is required for those in any case.
 
 ### Optional extras
 
@@ -542,9 +543,11 @@ step recognizes only per-metric shapes; the populated version is in
 `--save-full-results` to also write `analysis_results_full.json` with all
 computed data.
 
-[OUTPUT_CONTRACT.md](OUTPUT_CONTRACT.md) is the authority for this schema, for
-which fields each metric's `global` block holds, and for which parts are still
-changing before the schema is fixed.
+The schema is not yet fixed. Two things are still missing from it and will be
+added in a later release: an `aggregation` label on every metric's `metadata`,
+naming which average its `global` reports, and a `count` on every `per_language`
+entry so a consumer can re-derive the other weighting. Five metrics have no
+`global` block yet; they are named in the exceptions table below.
 
 Most metrics follow this layout:
 
@@ -958,7 +961,6 @@ Then reference `"class": "my_class"` in your tokenizer config.
 | File | What it holds |
 |---|---|
 | [METRICS.md](METRICS.md) | The definition, worked example and caveats for every metric |
-| [OUTPUT_CONTRACT.md](OUTPUT_CONTRACT.md) | The results-file contract: what each metric's `global` block holds, and what is still changing |
 | [MIGRATION.md](MIGRATION.md) | Breaking changes from `tokenizer-analysis-suite` to 1.0.0 and their replacements. The CLI's error messages point here |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
 | [SECURITY.md](SECURITY.md) | How to report a vulnerability |

@@ -221,6 +221,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Operator isolation rates with a zero denominator report `null` rather than 0.0,
   matching the rest of the pipeline. The prose domain of the demo has no compound
   operator, and reported a compound-preservation rate of 0.0.
+- A LaTeX standard-error cell used `\pm` in a non-raw f-string, which Python
+  3.12 and 3.13 report as `SyntaxWarning: invalid escape sequence '\p'` on
+  import. The classifiers and the CI matrix now cover 3.12 and 3.13, both of
+  which the package installs and imports on.
 - `--run-grouped-analysis` writes its results to `analysis_results.json`. The
   slimming step keys on `per_tokenizer`, and grouped results are one level
   deeper, so the slim file published `"grouped_analysis": {}` and the whole

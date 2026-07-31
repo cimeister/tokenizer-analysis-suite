@@ -13,7 +13,7 @@ jobs:
       matrix:
         # The floor and the ceiling of the supported range. requires-python is
         # >=3.10, and until this job existed the floor had never been executed.
-        python-version: ["3.10", "3.12"]
+        python-version: ["3.10", "3.12", "3.13"]
 
     steps:
       - uses: actions/checkout@v4

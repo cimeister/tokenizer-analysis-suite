@@ -9,9 +9,9 @@ replacements.
 ## Repository and install
 
 - The distribution name is now `tokenizer-intrinsic-evals` (was
-  `tokenizer-analysis`), so `pip install --upgrade tokenizer-analysis` will not
-  find this release. Nothing is published to PyPI under either name yet, so
-  install from the repository:
+  `tokenizer-analysis`), and this release is not published to PyPI under either
+  name, so `pip install --upgrade tokenizer-analysis` will not find it. Install
+  from the repository instead:
   `pip install git+https://github.com/cimeister/tokenizer-intrinsic-evals.git`,
   or clone it and run `uv sync`. The console scripts are unchanged
   (`tokenizer-analysis`, `tokenizer-visualize`, `tokenizer-sanity-check`), as is

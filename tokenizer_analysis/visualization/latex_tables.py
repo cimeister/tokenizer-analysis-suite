@@ -370,7 +370,9 @@ class LaTeXTableGenerator:
         
         # Add error if available
         if error is not None and not np.isnan(error):
-            error_str = f" {{{self.std_err_size} $\pm$ {format_str.format(error)}}}"
+            # Raw string: \p is not an escape sequence, and Python 3.12 upward
+            # raises SyntaxWarning: invalid escape sequence '\p' at import.
+            error_str = rf" {{{self.std_err_size} $\pm$ {format_str.format(error)}}}"
             formatted_value += error_str
         
         # Bold if best
