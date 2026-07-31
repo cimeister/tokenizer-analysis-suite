@@ -156,13 +156,34 @@ config load, because the HuggingFace Whitespace pretokenizer does not emit
 empty pieces and so cannot honour it. Only configs that select `newline_split`
 change value; the four configs in `configs/` do not.
 
-### S13. Config paths resolve against the process CWD: **open**
-`config/language_metadata.py`, `loaders/multilingual_data.py`. `data_path` is
-used verbatim, never joined to the config file's own directory. The same
-absolute `--language-config` loads 5 languages from the repo root and 0 from
-`configs/`, logged as warnings, exit 0. Tokenizer `path`, `code_ast_config`
-values and `math_data_path` share the behaviour. This is also why
-`--use-sample-data` only works from a source checkout.
+### S13. Config paths resolve against the process CWD: **fixed**
+`config/language_metadata.py`, `core/tokenizer_wrapper.py`. `data_path` was
+used verbatim, so the same absolute `--language-config` loaded 5 languages from
+the repository root and 0 from `configs/`, logged as warnings, exit 0.
+
+A relative `data_path` is now anchored at `PACKAGE_ROOT`, the directory holding
+the `tokenizer_analysis` package, which in a source checkout is the repository
+root. That is unconditional: a corpus path decides what the numbers describe,
+so it has to name the same files from every working directory, and a path that
+does not resolve is an error naming the anchor rather than a dropped language.
+
+A tokenizer `path` cannot be anchored unconditionally, because a Hub model id
+such as `meta-llama/Meta-Llama-3-8B` is also a relative-looking string that has
+to reach the loader unchanged. The order there is: absolute paths and paths
+that exist relative to the working directory are left alone, so a local file is
+never overridden by a package-root file of the same name; a path that exists
+only under the package root is rewritten and the log line says so; anything
+else is passed through.
+
+`--input` stays relative to the working directory, since it is a command-line
+path rather than a config entry, and is made absolute before it reaches the
+loader.
+
+Measured: `--use-sample-data` and `--tokenizer-config <abs> --input
+local_corpus.txt` both exit 0 from an unrelated working directory; before this
+both exited 1 with `Could not load tokenizer from tokenizers/bpe.json`. The
+demo still needs a source checkout, because `parallel/` and `tokenizers/` are
+not shipped inside the wheel.
 
 ### S14. CRLF and BOM are preserved into the AST metrics: **fixed**
 `loaders/code_data.py:172-192`. Files are opened in binary and decoded per
@@ -381,12 +402,21 @@ strippers also run for every tokenizer family, so a byte-level BPE token `##`
 becomes empty and `a@@` becomes `a`. Both `##` and `[...]` are in the bundled
 demo vocabulary.
 
-### X6. `numeric_magnitude_consistency` treats the `10+` bucket as exactly 10 digits: **open**
-`metrics/math.py:996-999,1033`. The linear fit reconstructs a token count as
+### X6. `numeric_magnitude_consistency` treats the `10+` bucket as exactly 10 digits: **fixed**
+`metrics/math.py`. The linear fit reconstructed a token count as
 `mean(tokens/digits) * 10` for that bucket, so a 20-digit number costing 10
-tokens is fitted as `(10, 5.0)`. Measured: slope 0.607 and R-squared 0.794
-against a true 0.587 and 0.980. The rho and R-squared also rest on 4 bucket
-points, and take 3 and 4 distinct values across 37 tokenizers.
+tokens was fitted at `(10, 5.0)`. Each number now carries its real digit count
+through the accumulator, and each bucket enters the fit at its own mean digit
+length against its own mean token count. Buckets `1` to `9` are unchanged, since
+every number in them has the same length. On numbers lying exactly on
+`tokens = 0.5 * digits + 1.0` with lengths 2, 4, 6, 8, 12 and 20, the fit
+returned slope 0.4667, intercept 1.1333 and R-squared 0.9949 before, and returns
+0.5, 1.0 and 1.0 after. `mean_digit_length` is published per bucket so the fit
+is auditable from the results file.
+
+`spearman_rho` is left as it was. It is a rank correlation over bucket order, so
+the position pinned at 10 does not affect it. The fit still rests on at most 10
+bucket points, and that is stated in the code.
 
 ### X7. `avg_tokens_per_line` mismatched numerator and denominator: **fixed**
 `metrics/basic.py`. Blank lines were filtered from the denominator while the
@@ -451,6 +481,22 @@ returns one element (open). The plural-key branches in
 ---
 
 ## Output schema
+
+Three decisions taken by the repo owner and implemented (see OUTPUT_CONTRACT.md
+for the rest of this workstream):
+
+- `indentation_consistency.global` is the micro-averaged correlation over pooled
+  (depth, whitespace-token count) pairs, not the mean of the per-language
+  correlations. Demo: pooled 0.7598 against a per-language mean of 0.8121 for
+  `bpe`.
+- `operator_isolation_rate` publishes its pooled `global` and its `by_domain`
+  split in the slim results file. Both existed in the full results and were
+  dropped from the slim one.
+- A relative corpus path in a language config is anchored at the package root.
+  See S13.
+
+The rest of the section below is the state before that work.
+
 
 Measured on a demo run: 9 of 23 metrics have no `global` key under
 `per_tokenizer.<tok>`, against a README that documents one for all of them.

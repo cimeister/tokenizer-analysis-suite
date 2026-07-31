@@ -859,7 +859,21 @@ class TestPooledEntropy:
 # ======================================================================
 
 class TestComputeFertilityScaling:
-    """Scaling statistics for numeric magnitude consistency."""
+    """Scaling statistics for numeric magnitude consistency.
+
+    ``_compute_fertility_scaling`` takes per-number records
+    (``{"fertility_per_digit": ..., "num_digits": ...}``), not bare fertility
+    floats, so that the linear fit can use each bucket's true mean digit
+    length instead of a fixed stand-in for the open-ended '10+' bucket.
+    """
+
+    @staticmethod
+    def _records(fertility_and_digits):
+        """Build [{"fertility_per_digit": f, "num_digits": d}, ...] from (f, d) pairs."""
+        return [
+            {"fertility_per_digit": f, "num_digits": d}
+            for f, d in fertility_and_digits
+        ]
 
     def test_empty_input(self):
         result = DigitBoundaryMetrics._compute_fertility_scaling({})
@@ -870,18 +884,22 @@ class TestComputeFertilityScaling:
 
     def test_single_bucket(self):
         result = DigitBoundaryMetrics._compute_fertility_scaling(
-            {"4": [0.5, 0.5, 0.5]}
+            {"4": self._records([(0.5, 4), (0.5, 4), (0.5, 4)])}
         )
         assert "4" in result["per_bucket"]
         assert result["per_bucket"]["4"]["mean_fertility"] == pytest.approx(0.5)
         assert result["per_bucket"]["4"]["count"] == 3
+        assert result["per_bucket"]["4"]["mean_digit_length"] == pytest.approx(4.0)
         # Only one bucket => no correlation possible
         assert result["spearman_rho"] is None
         assert result["linear_fit"] is None
 
     def test_two_buckets(self):
         result = DigitBoundaryMetrics._compute_fertility_scaling(
-            {"1": [1.0, 1.0], "4": [0.5, 0.5]}
+            {
+                "1": self._records([(1.0, 1), (1.0, 1)]),
+                "4": self._records([(0.5, 4), (0.5, 4)]),
+            }
         )
         assert result["spearman_rho"] is not None
         assert result["linear_fit"] is not None
@@ -891,26 +909,84 @@ class TestComputeFertilityScaling:
     def test_constant_fertility_zero_cv(self):
         # All buckets have identical mean fertility => CV = 0
         result = DigitBoundaryMetrics._compute_fertility_scaling(
-            {"1": [1.0], "2": [1.0], "3": [1.0], "4": [1.0]}
+            {
+                "1": self._records([(1.0, 1)]),
+                "2": self._records([(1.0, 2)]),
+                "3": self._records([(1.0, 3)]),
+                "4": self._records([(1.0, 4)]),
+            }
         )
         assert result["cv_of_mean_fertility"] == pytest.approx(0.0)
 
     def test_increasing_fertility_high_rho(self):
         # Fertility increases with digit length => positive rho
         result = DigitBoundaryMetrics._compute_fertility_scaling(
-            {"1": [0.2], "2": [0.4], "3": [0.6], "4": [0.8]}
+            {
+                "1": self._records([(0.2, 1)]),
+                "2": self._records([(0.4, 2)]),
+                "3": self._records([(0.6, 3)]),
+                "4": self._records([(0.8, 4)]),
+            }
         )
         assert result["spearman_rho"] is not None
         assert result["spearman_rho"] > 0.9
 
-    def test_ten_plus_bucket_uses_10(self):
-        # The "10+" bucket is treated as digit length 10 for scaling
+    def test_ten_plus_bucket_spearman_uses_pinned_10(self):
+        """spearman_rho keeps the pre-fix bucket-order representation.
+
+        This test previously asserted that the '10+' bucket "is treated as
+        digit length 10 for scaling" and checked only spearman_rho. That
+        claim was the defect: the same pinned-at-10 value was also used as
+        the x-coordinate of the linear fit, which is wrong when the '10+'
+        bucket's numbers are not all exactly 10 digits long (see
+        test_linear_fit_uses_true_mean_digit_length_for_open_bucket below).
+        spearman_rho itself is a rank correlation over bucket order, not a
+        fit to a specific x value, so pinning '10+' at 10 for that one
+        statistic was left unchanged deliberately; this test now says so.
+        """
         result = DigitBoundaryMetrics._compute_fertility_scaling(
-            {"1": [1.0], "10+": [0.5]}
+            {
+                "1": self._records([(1.0, 1)]),
+                "10+": self._records([(0.5, 12)]),
+            }
         )
         assert result["spearman_rho"] is not None
         # Fertility decreases with length => negative rho
         assert result["spearman_rho"] < 0
+
+    def test_linear_fit_uses_true_mean_digit_length_for_open_bucket(self):
+        """Regression test for the '10+' bucket linear-fit defect.
+
+        Every number here is generated from the exact line
+        num_tokens = 0.5 * num_digits + 1.0, including two numbers of
+        different lengths (12 and 20 digits) inside the open '10+' bucket.
+        Because the generating relationship is linear, the true mean token
+        count of the '10+' bucket equals the line evaluated at its true mean
+        digit length (16.0), so a fit that uses each bucket's own mean
+        digit length and mean token count recovers the exact line over all
+        five buckets: slope 0.5, intercept 1.0, R-squared 1.0.
+
+        The pre-fix implementation instead pinned the '10+' bucket's x-value
+        at a fixed 10.0 and its y-value at mean_fertility * 10.0 (here
+        0.566667 * 10 = 5.666667, against the true 9.0 at digit length 16),
+        which does not sit on this line and pulls the fit off it.
+        """
+        bucket_records = {
+            "2": self._records([(1.0, 2)]),                       # 2 digits -> 2.0 tokens
+            "4": self._records([(0.75, 4)]),                      # 4 digits -> 3.0 tokens
+            "6": self._records([(4 / 6, 6)]),                     # 6 digits -> 4.0 tokens
+            "8": self._records([(0.625, 8)]),                     # 8 digits -> 5.0 tokens
+            "10+": self._records([(7 / 12, 12), (11 / 20, 20)]),  # 7.0 and 11.0 tokens
+        }
+        result = DigitBoundaryMetrics._compute_fertility_scaling(bucket_records)
+
+        bucket_10p = result["per_bucket"]["10+"]
+        assert bucket_10p["mean_digit_length"] == pytest.approx(16.0)
+
+        fit = result["linear_fit"]
+        assert fit["slope"] == pytest.approx(0.5, abs=1e-9)
+        assert fit["intercept"] == pytest.approx(1.0, abs=1e-9)
+        assert fit["r_squared"] == pytest.approx(1.0, abs=1e-9)
 
 
 # ======================================================================

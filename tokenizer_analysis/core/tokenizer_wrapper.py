@@ -6,6 +6,7 @@ making it easy for users to integrate custom tokenizers into the framework.
 """
 
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Dict, List, Optional, Set, Union, Any, Tuple
 import json
 import logging
@@ -13,6 +14,7 @@ import os
 import glob
 import warnings
 
+from ..config.language_metadata import PACKAGE_ROOT
 from ..constants import GENERIC_SPECIAL_TOKENS, UNK_CANDIDATES
 
 logger = logging.getLogger(__name__)
@@ -513,7 +515,7 @@ class HuggingFaceTokenizer(TokenizerWrapper):
         return hf_special_token_strings(self._tokenizer)
 
     def get_special_token_ids(self) -> set:
-        """IDs of all tokens ADDED outside the learned vocabulary -- declared special tokens
+        """IDs of all tokens ADDED outside the learned vocabulary: declared special tokens
         (<bos>, <pad>, <unk>, ...) and reserved/control tokens (<unused123>, [multimodal], ...).
         Taken from the tokenizer's own metadata (added_tokens / all_special_ids), never guessed
         from surface form. These are intentional additions, not learned merges, so callers
@@ -532,7 +534,7 @@ class HuggingFaceTokenizer(TokenizerWrapper):
         """UNK token ID from the tokenizer's declared metadata only. A real UNK token is
         always a declared special token (e.g. transformers' unk_token_id, or an added_tokens
         entry with special=True whose content is a recognized UNK form). A bare 'unk' subword
-        is never treated as UNK -- that earlier heuristic mislabeled ordinary subwords."""
+        is never treated as UNK, because that earlier heuristic mislabeled ordinary subwords."""
         tok = self._tokenizer
         uid = getattr(tok, 'unk_token_id', None)   # transformers: authoritative metadata
         if uid is not None:
@@ -1472,4 +1474,39 @@ def create_tokenizer_wrapper(name: str, config: Dict[str, Any]) -> TokenizerWrap
                         f"Available classes: {available_classes}")
     
     tokenizer_class = _TOKENIZER_REGISTRY[tokenizer_class_name]
-    return tokenizer_class.from_config(name, config)
+    return tokenizer_class.from_config(name, _resolve_config_path(name, config))
+
+
+def _resolve_config_path(name: str, config: Dict[str, Any]) -> Dict[str, Any]:
+    """Anchor a relative tokenizer ``path`` at the package root when it exists there.
+
+    A relative path in a tokenizer config used to be resolved against the
+    process working directory, so `configs/sample_tokenizers.json` naming
+    `tokenizers/bpe.json` loaded from a source checkout and failed from
+    anywhere else. Language-config corpus paths are anchored unconditionally
+    (see config.language_metadata.resolve_corpus_path); a tokenizer path cannot
+    be, because a Hub model id such as `meta-llama/Meta-Llama-3-8B` is also a
+    relative-looking string that must reach the loader unchanged.
+
+    So the order is: absolute paths and paths that exist relative to the
+    working directory are left alone, which means a local file is never
+    overridden by a package-root file of the same name; a path that exists only
+    under the package root is rewritten, and the log line says so; anything else
+    is passed through for the loader to resolve or to report.
+    """
+    raw = config.get('path')
+    if not isinstance(raw, str) or not raw:
+        return config
+    path = Path(raw)
+    if path.is_absolute() or path.exists():
+        return config
+    candidate = PACKAGE_ROOT / path
+    if not candidate.exists():
+        return config
+    logger.info(
+        "Tokenizer %s: %r does not exist in the working directory; using the "
+        "package-root copy at %s.", name, raw, candidate,
+    )
+    resolved = dict(config)
+    resolved['path'] = str(candidate)
+    return resolved

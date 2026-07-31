@@ -6,8 +6,28 @@ including analytical groupings by script family and resource level.
 """
 
 import json
+import logging
 from typing import Dict, List, Any, Optional
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+# Anchor for relative `data_path` values in a language config. This is the
+# directory that holds the `tokenizer_analysis` package, which in a source
+# checkout is the repository root, so `parallel/eng_Latn.txt` names the same
+# file whatever directory the process was started from. Resolving against the
+# process working directory instead meant the same absolute --language-config
+# loaded 5 languages from the repository root and 0 from configs/, logged as
+# warnings, exit 0. An absolute data_path is used unchanged.
+PACKAGE_ROOT = Path(__file__).resolve().parent.parent.parent
+
+
+def resolve_corpus_path(data_path: str) -> str:
+    """Return *data_path* anchored at PACKAGE_ROOT when it is relative."""
+    path = Path(data_path)
+    if path.is_absolute():
+        return str(path)
+    return str(PACKAGE_ROOT / path)
 
 
 class LanguageMetadata:
@@ -189,12 +209,17 @@ class LanguageMetadata:
         to a path string, `{"en": "/path/to/data"}`, which the README has always
         documented; before this it raised `AttributeError: 'str' object has no
         attribute 'get'`, so the documented form did not work.
+
+        A relative path is anchored at PACKAGE_ROOT, so the same config names
+        the same files from any working directory. See resolve_corpus_path.
         """
         if isinstance(lang_info, str):
-            return lang_info or None
-        if isinstance(lang_info, dict):
-            return lang_info.get('data_path')
-        return None
+            raw = lang_info or None
+        elif isinstance(lang_info, dict):
+            raw = lang_info.get('data_path')
+        else:
+            raw = None
+        return resolve_corpus_path(raw) if raw else None
 
     def get_data_path(self, language_code: str) -> Optional[str]:
         """Get data path for a specific language."""

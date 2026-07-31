@@ -1932,6 +1932,57 @@ class TestIndentationConsistencyE2E:
         assert py["depth_proportionality_correlation"] > 0.8
 
 
+class TestIndentationConsistencyMicroAveragedOverall:
+    """The per-tokenizer 'overall' block is a micro-average: one Spearman
+    correlation over every language's (depth, num_ws_tokens) pairs pooled
+    together. That is a different statistic from 'summary'
+    avg_depth_proportionality_correlation, the unweighted mean of the
+    per-language correlations, and the two can disagree in sign.
+    """
+
+    def test_overall_differs_from_macro_mean_of_per_language_correlations(self):
+        inst = _make_instance()
+        inst.tokenizer_names = ["tok"]
+
+        indent_acc = {
+            "tok": {
+                # 3 distinct depths, tokens strictly increasing with depth:
+                # per-language correlation = 1.0.
+                "python": [
+                    {"depth": 1, "num_ws_tokens": 10},
+                    {"depth": 2, "num_ws_tokens": 20},
+                    {"depth": 3, "num_ws_tokens": 30},
+                ],
+                # Only 2 distinct depths, so this language's own correlation
+                # is None (fewer than 3 depths) and it is excluded from
+                # 'summary' avg_depth_proportionality_correlation. Its lines
+                # still count toward the pooled 'overall' block, and here
+                # they run opposite to python's trend.
+                "go": [
+                    {"depth": 4, "num_ws_tokens": 5},
+                    {"depth": 5, "num_ws_tokens": 1},
+                ],
+            }
+        }
+
+        results = inst._build_indentation_consistency_results(indent_acc)
+        tok_data = results["per_tokenizer"]["tok"]
+
+        # go is excluded from the average, so the macro mean is python's
+        # correlation alone.
+        assert results["summary"]["tok"][
+            "avg_depth_proportionality_correlation"
+        ] == pytest.approx(1.0)
+
+        # The pooled overall block uses all 5 lines from both languages and
+        # is negative: go's opposite-direction pair outweighs python's once
+        # ranked together across the full pooled range.
+        overall = tok_data["overall"]
+        assert overall["total_indented_lines"] == 5
+        assert overall["num_depth_levels"] == 5
+        assert overall["depth_proportionality_correlation"] == pytest.approx(-0.6)
+
+
 # ======================================================================
 # _build_char_decode_table
 # ======================================================================

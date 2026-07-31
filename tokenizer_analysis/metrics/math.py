@@ -516,6 +516,12 @@ class DigitBoundaryMetrics(BaseMetrics):
                             "uniform_chunk": uniform_chunk,
                             "single_token": single_token,
                             "fertility_per_digit": fertility_per_digit,
+                            # Real digit count of this number, not the bucket
+                            # label. The '10+' bucket holds numbers of many
+                            # different lengths, so this is what lets the
+                            # fertility-scaling fit use each bucket's true mean
+                            # length instead of a fixed stand-in.
+                            "num_digits": num_digits,
                         })
 
                         pattern = tuple(sorted(boundaries))
@@ -1079,36 +1085,72 @@ class DigitBoundaryMetrics(BaseMetrics):
 
     @staticmethod
     def _compute_fertility_scaling(
-        bucket_fertilities: Dict[str, List[float]],
+        bucket_records: Dict[str, List[Dict[str, float]]],
     ) -> Dict[str, Any]:
         """Compute scaling statistics across digit-length buckets.
 
-        Given ``{bucket_str: [fertility_per_digit_values, ...]}``, returns
-        per-bucket stats plus overall scaling indicators (Spearman rho,
-        coefficient of variation of mean fertility, and linear fit).
+        Given ``{bucket_str: [{"fertility_per_digit": ..., "num_digits": ...}, ...]}``
+        (one record per number), returns per-bucket stats plus overall scaling
+        indicators (Spearman rho, coefficient of variation of mean fertility,
+        and a linear fit).
+
+        Buckets '1' through '9' hold numbers of exactly that many digits, so
+        their mean digit length equals the bucket label. The '10+' bucket
+        holds numbers of every length from 10 digits up, so its mean digit
+        length is whatever the corpus actually contains. The linear fit below
+        uses each bucket's own mean digit length and its own mean of the
+        actual per-number token counts, so it stays exact for '10+' instead of
+        assuming every number in that bucket is 10 digits long.
+
+        spearman_rho keeps the coarser bucket-order representation ('10+'
+        pinned at digit length 10): it is a rank correlation over bucket
+        order, not a fit to a specific x value, so the same simplification
+        that breaks the linear fit does not apply to it.
+
+        The fit rests on at most 10 bucket points ('1' through '9' plus
+        '10+'), so its slope and R-squared are coarse.
         """
         per_bucket: Dict[str, Dict[str, float]] = {}
-        digit_lengths: List[float] = []
+        digit_lengths: List[float] = []       # bucket-order x, for spearman_rho ('10+' pinned at 10.0)
         mean_fertilities: List[float] = []
+        mean_digit_lengths: List[float] = []  # true mean num_digits per bucket, for the linear fit
+        mean_token_counts: List[float] = []   # true mean per-number token count per bucket, for the linear fit
 
-        for bucket_str in sorted(bucket_fertilities, key=lambda x: (len(x), x)):
-            values = bucket_fertilities[bucket_str]
-            if not values:
+        for bucket_str in sorted(bucket_records, key=lambda x: (len(x), x)):
+            records = bucket_records[bucket_str]
+            if not records:
                 continue
-            m = float(np.mean(values))
-            s = float(np.std(values))
+            fertilities = [r["fertility_per_digit"] for r in records]
+            num_digits_list = [r["num_digits"] for r in records]
+            # Each number's own token count, recovered exactly from that
+            # number's own fertility and digit count: fertility_per_digit is
+            # num_tokens / num_digits for that specific number, so multiplying
+            # back by that same number's num_digits returns its num_tokens.
+            token_counts = [
+                r["fertility_per_digit"] * r["num_digits"] for r in records
+            ]
+
+            m = float(np.mean(fertilities))
+            s = float(np.std(fertilities))
+            mean_digit_length = float(np.mean(num_digits_list))
             per_bucket[bucket_str] = {
                 "mean_fertility": m,
                 "std_fertility": s,
-                "count": len(values),
+                "count": len(records),
+                "mean_digit_length": mean_digit_length,
             }
-            # For scaling stats, use numeric digit length
+
+            # For spearman_rho, use the bucket-order digit length (10+ pinned
+            # at 10), unchanged from before.
             if bucket_str.endswith("+"):
                 dl = 10.0
             else:
                 dl = float(bucket_str)
             digit_lengths.append(dl)
             mean_fertilities.append(m)
+
+            mean_digit_lengths.append(mean_digit_length)
+            mean_token_counts.append(float(np.mean(token_counts)))
 
         result: Dict[str, Any] = {"per_bucket": per_bucket}
 
@@ -1138,16 +1180,21 @@ class DigitBoundaryMetrics(BaseMetrics):
             overall_std / overall_mean if overall_mean > 0 else 0.0
         )
 
-        # Linear fit: mean_tokens = slope * num_digits + intercept
-        # We fit mean_tokens (= mean_fertility * digit_length) vs digit_length
-        mean_tokens_arr = mf_arr * dl_arr
-        coeffs = np.polyfit(dl_arr, mean_tokens_arr, 1)
+        # Linear fit: mean_tokens = slope * num_digits + intercept.
+        # x is each bucket's own mean digit length; y is each bucket's own
+        # mean of the actual per-number token counts. The previous
+        # implementation used mean_fertility * a representative digit length
+        # in place of y, which is only exact when every number in the bucket
+        # has the same length, and is false for '10+'.
+        mdl_arr = np.array(mean_digit_lengths)
+        mtc_arr = np.array(mean_token_counts)
+        coeffs = np.polyfit(mdl_arr, mtc_arr, 1)
         slope, intercept = float(coeffs[0]), float(coeffs[1])
 
         # R^2
-        predicted = slope * dl_arr + intercept
-        ss_res = float(np.sum((mean_tokens_arr - predicted) ** 2))
-        ss_tot = float(np.sum((mean_tokens_arr - np.mean(mean_tokens_arr)) ** 2))
+        predicted = slope * mdl_arr + intercept
+        ss_res = float(np.sum((mtc_arr - predicted) ** 2))
+        ss_tot = float(np.sum((mtc_arr - np.mean(mtc_arr)) ** 2))
         r_squared = 1.0 - ss_res / ss_tot if ss_tot > 0 else 1.0
 
         result["linear_fit"] = {
@@ -1181,8 +1228,12 @@ class DigitBoundaryMetrics(BaseMetrics):
             }
 
             all_fertilities: List[float] = []
-            # Collect bucket fertilities across all languages for global scaling
-            global_bucket_fertilities: Dict[str, List[float]] = defaultdict(list)
+            # Collect per-number records (fertility_per_digit + num_digits)
+            # across all languages, for the global scaling fit. Records, not
+            # bare fertility floats, so that fit can use each bucket's own
+            # true mean digit length rather than a fixed stand-in for the
+            # open-ended '10+' bucket.
+            global_bucket_records: Dict[str, List[Dict[str, float]]] = defaultdict(list)
             languages_seen: set = set()
 
             for lang in sorted(alignment_acc.get(tok_name, {})):
@@ -1205,7 +1256,13 @@ class DigitBoundaryMetrics(BaseMetrics):
                     }
 
                     lang_fertilities.extend(values)
-                    global_bucket_fertilities[dl_str].extend(values)
+                    global_bucket_records[dl_str].extend(
+                        {
+                            "fertility_per_digit": it["fertility_per_digit"],
+                            "num_digits": it["num_digits"],
+                        }
+                        for it in items
+                    )
 
                 if lang_fertilities:
                     tok_data["overall"][lang] = {
@@ -1217,7 +1274,7 @@ class DigitBoundaryMetrics(BaseMetrics):
 
             # Scaling stats (across all languages pooled)
             tok_data["scaling"] = self._compute_fertility_scaling(
-                global_bucket_fertilities
+                global_bucket_records
             )
 
             results["per_tokenizer"][tok_name] = tok_data
@@ -1281,8 +1338,11 @@ class DigitBoundaryMetrics(BaseMetrics):
                     ctot = cat_data["compound_total"]
 
                     lang_data["by_category"][category] = {
-                        "isolation_rate": iso / t if t > 0 else 0.0,
-                        "compound_preservation_rate": cok / ctot if ctot > 0 else 0.0,
+                        # None, not 0.0: a category with no operator of that
+                        # kind was not measured, and 0.0 reads as a tokenizer
+                        # that isolated none of them.
+                        "isolation_rate": iso / t if t > 0 else None,
+                        "compound_preservation_rate": cok / ctot if ctot > 0 else None,
                         "total": t,
                         "compound_total": ctot,
                         # raw counts so a filtered subset can be re-aggregated exactly
@@ -1304,7 +1364,7 @@ class DigitBoundaryMetrics(BaseMetrics):
                     lang_data["isolation_rate"] = lang_isolated / lang_total
                     lang_data["compound_preservation_rate"] = (
                         lang_compound_ok / lang_compound_total
-                        if lang_compound_total > 0 else 0.0
+                        if lang_compound_total > 0 else None
                     )
                     lang_data["total"] = lang_total
                     # raw counts so a filtered subset can be re-aggregated exactly
@@ -1323,10 +1383,10 @@ class DigitBoundaryMetrics(BaseMetrics):
                 ct = category_totals[category]
                 t = ct["total"]
                 tok_data["by_category"][category] = {
-                    "isolation_rate": ct["isolated"] / t if t > 0 else 0.0,
+                    "isolation_rate": ct["isolated"] / t if t > 0 else None,
                     "compound_preservation_rate": (
                         ct["compound_ok"] / ct["compound_total"]
-                        if ct["compound_total"] > 0 else 0.0
+                        if ct["compound_total"] > 0 else None
                     ),
                     "total": t,
                     "compound_total": ct["compound_total"],
@@ -1340,7 +1400,7 @@ class DigitBoundaryMetrics(BaseMetrics):
                     "overall_isolation_rate": total_isolated / total_ops,
                     "overall_compound_preservation_rate": (
                         total_compound_ok / total_compound
-                        if total_compound > 0 else 0.0
+                        if total_compound > 0 else None
                     ),
                     "total_operators": total_ops,
                     "total_compound_operators": total_compound,

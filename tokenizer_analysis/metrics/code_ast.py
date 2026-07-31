@@ -1270,6 +1270,10 @@ class ASTBoundaryMetrics(BaseMetrics):
             tok_data: Dict[str, Any] = {"by_language": {}}
             lang_correlations: List[float] = []
             languages_seen: set = set()
+            # Pooled (depth, num_ws_tokens) pairs across every programming
+            # language, for the micro-averaged "overall" block built below.
+            pooled_depths: List[float] = []
+            pooled_num_ws_tokens: List[float] = []
 
             for code_lang in sorted(indent_acc.get(tok_name, {})):
                 records = indent_acc[tok_name][code_lang]
@@ -1300,9 +1304,37 @@ class ASTBoundaryMetrics(BaseMetrics):
                     lang_correlations.append(corr)
                 languages_seen.add(code_lang)
 
+                pooled_depths.extend(float(d) for d in depths)
+                pooled_num_ws_tokens.extend(float(t) for t in num_ws_tokens)
+
             results["per_tokenizer"][tok_name] = tok_data
 
             if languages_seen:
+                # Micro-averaged global: one Spearman correlation computed over
+                # the pooled (depth, num_ws_tokens) pairs of every language
+                # together, rather than the mean of the per-language
+                # correlations in ``summary`` below. Indentation conventions
+                # differ by language (Python uses 4 spaces, Go uses tabs,
+                # Haskell aligns to an arbitrary column), so this pooled value
+                # depends on the language mix of the code corpus. It is a
+                # deliberate choice, not a defect; ``by_language`` above is
+                # where a reader sees each language on its own.
+                pooled_distinct_depths = len(set(pooled_depths))
+                if pooled_distinct_depths >= 3:
+                    pooled_corr = self._spearman_correlation(
+                        pooled_depths, pooled_num_ws_tokens
+                    )
+                else:
+                    pooled_corr = float("nan")
+
+                tok_data["overall"] = {
+                    "depth_proportionality_correlation": (
+                        float(pooled_corr) if not math.isnan(pooled_corr) else None
+                    ),
+                    "num_depth_levels": pooled_distinct_depths,
+                    "total_indented_lines": len(pooled_depths),
+                }
+
                 summary: Dict[str, Any] = {
                     "languages_analyzed": len(languages_seen),
                 }

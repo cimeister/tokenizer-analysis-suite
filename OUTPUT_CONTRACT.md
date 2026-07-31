@@ -1,9 +1,9 @@
 # Results-file contract
 
 One row per metric in `analysis_results.json`. This is the review artifact for
-the remaining schema work (workstream 5): the `global` key, the `aggregation`
-label and the `count` unit are not yet implemented for every row, and the rows
-marked "decision" have more than one defensible answer.
+the remaining schema work (workstream 5). The two rows that needed a decision
+are settled and implemented; the `aggregation` label and the `count` unit are
+still not implemented for any row, and five metrics still have no `global`.
 
 Measured on the bundled demo (`--use-sample-data`, 5 FLORES+ languages, 2
 tokenizers). Every metric already publishes `per_tokenizer.<tok>`; the columns
@@ -43,10 +43,10 @@ label has to be published rather than inferred.
 | `tokenizer_fairness_gini` | yes | yes |
 | `three_digit_boundary_alignment` | no | no |
 | `numeric_magnitude_consistency` | no | no |
-| `operator_isolation_rate` | no | no |
+| `operator_isolation_rate` | yes | no |
 | `ast_boundary_alignment` | yes | no |
 | `identifier_fragmentation` | yes | no |
-| `indentation_consistency` | no | no |
+| `indentation_consistency` | yes | no |
 | `utf8_token_integrity` | yes | no |
 | `morphscore` | `summary` | no |
 
@@ -69,34 +69,28 @@ label has to be published rather than inferred.
 | `operator_isolation_rate` | `isolation_rate`, `compound_preservation_rate`, `total`, `isolated`, `compound_total` | pooled over prose, code and math, with the split kept in `by_domain` | `micro_pooled` | operator occurrences |
 | `ast_boundary_alignment` | `full_alignment_rate`, `start_alignment_rate`, `end_alignment_rate`, `cross_boundary_rate`, `count` | pooled over AST nodes in every programming language | `micro_pooled` | AST nodes |
 | `identifier_fragmentation` | `fragmentation_rate`, `avg_tokens_per_identifier`, `count`, `unmappable` | pooled over identifier occurrences | `micro_pooled` | identifier occurrences |
-| `indentation_consistency` | **decision**, see below | | | indented lines |
+| `indentation_consistency` | `depth_proportionality_correlation`, `num_depth_levels`, `total_indented_lines`, pooled over languages | one Spearman correlation over the pooled pairs | `micro_pooled` | indented lines |
 | `utf8_token_integrity` | `completeness_rate`, plus the six count fields it already carries | pooled over content tokens | `micro_pooled` | content tokens |
 | `morphscore` | keep `summary` as the global block, add `aggregation` | unweighted mean over the languages with data | `macro_languages` | languages |
 
-## Rows that need a decision
+## Rows decided and implemented
 
-**`indentation_consistency`.** The per-language value is
-`depth_proportionality_correlation`, a Spearman correlation between indent depth
-and token count, computed per programming language over that language's
-indented lines. A global can be either:
-
-- the unweighted mean of the per-language correlations (`macro_languages`), or
-- one correlation over the (depth, tokens) pairs of every language pooled
-  (`micro_pooled`).
-
-I recommend `macro_languages`. Pooling the pairs mixes indent conventions that
+**`indentation_consistency`: micro-averaged.** `global` is one Spearman
+correlation over the pooled `(depth, whitespace-token count)` pairs of every
+programming language, with the pooled `num_depth_levels` and
+`total_indented_lines` beside it. Not the mean of the per-language correlations.
+Measured on the demo: pooled 0.7598 against a per-language mean of 0.8121 for
+`bpe`, and pooled -0.2427 against -0.2793 for `unigramlm`. Indent conventions
 differ by language (Python 4 spaces, Go tabs, Haskell alignment), so the pooled
-correlation would partly measure the language mix of the code corpus. The demo
-run has 2 languages with data (`haskell`, `python`); a real `--code-ast-config`
-run has up to 19.
+value depends on the language mix of the code corpus. The per-language block is
+where each language is read separately, and the README says so.
 
-**`operator_isolation_rate`.** The proposed `global` pools prose, code and math.
-Code carries far more operators than prose, so the pooled rate is close to the
-code rate. The alternative is to leave the metric with no global and publish
-only `by_domain`. I recommend publishing the pooled global and the `by_domain`
-split together, since `by_domain` is what makes the pooled number readable, but
-a reader who takes the single number without reading `by_domain` will read it as
-a corpus-wide rate that it effectively is not.
+**`operator_isolation_rate`: pooled global published with `by_domain`.** Both
+existed in the full results and were dropped from the slim file, which carried
+only `per_language`. The global is weighted by operator instances, so with a
+code corpus it sits close to the code rate: 0.7285 pooled against 0.6832 for
+code, which supplies 1932 of 2258 instances on the demo. `by_domain` travels
+with it, because that is what makes the pooled number readable.
 
 ## Also in this workstream, not yet done
 
@@ -106,8 +100,8 @@ a corpus-wide rate that it effectively is not.
   elsewhere.
 - `operator_isolation_rate.per_language` keys natural languages (`arb_Arab`)
   and programming languages (`code:bash`) in one dict. The `code:` prefix
-  already namespaces them; whether to move them out into `by_domain` entirely is
-  part of the decision above.
+  namespaces them and `by_domain` now carries the split, so they stay where they
+  are.
 - `analysis_results.json` should be a strict projection of
   `analysis_results_full.json`. Not verified.
 

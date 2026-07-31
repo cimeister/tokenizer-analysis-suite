@@ -227,8 +227,19 @@ def _sample_array(value):
     return value
 
 
-def _slim_tokenizer_entry(metric_name: str, tok_data: dict) -> dict:
-    """Normalize a single tokenizer's data to consistent {global, per_language, ...} keys."""
+def _slim_tokenizer_entry(
+    metric_name: str,
+    tok_data: dict,
+    tok_name: Optional[str] = None,
+    metric_data: Optional[dict] = None,
+) -> dict:
+    """Normalize a single tokenizer's data to consistent {global, per_language, ...} keys.
+
+    ``tok_name`` and ``metric_data`` are only needed by branches that must
+    reach outside this tokenizer's ``per_tokenizer`` entry (e.g. operator
+    isolation's pooled ``summary``, which lives as a sibling of
+    ``per_tokenizer`` rather than inside it). Every other branch ignores them.
+    """
     if not isinstance(tok_data, dict):
         return tok_data
 
@@ -399,6 +410,29 @@ def _slim_tokenizer_entry(metric_name: str, tok_data: dict) -> dict:
                     per_lang[lang] = lang_data
             out['per_language'] = per_lang
 
+        # `tok_data` here is metric_data['per_tokenizer'][tok_name], which
+        # holds only by_category/by_language. The pooled rate for this
+        # tokenizer lives in the sibling `summary` dict built by
+        # _build_operator_results (math.py), so it has to be read from
+        # `metric_data` rather than from `tok_data`. The pool is a
+        # micro-average weighted by operator instances across prose, code and
+        # math, so with a real code corpus it sits close to the code-domain
+        # rate; by_domain (below) is what makes that pooled number readable.
+        if metric_data is not None and tok_name is not None:
+            global_stats = metric_data.get('summary', {}).get(tok_name)
+            if global_stats:
+                out['global'] = global_stats
+
+            by_domain_full = metric_data.get('by_domain')
+            if by_domain_full:
+                by_domain_out = {}
+                for domain, dom_data in by_domain_full.items():
+                    dom_stats = dom_data.get('summary', {}).get(tok_name)
+                    if dom_stats:
+                        by_domain_out[domain] = dom_stats
+                if by_domain_out:
+                    out['by_domain'] = by_domain_out
+
     # --- Reconstruction fidelity: domain-keyed data ---
     elif metric_name == 'reconstruction_fidelity':
         for key, value in tok_data.items():
@@ -481,7 +515,7 @@ def slim_results_for_json(results: Dict) -> Dict:
         # Normalize per-tokenizer entries
         if 'per_tokenizer' in metric_data:
             out['per_tokenizer'] = {
-                tok: _slim_tokenizer_entry(metric_name, tok_data)
+                tok: _slim_tokenizer_entry(metric_name, tok_data, tok, metric_data)
                 for tok, tok_data in metric_data['per_tokenizer'].items()
             }
 
@@ -1025,7 +1059,11 @@ def _corpus_source_from_input(input_path: str, label: Optional[str]) -> str:
             "pass --input-label explicitly."
         )
 
-    config = {"languages": {corpus_label: {"data_path": str(path)}}}
+    # Absolute, because a relative data_path in a language config is anchored
+    # at the package root (see config.language_metadata.resolve_corpus_path)
+    # while --input is a command-line path and means what it means from the
+    # working directory the user typed it in.
+    config = {"languages": {corpus_label: {"data_path": str(path.resolve())}}}
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
         json.dump(config, f, indent=2)
         logger.info(

@@ -11,7 +11,11 @@ from pathlib import Path
 
 import pytest
 
-from tokenizer_analysis.cli.run_analysis import build_parser, _validate_corpus_source
+from tokenizer_analysis.cli.run_analysis import (
+    build_parser,
+    _validate_corpus_source,
+    slim_results_for_json,
+)
 from tokenizer_analysis.config.language_metadata import LanguageMetadata
 
 
@@ -166,3 +170,81 @@ class TestLanguageMetadataShortForm:
         meta = LanguageMetadata(str(cfg))
         assert meta.get_data_path("en") == "/data/en.txt"
         assert meta.get_language_name("en") == "English"
+
+
+class TestOperatorIsolationSlimProjection:
+    """slim_results_for_json's operator_isolation_rate branch must expose the
+    pooled rate and the prose/code/math split inside each tokenizer's own
+    entry, not just per_language.
+
+    math.py's DigitBoundaryMetrics.compute() already produces a pooled
+    per_tokenizer/summary (weighted by operator instances across prose, code
+    and math) and a by_domain split, but before this change the slim
+    projection read only by_language, so analysis_results.json silently
+    dropped both.
+    """
+
+    @staticmethod
+    def _domain_block(isolated, total):
+        """A minimal per-domain block shaped like _build_operator_results'
+        output: per_tokenizer (unused here) plus the pooled summary."""
+        return {
+            "per_tokenizer": {"tok": {"by_category": {}, "by_language": {}}},
+            "summary": {
+                "tok": {
+                    "overall_isolation_rate": isolated / total,
+                    "overall_compound_preservation_rate": 0.0,
+                    "total_operators": total,
+                    "total_compound_operators": 0,
+                }
+            },
+            "source": "fake corpus",
+        }
+
+    def test_global_and_by_domain_appear_alongside_per_language(self):
+        metric_data = {
+            "per_tokenizer": {
+                "tok": {
+                    "by_category": {"arithmetic": {"isolation_rate": 1.0, "total": 143}},
+                    "by_language": {
+                        "en": {
+                            "by_category": {"arithmetic": {"isolation_rate": 1.0}},
+                            "isolation_rate": 1.0,
+                            "total": 143,
+                        }
+                    },
+                }
+            },
+            "summary": {
+                "tok": {
+                    "overall_isolation_rate": 143 / 160,
+                    "overall_compound_preservation_rate": 0.0,
+                    "total_operators": 160,
+                    "total_compound_operators": 0,
+                }
+            },
+            "by_domain": {
+                "prose": self._domain_block(8, 10),
+                "code": self._domain_block(90, 100),
+                "math": self._domain_block(45, 50),
+            },
+            "domain_operator_counts": {"tok": {"prose": 10, "code": 100, "math": 50}},
+        }
+
+        slimmed = slim_results_for_json({"operator_isolation_rate": metric_data})
+        tok_out = slimmed["operator_isolation_rate"]["per_tokenizer"]["tok"]
+
+        # global: the pooled rate plus its raw count, unchanged from summary.
+        assert tok_out["global"] == metric_data["summary"]["tok"]
+
+        # per_language: unchanged, by_category still stripped.
+        assert tok_out["per_language"]["en"]["isolation_rate"] == pytest.approx(1.0)
+        assert "by_category" not in tok_out["per_language"]["en"]
+
+        # by_domain: all three domains, each with the same rate-plus-count
+        # shape as global, and no leaked by_category.
+        assert set(tok_out["by_domain"]) == {"prose", "code", "math"}
+        assert tok_out["by_domain"]["prose"]["overall_isolation_rate"] == pytest.approx(0.8)
+        assert tok_out["by_domain"]["code"]["overall_isolation_rate"] == pytest.approx(0.9)
+        assert tok_out["by_domain"]["math"]["overall_isolation_rate"] == pytest.approx(0.9)
+        assert "by_category" not in tok_out["by_domain"]["code"]

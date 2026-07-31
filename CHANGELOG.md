@@ -185,6 +185,40 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   sees an ideal boundary and 74.2% of the sample falls in the vacuous
   length-3-or-under case. The warning matches the one `--code-ast-config`
   already prints.
+- A relative `data_path` in a language config is resolved against the package
+  root (the directory holding `tokenizer_analysis`, which is the repository root
+  in a source checkout) rather than the process working directory. The same
+  absolute `--language-config` used to load 5 languages from the repository root
+  and 0 from `configs/`. A relative tokenizer `path` is rewritten only when it
+  does not exist in the working directory and does exist under the package root,
+  so a Hub model id and a local file both keep working. `--input` is unchanged:
+  it is a command-line path and stays relative to the working directory.
+  `--use-sample-data` now runs from any directory in a source checkout.
+- `indentation_consistency` publishes a per-tokenizer `global`. It is the
+  micro-averaged value: one Spearman correlation over the pooled (depth,
+  whitespace-token count) pairs of every programming language, not the mean of
+  the per-language correlations. On the demo the two differ: pooled 0.7598
+  against a per-language mean of 0.8121 for `bpe`, and pooled -0.2427 against
+  -0.2793 for `unigramlm`. Indent conventions differ by language, so the pooled
+  value depends on the language mix of the code corpus; the per-language block is
+  where each language is read separately.
+- `operator_isolation_rate` publishes `global` and `by_domain` in
+  `analysis_results.json`. Both existed in the full results and were dropped from
+  the slim file, which carried only `per_language`. The global pools prose, code
+  and math by operator instance, so it sits close to the code rate whenever a
+  code corpus is supplied: measured 0.7285 pooled against 0.6832 for code, which
+  supplies 1932 of 2258 operator instances.
+- `numeric_magnitude_consistency` fits each digit-length bucket at its own mean
+  digit length and mean token count. The open `10+` bucket was fitted at exactly
+  10 digits with a token count reconstructed as `mean_fertility * 10`, so a
+  20-digit number costing 10 tokens entered the fit at (10, 5.0). On numbers
+  lying exactly on `tokens = 0.5 * digits + 1.0` with lengths 2, 4, 6, 8, 12 and
+  20, the fit returned slope 0.4667 and R-squared 0.9949; it now returns 0.5 and
+  1.0. Each bucket publishes `mean_digit_length` so the fit is auditable. The fit
+  rests on at most 10 points, so slope and R-squared stay coarse.
+- Operator isolation rates with a zero denominator report `null` rather than 0.0,
+  matching the rest of the pipeline. The prose domain of the demo has no compound
+  operator, and reported a compound-preservation rate of 0.0.
 - `--run-grouped-analysis` works again. It read `digit_split_variability` as a
   top-level key after the metric merge had nested it under
   `three_digit_boundary_alignment`, so the flag exited 1 with a bare `KeyError`.
