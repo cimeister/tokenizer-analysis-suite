@@ -4,12 +4,14 @@ A toolkit for computing intrinsic quality metrics for tokenizers across natural 
 
 ## Install
 
+Python 3.10 or newer.
+
 ```bash
 pip install tokenizer-intrinsic-evals
 ```
 
-The import name is `tokenizer_analysis`. For the demo data and the example
-configs, work from a checkout instead:
+The import name is `tokenizer_analysis`. The demo data and the example configs
+are not part of the installed package, so for those work from a checkout:
 
 ```bash
 git clone https://github.com/cimeister/tokenizer-intrinsic-evals.git
@@ -17,7 +19,21 @@ cd tokenizer-intrinsic-evals
 uv sync
 ```
 
-See [Setup](#setup) for MorphScore and parquet support.
+### Optional extras
+
+```bash
+# MorphScore morphological analysis
+git submodule update --init --recursive
+uv pip install -e ./morphscore
+
+# reading code corpora from parquet files
+uv sync --extra parquet
+
+# loading SentencePiece model files (the `sentencepiece` tokenizer class)
+uv sync --extra sentencepiece
+```
+
+**MorphScore note**: Only `<ISO 639-3>_<script>` language codes are automatically mapped. Data files must be downloaded separately (see [MorphScore README](morphscore/README.md)) and placed in `morphscore_data/`.
 
 ## Quick Start
 
@@ -58,77 +74,6 @@ tokenizers, corpus and measurement settings, so it cannot be combined with
 
 The two demo tokenizers deliberately fail `tokenizer-sanity-check` (`bpe.json`
 covers 94 of 256 byte values), so the check below has something to report.
-
-## Visualizing Tokenization
-
-The `tokenizer-visualize` command renders token boundaries directly on source text, making it easy to inspect how different tokenizers split code, math, and multilingual content.
-
-```bash
-# Show built-in samples (Python code, LaTeX math, multilingual text)
-uv run tokenizer-visualize \
-    --tokenizer-config configs/sample_tokenizers.json
-
-# Show only specific tokenizers
-uv run tokenizer-visualize \
-    --tokenizer-config configs/sample_tokenizers.json \
-    --tokenizers "bpe" "unigramlm"
-
-# Visualize all files in a directory
-# Files can contain multiple samples separated by a line with only "---".
-# Use --samples-per-file to control how many are read (default: 1).
-uv run tokenizer-visualize \
-    --tokenizer-config configs/sample_tokenizers.json \
-    --input data/samples/ --samples-per-file 3
-
-```
-
-Each sample is shown with line-numbered source text followed by a colour-coded token-boundary view for every tokenizer, plus whitespace and indentation statistics.
-
-## Sanity Checking a Tokenizer
-
-The `tokenizer-sanity-check` command runs a single-tokenizer health report: byte coverage, whitespace and digit handling, special-token behaviour, determinism, Unicode normalization, vocabulary integrity, and vocabulary reachability. It flags each check as pass, warn, or fail and sets a non-zero exit code when a check fails, so it can gate a tokenizer before a full analysis.
-
-```bash
-# Check a single tokenizer (CLASS:PATH form)
-uv run tokenizer-sanity-check huggingface:tokenizers/bpe.json
-
-# Check every tokenizer listed in a config
-uv run tokenizer-sanity-check --tokenizer-config configs/sample_tokenizers.json
-
-# Restrict a config run to one tokenizer by name
-uv run tokenizer-sanity-check --tokenizer-config configs/sample_tokenizers.json --only bpe
-
-# Add multilingual breadth (requires a language config)
-uv run tokenizer-sanity-check huggingface:tokenizers/bpe.json \
-    --use-sample-data --language-config configs/core_lang_config.json
-```
-
-Use `--exit-zero` to always return exit code 0 (report without gating) and `--quiet` to collapse passing checks in the text report.
-
-## Setup
-
-### Requirements
-- Python 3.10+
-- Git (for submodules)
-
-### Full Installation
-```bash
-git clone https://github.com/cimeister/tokenizer-intrinsic-evals.git
-cd tokenizer-intrinsic-evals
-uv sync
-
-# Optional: MorphScore morphological analysis
-git submodule update --init --recursive
-uv pip install -e ./morphscore
-
-# Optional: reading code corpora from parquet files
-uv sync --extra parquet
-
-# Optional: loading SentencePiece model files (the `sentencepiece` tokenizer class)
-uv sync --extra sentencepiece
-```
-
-**MorphScore note**: Only `<ISO 639-3>_<script>` language codes are automatically mapped. Data files must be downloaded separately (see [MorphScore README](morphscore/README.md)) and placed in `morphscore_data/`.
 
 ## Usage
 
@@ -234,6 +179,21 @@ Specify languages and analysis groupings via `--language-config`:
 
 For simple setups, `"languages"` can map codes directly to file paths: `{"en": "/path/to/data"}`.
 
+**How `data_path` is resolved.** An absolute path is used as written. A relative
+path is resolved against the package root, the directory that holds the
+`tokenizer_analysis` package, which in a source checkout is the repository root.
+It is never resolved against the directory you happen to run from, so the same
+config names the same corpus from anywhere and a run is reproducible. A path
+that does not resolve is an error naming it; the language is never dropped. Use
+an absolute path for data outside the repository.
+
+A relative `path` in a tokenizer config follows a different rule, because a Hub
+model id such as `meta-llama/Meta-Llama-3-8B` is also a relative-looking string.
+There, a path that exists relative to your working directory is used as is, a
+path that exists only under the package root is rewritten with a log line saying
+so, and anything else is passed to the loader unchanged. `--input` is a
+command-line path and is always relative to your working directory.
+
 ### Text Measurement Configuration
 
 Control how text "length" is measured for metric normalization via `--measurement-config`:
@@ -301,17 +261,29 @@ uv run tokenizer-analysis \
 The save step auto-generates a config file and per-tokenizer vocabulary files. For manually prepared pre-tokenized data, provide a pickle/JSON dict mapping tokenizer names to lists of `TokenizedData` objects, a JSON config pointing to vocabulary files, and line-by-line vocabulary text files.
 
 ## Output Structure
+
+A run with every output flag set writes:
+
 ```
 results/
-├── fertility_individual.svg         # Metric comparison charts
+├── analysis_results.json            # the metrics, slimmed schema; always written
+├── analysis_results_full.json       # every computed field (--save-full-results)
+├── fertility_individual.svg         # one chart per metric, always written unless --no-plots
 ├── compression_rate_individual.svg
 ├── vocabulary_utilization_individual.svg
-├── grouped_plots/                   # Cross-tokenizer comparisons
-├── per-language/                    # Language-specific analysis
-├── latex_tables/                    # Academic publication tables
-├── analysis_results.json            # Key metrics summary
-├── analysis_results_full.json       # Detailed results (--save-full-results)
-└── tokenized_data.pkl               # Cached data (--save-tokenized-data)
+├── bigram_entropy_individual.svg
+├── lorenz_curves_individual.svg
+├── tokenizer_fairness_gini_individual.svg
+├── vocab_util_cross_lingual_cov_individual.svg
+├── utf8_integrity.svg
+├── per-language/                    # one chart per metric per language (--per-language-plots)
+├── faceted_plots/                   # one subplot per tokenizer, shared y-axis (--faceted-plots)
+├── grouped_plots/                   # one chart per metric per language group (--run-grouped-analysis)
+├── latex_tables/                    # LaTeX tables (--generate-latex-tables)
+├── <tokenizer>_vocab.txt            # one per tokenizer, written with the vocabulary metrics
+├── tokenized_data.pkl               # cached tokenization (--save-tokenized-data)
+├── tokenized_data_config.json       # the vocabulary map that accompanies the cache
+└── tokenized_data_language_config.json
 ```
 
 ### JSON Results Schema
@@ -434,6 +406,8 @@ Fraction of mathematical operators (`+`, `-`, `*`, `=`, `<=`, etc.) tokenized as
 
 **Why it matters:** Merging an operator with its operand (e.g., `+3` as one token) forces the model to disentangle operation from value within a single embedding.
 
+**How the global is computed:** operators are counted in three domains, prose, code and math, and `global` pools all three. The pool is weighted by operator instances, so with a real `--code-ast-config` corpus the pooled rate sits close to the code rate: on the bundled demo, `bpe` scores 0.7285 pooled against 0.6832 for code, which supplies 1932 of the 2258 operator instances. `by_domain` reports the three separately and is written beside `global` for that reason. Read it before quoting the single number.
+
 ### Reconstruction Fidelity Metrics
 
 Measures how lossy the encode→decode round-trip is. Tokenizers can lose information through normalization, UNK substitution, whitespace mangling, and decode asymmetry. These metrics run on language text, code, and math data. Requires that the tokenizer supports decoding (most do); non-decodable tokenizers are silently skipped.
@@ -507,6 +481,8 @@ Counts how many multi-byte characters in the source text have their constituent 
 
 Evaluates tokenizer handling of source code by parsing it with tree-sitter and measuring alignment between AST node boundaries and token boundaries. Tree-sitter support is installed by default. Configured for 19 languages, of which 16 are measured. Swift, Kotlin and Perl are excluded because the node types their grammars use for identifiers are not classified, so the identifier share of classified leaves is 0.073, 0.058 and 0.000 against 0.19 to 0.37 for the supported languages; they are skipped with a named warning rather than scored on a fraction of their code. A grammar that crashes its parser process is likewise reported as unmeasured and named in the log. Configure with `--code-ast-config`; disable with `--no-code-ast`.
 
+Each language is parsed in its own subprocess, because a corrupt parse can abort the whole process. A grammar that hangs is reported as unmeasured and named in the log rather than scored, and the per-language timeout defaults to 120 seconds. Raise it with `TOKEVAL_PARSE_TIMEOUT_S` on a loaded machine, where a grammar can exceed the default and be dropped from a run that would otherwise measure it.
+
 > **Data scope:** These metrics are **always** computed on dedicated source-code snippets (loaded via `--code-ast-config`, or small built-in synthetic samples as a fallback), the general multilingual corpus passed to the analyzer is **never** used for this metric group, regardless of flags.
 
 #### AST Leaf-Node Boundary Alignment (`ast_full_alignment`)
@@ -534,6 +510,8 @@ Measures whether the number of whitespace tokens a tokenizer produces for leadin
 **Example:** A Python file has lines at depths 1, 2, 3, and 4. A proportional tokenizer encodes depth-1 indentation as 1 whitespace token, depth-2 as 2, depth-3 as 3, and depth-4 as 4, perfect rank correlation, ρ = 1.0. A tokenizer that merges all indentation into a single token regardless of depth (1, 1, 1, 1 whitespace tokens) produces ρ ≈ 0.0. A tokenizer that uses *more* tokens for shallow depths than deep ones gives ρ < 0.
 
 **Why it matters:** If indentation depth maps monotonically to whitespace token count, the model receives a natural positional signal for nesting structure without needing to learn it from context.
+
+**How the global is computed:** `global.depth_proportionality_correlation` is one Spearman correlation over the (depth, whitespace-token count) pairs of every whitespace-significant language pooled together, not the mean of the per-language correlations. The two differ: on the bundled demo, `bpe` scores 0.7598 pooled against a per-language mean of 0.8121. Indent conventions differ by language, so the pooled value depends on how much of each language the code corpus holds. Read `per_language` when you want each language separately.
 
 ### Multilingual Fairness
 - **Tokenizer Gini Coefficient** (`tokenizer_fairness_gini`): Measures equitable treatment across languages, defined as:
@@ -564,6 +542,54 @@ Then the **Tokenizer Fairness Gini** with equal weights is
   * $`1`$: maximal unfairness.
 
 - **Cross-Lingual Vocabulary-Utilization CoV** (`vocab_util_cross_lingual_cov`): Coefficient of variation (sample standard deviation ÷ mean, `ddof=1`) of the per-language vocabulary-utilization *ratio* across languages. Computed on the ratio (not the raw used-token count) so it is comparable across tokenizers with different vocabulary sizes. **Lower is better**: a low value means the tokenizer devotes a similarly-sized share of its vocabulary to each language (balanced cross-lingual utilization); a high value means utilization is concentrated in some languages. Complements the Gini coefficient above: Gini measures fairness of per-language *encoding cost*, while this measures balance of per-language *vocabulary coverage*. Requires ≥2 languages with mean utilization > 0; for single-language corpora it is reported as `---` (markdown) / omitted (plot) rather than a fabricated `0`. The JSON results also carry the underlying `per_language_mean` and `per_language_std`. Surfaced in the markdown results table and as an individual comparison plot (`vocab_util_cross_lingual_cov_individual.svg`).
+
+## Other commands
+
+### Visualizing Tokenization
+
+The `tokenizer-visualize` command renders token boundaries directly on source text, making it easy to inspect how different tokenizers split code, math, and multilingual content.
+
+```bash
+# Show built-in samples (Python code, LaTeX math, multilingual text)
+uv run tokenizer-visualize \
+    --tokenizer-config configs/sample_tokenizers.json
+
+# Show only specific tokenizers
+uv run tokenizer-visualize \
+    --tokenizer-config configs/sample_tokenizers.json \
+    --tokenizers "bpe" "unigramlm"
+
+# Visualize all files in a directory
+# Files can contain multiple samples separated by a line with only "---".
+# Use --samples-per-file to control how many are read (default: 1).
+uv run tokenizer-visualize \
+    --tokenizer-config configs/sample_tokenizers.json \
+    --input data/samples/ --samples-per-file 3
+
+```
+
+Each sample is shown with line-numbered source text followed by a colour-coded token-boundary view for every tokenizer, plus whitespace and indentation statistics.
+
+### Sanity Checking a Tokenizer
+
+The `tokenizer-sanity-check` command runs a single-tokenizer health report: byte coverage, whitespace and digit handling, special-token behaviour, determinism, Unicode normalization, vocabulary integrity, and vocabulary reachability. It flags each check as pass, warn, or fail and sets a non-zero exit code when a check fails, so it can gate a tokenizer before a full analysis.
+
+```bash
+# Check a single tokenizer (CLASS:PATH form)
+uv run tokenizer-sanity-check huggingface:tokenizers/bpe.json
+
+# Check every tokenizer listed in a config
+uv run tokenizer-sanity-check --tokenizer-config configs/sample_tokenizers.json
+
+# Restrict a config run to one tokenizer by name
+uv run tokenizer-sanity-check --tokenizer-config configs/sample_tokenizers.json --only bpe
+
+# Add multilingual breadth (requires a language config)
+uv run tokenizer-sanity-check huggingface:tokenizers/bpe.json \
+    --use-sample-data --language-config configs/core_lang_config.json
+```
+
+Use `--exit-zero` to always return exit code 0 (report without gating) and `--quiet` to collapse passing checks in the text report.
 
 ## Data Format Requirements
 

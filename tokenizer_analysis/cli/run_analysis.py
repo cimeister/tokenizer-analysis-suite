@@ -812,11 +812,6 @@ Examples:
         help="Enable verbose output"
     )
     parser.add_argument(
-        "--test",
-        action="store_true",
-        help="Run test functions"
-    )
-    parser.add_argument(
         "--save-full-results",
         action="store_true",
         help="Save full detailed results (large file) in addition to summary"
@@ -1310,10 +1305,6 @@ def run_from_args(args: argparse.Namespace):
             math_data_path=args.math_data,
             use_builtin_math_data=args.use_builtin_math_data
         )
-    if args.test:
-        logger.warning("Test methods not yet updated for unified system")
-        exit(0)
-    
     # Run analysis
     logger.info("Starting tokenizer analysis...")
     

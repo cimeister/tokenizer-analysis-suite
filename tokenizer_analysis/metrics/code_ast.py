@@ -76,7 +76,13 @@ _UNSUPPORTED_CODE_LANGS: Dict[str, str] = {
 logger = logging.getLogger(__name__)
 
 # Default timeout (seconds) for each per-language tree-sitter subprocess.
-DEFAULT_PARSE_TIMEOUT_S = 120
+# Override with TOKEVAL_PARSE_TIMEOUT_S. The subprocess exists because a
+# corrupt parse can abort the whole process, so the timeout is what turns a
+# hung grammar into a named warning. It is generous because it also has to
+# cover a loaded machine: the php grammar has timed out here at 120s on 3
+# snippets under a concurrent test run, which the log reports as php not
+# measured rather than php scoring zero.
+DEFAULT_PARSE_TIMEOUT_S = int(os.environ.get("TOKEVAL_PARSE_TIMEOUT_S", "120"))
 
 
 def _treesitter_pack_version() -> str:
@@ -272,7 +278,7 @@ class ASTBoundaryMetrics(BaseMetrics):
     _CATEGORIES = _CATEGORIES_TUPLE
 
     # Timeout (seconds) for each per-language tree-sitter subprocess.
-    _PER_LANG_TIMEOUT = 120
+    _PER_LANG_TIMEOUT = DEFAULT_PARSE_TIMEOUT_S
 
     def __init__(
         self,

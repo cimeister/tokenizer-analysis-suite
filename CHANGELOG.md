@@ -254,6 +254,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   pre-tokenizer and the merges, not on byte-level encoding as such.
 
 ### Added
+- `TOKEVAL_PARSE_TIMEOUT_S` overrides the per-language tree-sitter subprocess
+  timeout, default 120 seconds. On a loaded machine a grammar can exceed the
+  default and be dropped from the run: the php grammar timed out at 120 seconds
+  on 3 snippets during a concurrent test run.
 - `sentencepiece` is declared as an optional extra
   (`uv sync --extra sentencepiece`). `SentencePieceTokenizer` is a first-class
   tokenizer class but the package was never listed, so it was installable only
@@ -265,6 +269,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   until it is added. See MIGRATION.md.
 
 ### Removed
+- `--test`. It built the whole analyzer, logged `Test methods not yet updated
+  for unified system`, and exited 0 without running anything.
 - `indentation_consistency.pattern_stability_rate` and its
   `avg_pattern_stability_rate` summary. Once only whitespace-only tokens were
   counted, it was 1.0 for 11 of 12 tokenizers measured and took two distinct
