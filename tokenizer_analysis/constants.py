@@ -60,6 +60,13 @@ MAX_ARRAY_DISPLAY_LENGTH = 5
 
 # --- Data Processing ---
 
+# Seconds of CER computation allowed per tokenizer before the measurement is
+# dropped and reported as null. CER is an O(n*m) edit distance in Python, so on a
+# slow tokenizer it can take longer than every other metric combined. One shared
+# value, because the CLI default and the library default were 10.0 and 30.0, and
+# the same run gave a different answer depending on which entry point started it.
+DEFAULT_CER_TIME_BUDGET_S = 10.0
+
 DEFAULT_RANDOM_SEED = 42
 DEFAULT_MAX_TEXTS_PER_LANGUAGE = 1000
 DEFAULT_MAX_SAMPLES = 2000

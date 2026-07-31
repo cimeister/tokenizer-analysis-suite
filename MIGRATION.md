@@ -8,9 +8,12 @@ replacements.
 
 ## Repository and install
 
-- The install name is now `tokenizer-intrinsic-evals` (was `tokenizer-analysis`).
-  `pip install --upgrade tokenizer-analysis` will not find this release; install
-  `tokenizer-intrinsic-evals` instead. The console scripts are unchanged
+- The distribution name is now `tokenizer-intrinsic-evals` (was
+  `tokenizer-analysis`), so `pip install --upgrade tokenizer-analysis` will not
+  find this release. Nothing is published to PyPI under either name yet, so
+  install from the repository:
+  `pip install git+https://github.com/cimeister/tokenizer-intrinsic-evals.git`,
+  or clone it and run `uv sync`. The console scripts are unchanged
   (`tokenizer-analysis`, `tokenizer-visualize`, `tokenizer-sanity-check`), as is
   `import tokenizer_analysis`.
 - The old repository was renamed, so existing clones keep working: `git pull`
@@ -18,8 +21,11 @@ replacements.
   remote at the new name explicitly:
   `git remote set-url origin https://github.com/cimeister/tokenizer-intrinsic-evals.git`.
 - Minimum Python is now 3.10 (was 3.8).
-- tree-sitter (code AST metrics) is a core dependency. Parquet reading is now an
-  optional extra: `uv sync --extra parquet`.
+- tree-sitter (code AST metrics) is a core dependency. Parquet reading and
+  SentencePiece model files are optional extras:
+  `uv sync --extra parquet --extra sentencepiece`. Install both in one command:
+  `uv sync` performs an exact sync, so a second `uv sync` with a different
+  `--extra` removes what the first one installed.
 
 ## Command-line changes
 

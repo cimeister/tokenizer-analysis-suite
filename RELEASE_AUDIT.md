@@ -491,7 +491,8 @@ for the rest of this workstream):
   `bpe`.
 - `operator_isolation_rate` publishes its pooled `global` and its `by_domain`
   split in the slim results file. Both existed in the full results and were
-  dropped from the slim one.
+  dropped from the slim one. Measured with `--use-sample-data`: pooled 0.7938
+  over 3016 operator instances, code 0.6832 over 1932.
 - A relative corpus path in a language config is anchored at the package root.
   See S13.
 

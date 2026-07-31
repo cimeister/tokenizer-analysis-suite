@@ -26,6 +26,7 @@ from tokenizer_analysis.loaders.multilingual_data import (
 from tokenizer_analysis.core.input_utils import InputLoader
 from tokenizer_analysis.metrics.redundancy import MERGES as _MERGES
 from tokenizer_analysis.constants import (
+    DEFAULT_CER_TIME_BUDGET_S,
     LARGE_ARRAY_THRESHOLD,
     ARRAY_SAMPLING_POINTS,
     DEFAULT_MAX_SAMPLES,
@@ -510,6 +511,22 @@ def slim_results_for_json(results: Dict) -> Dict:
             slimmed[metric_name] = metric_data
             continue
 
+        # Grouped results are {group_type: {group_name: {metric: block}}}, one
+        # level deeper than everything else here, so the branches below found no
+        # per_tokenizer key and wrote an empty dict. A run with
+        # --run-grouped-analysis and no --save-full-results published
+        # "grouped_analysis": {} and lost the whole grouped result. Slim each
+        # group's metric block with the same rules instead.
+        if metric_name == 'grouped_analysis':
+            slimmed[metric_name] = {
+                group_type: {
+                    group_name: slim_results_for_json(group_result)
+                    for group_name, group_result in groups.items()
+                }
+                for group_type, groups in metric_data.items()
+            }
+            continue
+
         out = {}
 
         # Normalize per-tokenizer entries
@@ -889,7 +906,7 @@ Examples:
     parser.add_argument(
         "--use-builtin-math-data",
         action="store_true",
-        help="Use the built-in math sample dataset (~100 diverse expressions) for "
+        help="Use the bundled math sample dataset (285 expressions) for "
              "digit boundary metrics instead of the general input text. "
              "Ignored if --math-data is also provided."
     )
@@ -916,7 +933,7 @@ Examples:
     parser.add_argument(
         "--cer-time-budget",
         type=float,
-        default=10.0,
+        default=DEFAULT_CER_TIME_BUDGET_S,
         metavar="SECONDS",
         help="Max seconds to spend on CER computation per tokenizer. "
              "After a warmup phase the total time is extrapolated; if it "

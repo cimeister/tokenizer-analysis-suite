@@ -205,9 +205,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `operator_isolation_rate` publishes `global` and `by_domain` in
   `analysis_results.json`. Both existed in the full results and were dropped from
   the slim file, which carried only `per_language`. The global pools prose, code
-  and math by operator instance, so it sits close to the code rate whenever a
-  code corpus is supplied: measured 0.7285 pooled against 0.6832 for code, which
-  supplies 1932 of 2258 operator instances.
+  and math by operator instance, so the domain that supplies the most operators
+  pulls it hardest. Measured with `tokenizer-analysis --use-sample-data`: pooled
+  0.7938 over 3016 instances, against 0.6832 over 1932 for code, 0.9886 over 787
+  for prose and 0.9966 over 297 for math. Code supplies 64% of the instances.
+  The figures move with `--samples-per-lang`, which changes the prose corpus.
 - `numeric_magnitude_consistency` fits each digit-length bucket at its own mean
   digit length and mean token count. The open `10+` bucket was fitted at exactly
   10 digits with a token count reconstructed as `mean_fertility * 10`, so a
@@ -219,6 +221,19 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Operator isolation rates with a zero denominator report `null` rather than 0.0,
   matching the rest of the pipeline. The prose domain of the demo has no compound
   operator, and reported a compound-preservation rate of 0.0.
+- `--run-grouped-analysis` writes its results to `analysis_results.json`. The
+  slimming step keys on `per_tokenizer`, and grouped results are one level
+  deeper, so the slim file published `"grouped_analysis": {}` and the whole
+  grouped result was lost unless `--save-full-results` was also passed. Group
+  blocks are also folded by `merge_redundant_metrics` now, so a group and the
+  whole-corpus block carry the same metric keys; a group still published
+  `type_token_ratio` and `avg_tokens_per_line` after they had been merged away
+  everywhere else.
+- The CER time budget has one default, `DEFAULT_CER_TIME_BUDGET_S = 10.0`. The
+  CLI used 10.0 and `UnifiedTokenizerAnalyzer.run_analysis` used 30.0, so the
+  same corpus gave a different answer depending on which entry point started it.
+- `--use-builtin-math-data` help text said the bundled dataset holds about 100
+  expressions. It holds 285.
 - `--run-grouped-analysis` works again. It read `digit_split_variability` as a
   top-level key after the metric merge had nested it under
   `three_digit_boundary_alignment`, so the flag exited 1 with a bare `KeyError`.

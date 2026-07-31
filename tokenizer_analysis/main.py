@@ -8,6 +8,7 @@ import os
 from typing import Dict, List, Any, Optional, Tuple, Union
 import numpy as np
 
+from .constants import DEFAULT_CER_TIME_BUDGET_S
 from .core.input_types import TokenizedData, InputSpecification
 from .core.input_providers import InputProvider, create_input_provider
 from .core.input_utils import create_simple_specifications, InputValidator
@@ -177,7 +178,7 @@ class UnifiedTokenizerAnalyzer:
                     verbose: bool = True,
                     save_tokenized_data: bool = False,
                     tokenized_data_path: str = None,
-                    cer_time_budget_s: float = 30.0) -> Dict[str, Any]:
+                    cer_time_budget_s: float = DEFAULT_CER_TIME_BUDGET_S) -> Dict[str, Any]:
         """
         Run the full tokenizer analysis.
 
@@ -303,7 +304,7 @@ class UnifiedTokenizerAnalyzer:
                            base_results: Optional[Dict[str, Any]] = None,
                            reference_line_method: str = 'macro',
                            include_reconstruction: bool = True,
-                           cer_time_budget_s: float = 30.0) -> Dict[str, Dict[str, Any]]:
+                           cer_time_budget_s: float = DEFAULT_CER_TIME_BUDGET_S) -> Dict[str, Dict[str, Any]]:
         """
         Run analysis grouped by language categories.
         
@@ -422,8 +423,13 @@ class UnifiedTokenizerAnalyzer:
                     db_results = self.digit_boundary_metrics.compute(filtered_data)
                     group_result.update(db_results)
 
-                group_results[group_name] = group_result
-            
+                # Same merge the top-level results get, so a group block and
+                # the whole-corpus block have the same keys. Without it a group
+                # still published type_token_ratio and avg_tokens_per_line as
+                # top-level metrics after they had been folded into
+                # vocabulary_utilization and compression_rate everywhere else.
+                group_results[group_name] = merge_redundant_metrics(group_result)
+
             grouped_results[group_type] = group_results
         
         # Generate grouped plots

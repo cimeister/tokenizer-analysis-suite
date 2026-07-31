@@ -87,10 +87,13 @@ where each language is read separately, and the README says so.
 
 **`operator_isolation_rate`: pooled global published with `by_domain`.** Both
 existed in the full results and were dropped from the slim file, which carried
-only `per_language`. The global is weighted by operator instances, so with a
-code corpus it sits close to the code rate: 0.7285 pooled against 0.6832 for
-code, which supplies 1932 of 2258 instances on the demo. `by_domain` travels
-with it, because that is what makes the pooled number readable.
+only `per_language`. The global is weighted by operator instances, so the domain
+supplying the most operators pulls it hardest. Measured with
+`tokenizer-analysis --use-sample-data`: pooled 0.7938 over 3016 instances,
+against 0.6832 over 1932 for code, 0.9886 over 787 for prose and 0.9966 over 297
+for math, with code supplying 64% of the instances. The figures move with
+`--samples-per-lang`, which changes the size of the prose corpus. `by_domain`
+travels with the global, because that is what makes the pooled number readable.
 
 ## Also in this workstream, not yet done
 

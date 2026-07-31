@@ -1,17 +1,11 @@
 # TokEval
-A toolkit for computing intrinsic quality metrics for tokenizers across natural language, code, and math.
 
+A toolkit for computing intrinsic quality metrics for tokenizers across natural
+language, code, and math.
 
 ## Install
 
-Python 3.10 or newer.
-
-```bash
-pip install tokenizer-intrinsic-evals
-```
-
-The import name is `tokenizer_analysis`. The demo data and the example configs
-are not part of the installed package, so for those work from a checkout:
+Python 3.10 or newer. Install from a git checkout:
 
 ```bash
 git clone https://github.com/cimeister/tokenizer-intrinsic-evals.git
@@ -19,26 +13,45 @@ cd tokenizer-intrinsic-evals
 uv sync
 ```
 
+There is no PyPI release under the name `tokenizer-intrinsic-evals`:
+`pip install tokenizer-intrinsic-evals` returns HTTP 404. The checkout above is
+the documented install. The import name is `tokenizer_analysis`. The demo data
+and the example configs live in the checkout and are not part of an installable
+package, so a checkout is required for those in any case.
+
 ### Optional extras
 
+Order matters here. Install every extra in one `uv sync`, then do the editable
+MorphScore install last:
+
 ```bash
-# MorphScore morphological analysis
+# 1. extras, all named in one command
+#    parquet:       reading corpora and code corpora from .parquet files
+#    sentencepiece: loading SentencePiece model files (the `sentencepiece` class)
+uv sync --extra parquet --extra sentencepiece
+
+# 2. MorphScore morphological analysis, last
 git submodule update --init --recursive
 uv pip install -e ./morphscore
-
-# reading code corpora from parquet files
-uv sync --extra parquet
-
-# loading SentencePiece model files (the `sentencepiece` tokenizer class)
-uv sync --extra sentencepiece
 ```
 
-**MorphScore note**: Only `<ISO 639-3>_<script>` language codes are automatically mapped. Data files must be downloaded separately (see [MorphScore README](morphscore/README.md)) and placed in `morphscore_data/`.
+`uv sync` performs an exact sync by default: it removes packages that the
+lockfile and the named extras do not account for. So `uv sync --extra parquet`
+run after `uv pip install -e ./morphscore` uninstalls MorphScore, and
+`uv sync --extra sentencepiece` run after `uv sync --extra parquet` uninstalls
+pyarrow. Each step undoes the one before it. Pass `uv sync --inexact` if you
+need a different order.
+
+**MorphScore note**: only `<ISO 639-3>_<script>` language codes are mapped
+automatically. Data files are downloaded separately (see the
+[MorphScore repository](https://github.com/cimeister/morphscore)) and placed in
+`morphscore_data/`.
 
 ## Quick Start
 
 Analyze your own tokenizers on one corpus. `--input` takes a single file
-(`.txt`, `.json`, `.jsonl`, `.parquet`) or a directory of them:
+(`.txt`, `.json`, `.jsonl`, `.parquet`) or a directory of them; see
+[Data Configuration](#data-configuration) for what each format may contain.
 
 ```bash
 tokenizer-analysis \
@@ -59,65 +72,158 @@ Results land in `results/analysis_results.json`, with plots beside it. For
 several corpora at once, and for the cross-lingual metrics, use
 `--language-config` instead (see [Data Configuration](#data-configuration)).
 
+This command leaves three things at their defaults, which is fine for a first
+look and not for a number you intend to publish: the code metrics run on
+built-in synthetic samples, the digit metrics run on the prose corpus, and CER
+is dropped for any tokenizer that exceeds the 10-second budget. See
+[Full evaluation](#full-evaluation).
+
+### Full evaluation
+
+```bash
+tokenizer-analysis \
+    --tokenizer-config my_tokenizers.json \
+    --language-config my_languages.json \
+    --code-ast-config my_code.json \
+    --use-builtin-math-data \
+    --cer-time-budget 0
+```
+
+- `--code-ast-config` supplies real source code. Without it the code metrics are
+  computed on built-in synthetic samples, and the run prints a warning to that
+  effect. Those numbers are not comparable across the two cases.
+- `--use-builtin-math-data` points the three digit metrics at the 285 bundled
+  math texts (`tokenizer_analysis/sample_data/math_samples.json`).
+  `--math-data FILE` points them at your own instead. Without either, those three
+  are computed on whatever numbers the prose corpus happens to contain: on the
+  bundled five-language FLORES+ corpus at the default `--samples-per-lang` that
+  is 1797 digit spans, of which 6 are longer than 4 digits, so the place-value
+  boundaries at positions L-6 and L-9 are almost never exercised. Neither flag changes the `math` domain of `operator_isolation_rate`,
+  which already reads the same bundled file.
+- `--cer-time-budget 0` removes the cap on CER computation, so `mean_cer` and
+  `whitespace_fidelity` are measured rather than reported as `null` for slow
+  tokenizers.
+
 ### The bundled demo
 
 ```bash
 uv run tokenizer-analysis --use-sample-data
-open results/fertility_individual.svg
 ```
 
-Two sample tokenizers over five FLORES+ languages. This needs a source checkout:
-the demo corpus lives in `parallel/` and the tokenizers in `tokenizers/`, which
-are not part of the installed package. `--use-sample-data` supplies its own
-tokenizers, corpus and measurement settings, so it cannot be combined with
-`--tokenizer-config`, `--language-config`, `--input` or `--measurement-config`.
+Two sample tokenizers over five FLORES+ languages. Plots are written to
+`results/` as SVG; open `results/fertility_individual.svg` in a browser or an
+image viewer.
 
-The two demo tokenizers deliberately fail `tokenizer-sanity-check` (`bpe.json`
-covers 94 of 256 byte values), so the check below has something to report.
+The demo needs a source checkout: the corpus lives in `parallel/` and the
+tokenizers in `tokenizers/`, neither of which is part of an installable package.
+`--use-sample-data` supplies its own tokenizers, corpus and measurement
+settings, so it cannot be combined with `--tokenizer-config`,
+`--language-config`, `--input` or `--measurement-config`.
 
-## Usage
+Two things about the demo output are expected rather than broken. First, the two
+demo tokenizers fail `tokenizer-sanity-check` on purpose (`bpe.json` covers 94
+of 256 byte values), so [that command](#tokenizer-sanity-check) has something to
+report. Second, `unigramlm` decodes slowly enough to exceed the default
+`--cer-time-budget 10`, so its `mean_cer` and `whitespace_fidelity` come back
+`null` and the log names the projected time that triggered the skip. Add
+`--cer-time-budget 0` to measure them.
 
-### Common CLI Options
+## tokenizer-visualize
 
-| Flag | Description |
-|------|-------------|
-| `--tokenizer-config FILE` | JSON file with tokenizer configurations |
-| `--input PATH` | Analyze a single corpus: one file or a directory. Exclusive with `--language-config` |
-| `--input-label NAME` | Name for the `--input` corpus in the results (default: the path stem) |
-| `--language-config FILE` | JSON file with languages and analysis groups |
-| `--measurement-config FILE` | JSON file with text measurement method |
-| `--use-sample-data` | Use built-in demo data |
-| `--output-dir DIR` | Output directory (default: `results/`) |
-| `--verbose` | Detailed console output |
-| `--no-plots` | Skip plot generation |
-| `--save-full-results` | Save detailed JSON results |
-| `--run-grouped-analysis` | Group analysis by script families / resource levels |
-| `--per-language-plots` | Per-language grouped bar charts |
-| `--faceted-plots` | One subplot per tokenizer with shared y-axis |
-| `--filter-script-family FAMILY` | Filter languages by script family |
-| `--morphscore` | Enable MorphScore analysis |
-| `--morphscore-config FILE` | Custom MorphScore configuration |
-| `--code-ast-config FILE` | JSON mapping languages to code paths for AST analysis |
-| `--no-code-ast` | Skip AST boundary analysis |
-| `--no-digit-boundary` | Skip math metrics (digit boundaries, operators) |
-| `--math-data FILE` | Math-rich text file (.txt/.json) for digit boundary metrics |
-| `--no-utf8-integrity` | Skip UTF-8 character boundary metrics |
-| `--no-reconstruction` | Skip reconstruction fidelity analysis (see [Performance](#performance)) |
-| `--generate-latex-tables` | Generate LaTeX tables |
-| `--samples-per-lang N` | Text samples per language |
-| `--save-tokenized-data` | Cache tokenized data for reuse |
-| `--no-global-lines` | Hide global average lines in plots |
-| `--latex-table-types ...` | Which LaTeX tables to emit: `basic`, `information`, `comprehensive` |
-| `--latex-output-dir DIR` | Where LaTeX tables are written (default: `<output-dir>/latex_tables`) |
-| `--custom-latex-config FILE` | JSON config for a custom LaTeX table |
-| `--filter-resource-level NAME` | Restrict to one resource level from `analysis_groups` |
-| `--pairwise TOK1 TOK2` | Restrict the run to two named tokenizers |
-| `--cer-time-budget SECONDS` | Cap on CER computation per tokenizer; 0 disables (default: 10) |
-| `--use-builtin-math-data` | Use the bundled math corpus for the digit metrics |
-| `--morphscore-data-dir DIR` | Where MorphScore datasets live (default: `morphscore_data`) |
-| `--tokenized-data-file FILE` | Replay a cached tokenization instead of encoding |
-| `--tokenized-data-config FILE` | Vocabulary map that accompanies a cache |
-| `--tokenized-data-output-path PATH` | Where `--save-tokenized-data` writes |
+Renders token boundaries directly on source text, for inspecting how different
+tokenizers split code, math and multilingual content.
+
+```bash
+# Built-in samples (Python code, LaTeX math, multilingual text)
+uv run tokenizer-visualize \
+    --tokenizer-config configs/sample_tokenizers.json
+
+# Only specific tokenizers
+uv run tokenizer-visualize \
+    --tokenizer-config configs/sample_tokenizers.json \
+    --tokenizers "bpe" "unigramlm"
+
+# Every file in a directory. Within a file, samples are separated by a line
+# containing only "---"; --samples-per-file controls how many are read.
+uv run tokenizer-visualize \
+    --tokenizer-config configs/sample_tokenizers.json \
+    --input path/to/samples/ --samples-per-file 3
+```
+
+Each sample is shown as line-numbered source text followed by a colour-coded
+token-boundary view for every tokenizer, plus whitespace and indentation
+statistics. `--no-color` disables the ANSI colours for piping to a file.
+
+## tokenizer-sanity-check
+
+Runs a single-tokenizer health report: byte coverage, whitespace and digit
+handling, special-token behaviour, determinism, Unicode normalization,
+vocabulary integrity, and vocabulary reachability. Each check is flagged pass,
+warn or fail, and a failing check sets a non-zero exit code, so the command can
+gate a tokenizer before a full analysis.
+
+```bash
+# A single tokenizer (CLASS:PATH form)
+uv run tokenizer-sanity-check huggingface:tokenizers/bpe.json
+
+# Every tokenizer listed in a config
+uv run tokenizer-sanity-check --tokenizer-config configs/sample_tokenizers.json
+
+# One tokenizer from a config, by name
+uv run tokenizer-sanity-check --tokenizer-config configs/sample_tokenizers.json --only bpe
+
+# Add multilingual breadth (requires a language config)
+uv run tokenizer-sanity-check huggingface:tokenizers/bpe.json \
+    --use-sample-data --language-config configs/core_lang_config.json
+```
+
+`--exit-zero` always returns exit code 0, reporting without gating.
+`--quiet` collapses passing checks in the text report. `--output-dir` writes
+`sanity_results.json`.
+
+## Python API
+
+The CLI is a wrapper around `UnifiedTokenizerAnalyzer`.
+`create_analyzer_from_raw_inputs` builds one from a tokenizer config dict and a
+language-to-texts dict, and `run_analysis` returns the metrics as a dict:
+
+```python
+from tokenizer_analysis import create_analyzer_from_raw_inputs
+
+analyzer = create_analyzer_from_raw_inputs(
+    tokenizer_configs={
+        "bpe": {"class": "huggingface", "path": "tokenizers/bpe.json"},
+    },
+    language_texts={
+        "eng_Latn": ["The value 1234567 was measured.", "3 + 5 >= 8 holds."],
+        "deu_Latn": ["Der Wert 1234567 wurde gemessen.", "3 + 5 >= 8 gilt."],
+    },
+    plot_save_dir="api_results",
+)
+
+results = analyzer.run_analysis(
+    save_plots=False,
+    include_morphscore=False,
+    verbose=False,
+)
+
+print(results["compression_rate"]["per_tokenizer"]["bpe"]["global"]["compression_rate"])
+print(results["fertility"]["per_tokenizer"]["bpe"]["global"]["mean"])
+```
+
+`run_analysis` also takes `include_digit_boundary`, `include_code_ast`,
+`include_utf8_integrity`, `include_reconstruction`, `cer_time_budget_s`,
+`save_tokenized_data` and `tokenized_data_path`, matching the corresponding CLI
+flags. `cer_time_budget_s` defaults to 30.0 here against 10.0 for
+`--cer-time-budget`, so the same corpus can produce a measured `mean_cer` from
+the API and `null` from the CLI. `create_analyzer_from_tokenized_data` is the
+equivalent factory for pre-tokenized input.
+
+The returned dict is the full result. The CLI always writes a slimmed projection
+of it to `analysis_results.json`, and writes the full dict to
+`analysis_results_full.json` only with `--save-full-results`, so a path read off
+this dict is a full-results path (see
+[JSON results schema](#json-results-schema)).
 
 ## Configuration Files
 
@@ -142,9 +248,23 @@ Specify tokenizers via `--tokenizer-config`:
 }
 ```
 
-Available classes: `"huggingface"` (aliases `"hf"`, `"transformers"`), `"sentencepiece"`, `"custom_bpe"` (requires `vocab.json` + `merges.txt`), `"unimixlm"`, `"pretokenized"` (for pre-tokenized data), and `"script_bpe"` / `"mingram"` for the SCRIPT BPE and MinGram tokenizers.
+Available classes: `"huggingface"` (aliases `"hf"`, `"transformers"`, and the
+deprecated `"standard"`, which warns), `"sentencepiece"`, `"custom_bpe"`
+(requires `vocab.json` + `merges.txt`), `"unimixlm"`, `"pretokenized"` (for
+pre-tokenized data), and `"script_bpe"` / `"mingram"` for the SCRIPT BPE and
+MinGram tokenizers. You can add your own with `register_tokenizer_class()`
+(see [Adding new tokenizers](#adding-new-tokenizers)).
 
-The `"script_bpe"` and `"mingram"` classes require the external `script_bpe` package, which is not a dependency of this library (install it with `pip install -e /path/to/script_tok` or put its repo on `PYTHONPATH`). Each `path` is a single saved tokenizer file (`.json` or `.json.gz`); `"mingram"` accepts an optional `reindex` flag (default `false`). These tokenizers have no special tokens. Under the SCRIPT pretokenizer a token string is its rendered form, with `<|BLOCK_...|>` / `<|SCRIPT_INDEX_...|>` markers for sub-character pieces, and reflects NFC normalization and digit regrouping, so the token-string metrics (byte coverage, junk and dead-vocab) describe that rendered form. MorphScore is not available for these two classes.
+The `"script_bpe"` and `"mingram"` classes require the external `script_bpe`
+package, which is not a dependency of this toolkit (install it with
+`pip install -e /path/to/script_tok` or put its repo on `PYTHONPATH`). Each
+`path` is a single saved tokenizer file (`.json` or `.json.gz`); `"mingram"`
+accepts an optional `reindex` flag (default `false`). These tokenizers have no
+special tokens. Under the SCRIPT pretokenizer a token string is its rendered
+form, with `<|BLOCK_...|>` / `<|SCRIPT_INDEX_...|>` markers for sub-character
+pieces, and reflects NFC normalization and digit regrouping, so the token-string
+metrics (byte coverage, junk and dead-vocab) describe that rendered form.
+MorphScore is not available for these two classes.
 
 ### Data Configuration
 
@@ -177,26 +297,81 @@ Specify languages and analysis groupings via `--language-config`:
 }
 ```
 
-For simple setups, `"languages"` can map codes directly to file paths: `{"en": "/path/to/data"}`.
+For simple setups, `"languages"` can map codes directly to file paths:
+`{"en": "/path/to/data"}`.
 
-**How `data_path` is resolved.** An absolute path is used as written. A relative
-path is resolved against the package root, the directory that holds the
-`tokenizer_analysis` package, which in a source checkout is the repository root.
-It is never resolved against the directory you happen to run from, so the same
-config names the same corpus from anywhere and a run is reproducible. A path
-that does not resolve is an error naming it; the language is never dropped. Use
-an absolute path for data outside the repository.
+#### Corpus file formats
+
+A corpus file, whether named by `--input` or by a `data_path`, is read in one of
+four formats, chosen by extension:
+
+| Extension | Shape |
+|---|---|
+| `.txt` | Plain text. One sentence or document per line is recommended for parallel corpora |
+| `.json` | Either a JSON array of objects each with a `text` key, or one such object on its own |
+| `.jsonl` | JSON Lines: one object per line, each with a `text` key |
+| `.parquet` | A DataFrame with a text column; see below |
+
+A `.json` file shaped `{"texts": [...]}` is **not** a corpus file and loads as
+zero texts. That shape belongs to `--math-data` only, which accepts either
+`{"texts": [...]}` or a bare JSON array of strings.
+
+Parquet column names differ by loader:
+
+- A **corpus** parquet is read by `loaders/multilingual_data.py`, which takes the
+  first column present out of `text`, `content`, `sentence`, `document`,
+  `passage`, and otherwise falls back to the first string column with a log line
+  naming it.
+- A **code** parquet named by `--code-ast-config` is read by
+  `loaders/code_data.py`, which requires a `content` column and logs a warning
+  naming the columns it did find if there is none.
+
+Either way parquet needs the `parquet` extra. Without an engine installed the
+run fails with an error naming the extra, rather than reading an empty corpus.
+
+A directory passed as `--input` or as a `data_path` is scanned for `*.json`,
+`*.parquet` and `*.txt` in that order, sorted by name. `*.jsonl` is not in that
+list, so a `.jsonl` file is read when named directly and skipped when it sits in
+a scanned directory. A directory holding only `.jsonl` files loads zero texts.
+
+#### Metric families and the data they need
+
+| Metric family | Computed on | Flag that supplies it | Without the flag |
+|---|---|---|---|
+| Compression, fertility, token length, vocabulary utilization, Rényi efficiency, bigram and trigram entropy, Gini, UTF-8 integrity, reconstruction fidelity, encoding speed | the main corpus | `--input`, `--language-config` or `--use-sample-data` | the run aborts with an error naming the three options. There is no fallback to demo data |
+| The three digit metrics: `three_digit_boundary_alignment`, digit split variability, `numeric_magnitude_consistency` | dedicated math texts | `--math-data FILE` or `--use-builtin-math-data` | computed on the main corpus instead, and the run prints a warning naming all three. `--no-digit-boundary` turns them off |
+| `operator_isolation_rate`, `math` domain | dedicated math texts | `--math-data FILE` | the bundled `sample_data/math_samples.json`, which is also what `--use-builtin-math-data` names. This domain never falls back to the main corpus |
+| `operator_isolation_rate`, `prose` domain | the main corpus | `--input`, `--language-config` or `--use-sample-data` | see the first row |
+| The three AST metrics: `ast_boundary_alignment`, `identifier_fragmentation`, `indentation_consistency` | dedicated source-code snippets | `--code-ast-config FILE` | computed on built-in synthetic code samples, and the run prints a warning naming all three. `--no-code-ast` turns them off |
+| `operator_isolation_rate`, `code` domain | dedicated source-code snippets | `--code-ast-config FILE` | the bundled `sample_data/code_samples.json`. This domain runs under `--no-code-ast` as well; only `--no-digit-boundary`, which drops `operator_isolation_rate` entirely, turns it off |
+| MorphScore | MorphScore datasets | `--morphscore` or `--morphscore-config`, plus `--morphscore-data-dir` | not computed |
+| Cross-language metrics (`tokenizer_fairness_gini`, `per_language_cov`) | at least 2 languages | `--language-config` with 2 or more entries | computed as `null` with a stated reason |
+
+`operator_isolation_rate` logs its three sources on one line each run:
+`Operator isolation domains: prose=multilingual, math=..., code=...`.
+
+#### How `data_path` is resolved
+
+An absolute path is used as written. A relative path is resolved against the
+package root, the directory that holds the `tokenizer_analysis` package, which
+in a source checkout is the repository root. It is never resolved against the
+directory you happen to run from, so the same config names the same corpus from
+anywhere and a run is reproducible. A path that does not resolve is an error
+naming it; the language is never dropped. Use an absolute path for data outside
+the repository.
 
 A relative `path` in a tokenizer config follows a different rule, because a Hub
 model id such as `meta-llama/Meta-Llama-3-8B` is also a relative-looking string.
 There, a path that exists relative to your working directory is used as is, a
-path that exists only under the package root is rewritten with a log line saying
-so, and anything else is passed to the loader unchanged. `--input` is a
-command-line path and is always relative to your working directory.
+path that exists only under the package root is rewritten with a log line
+recording the rewrite, and anything else is passed to the loader unchanged.
+`--input` is a command-line path and is always relative to your working
+directory.
 
 ### Text Measurement Configuration
 
-Control how text "length" is measured for metric normalization via `--measurement-config`:
+Control how text "length" is measured for metric normalization via
+`--measurement-config`:
 
 | Method | `method` value | Counting key and options | Default for |
 |--------|----------------|--------------------------|-------------|
@@ -205,7 +380,9 @@ Control how text "length" is measured for metric normalization via `--measuremen
 | Lines | `"lines"` | `line_counting`: `"single"`, `"newline_split"`, `"custom_regex"` | Gini metrics |
 | Words | `"words"` | `word_counting`: `"python_split"`, `"hf_whitespace"`, `"regex_whitespace"`, `"custom_regex"` | Fertility |
 
-`include_empty_splits` (bool, default `false`) affects word and line counting. `custom_regex` (string) is required when a counting method is set to `"custom_regex"`. Unknown keys are rejected with an error.
+`include_empty_splits` (bool, default `false`) affects word and line counting.
+`custom_regex` (string) is required when a counting method is set to
+`"custom_regex"`. Unknown keys are rejected with an error.
 
 Example:
 ```json
@@ -229,7 +406,10 @@ Specify via `--morphscore-config`:
 }
 ```
 
-Requires languages in `<ISO 639-3>_<script>` format (e.g., `eng_Latn`). Override with `"language_subset"` in the config to bypass code mapping. Download datasets from [MorphScore README](morphscore/README.md).
+Requires languages in `<ISO 639-3>_<script>` format (for example `eng_Latn`).
+Override with `"language_subset"` in the config to bypass code mapping.
+Datasets are downloaded from the
+[MorphScore repository](https://github.com/cimeister/morphscore).
 
 ### Code AST Configuration
 
@@ -243,22 +423,18 @@ Specify source code paths for AST boundary analysis via `--code-ast-config`:
 }
 ```
 
-Configured for 19 languages, of which 16 are measured (see the code metrics below). Parquet files should have a `content` column and need the `parquet` extra; without an engine installed the run fails rather than reading an empty corpus. StarCoder metadata prefixes are stripped automatically, as are a leading byte-order mark and CRLF line endings. Without a config file, built-in synthetic code samples are used and the run says so.
+A parquet file here needs a `content` column and the `parquet` extra. StarCoder
+metadata prefixes are stripped automatically, as are a leading byte-order mark
+and CRLF line endings. Without a config file, built-in synthetic code samples
+are used and the run logs a warning. Which languages are measured, and why three
+are not, is in [METRICS.md](METRICS.md#code-tokenization-metrics).
 
-### Pre-tokenized Data
+## Metrics
 
-```bash
-# Save tokenized data for reuse
-uv run tokenizer-analysis --use-sample-data \
-    --save-tokenized-data --tokenized-data-output-path my_data.pkl
-
-# Reuse cached data (faster, no re-encoding)
-uv run tokenizer-analysis \
-    --tokenized-data-file my_data.pkl \
-    --tokenized-data-config my_data_config.json
-```
-
-The save step auto-generates a config file and per-tokenizer vocabulary files. For manually prepared pre-tokenized data, provide a pickle/JSON dict mapping tokenizer names to lists of `TokenizedData` objects, a JSON config pointing to vocabulary files, and line-by-line vocabulary text files.
+Definitions, worked examples and the caveats for each metric are in
+**[METRICS.md](METRICS.md)**.
+[Metric names and results keys](#metric-names-and-results-keys) below maps each
+metric to where its value sits in the results file.
 
 ## Output Structure
 
@@ -279,16 +455,98 @@ results/
 ├── per-language/                    # one chart per metric per language (--per-language-plots)
 ├── faceted_plots/                   # one subplot per tokenizer, shared y-axis (--faceted-plots)
 ├── grouped_plots/                   # one chart per metric per language group (--run-grouped-analysis)
-├── latex_tables/                    # LaTeX tables (--generate-latex-tables)
-├── <tokenizer>_vocab.txt            # one per tokenizer, written with the vocabulary metrics
-├── tokenized_data.pkl               # cached tokenization (--save-tokenized-data)
-├── tokenized_data_config.json       # the vocabulary map that accompanies the cache
-└── tokenized_data_language_config.json
+└── latex_tables/                    # LaTeX tables (--generate-latex-tables)
 ```
+
+`--save-tokenized-data` writes the cache and its companion files next to the
+pickle rather than into `--output-dir`, so `--tokenized-data-output-path` moves
+them all together:
+
+```
+<pickle dir>/
+├── tokenized_data.pkl               # the cached tokenization
+├── tokenized_data_config.json       # the vocabulary map that accompanies it
+├── tokenized_data_language_config.json
+└── <tokenizer>_vocab.txt            # one per tokenizer, line-by-line vocabulary
+```
+
+`--latex-output-dir` defaults differently on the two LaTeX paths:
+`--generate-latex-tables` writes to `<output-dir>/latex_tables`, while
+`--custom-latex-config` writes to `<output-dir>` itself with no subdirectory.
+Passing `--latex-output-dir` overrides both.
+
+### Metric names and results keys
+
+Every metric, the top-level key it is written under in `analysis_results.json`,
+and the path to its headline value. `<tok>` is a tokenizer name from your
+config; `<lang>` is a language code.
+
+The identifiers in this table are the results keys. The LaTeX table generator
+uses its own row ids (`three_digit_boundary_f1`, `operator_isolation`,
+`ast_full_alignment`, `ident_fragmentation`, `indent_depth_corr`,
+`utf8_boundary_crossing`, `avg_token_rank`, `utf8_char_split`), and
+`vocab_util_cross_lingual_cov` is a plot filename. None of those strings appears
+in the results file.
+
+| Metric | Top-level key | Path to the headline value | Direction |
+|---|---|---|---|
+| Compression rate | `compression_rate` | `.per_tokenizer.<tok>.global.compression_rate` | higher |
+| Tokens per line | (under `compression_rate`) | `.per_tokenizer.<tok>.tokens_per_line.global_avg` | lower |
+| Fertility | `fertility` | `.per_tokenizer.<tok>.global.mean` | lower |
+| Token length | `token_length` | `.per_tokenizer.<tok>.primary_length.mean` | neither |
+| Vocabulary utilization | `vocabulary_utilization` | `.per_tokenizer.<tok>.global.utilization` | higher |
+| Type-token ratio | (under `vocabulary_utilization`) | `.per_tokenizer.<tok>.type_token_ratio.global_ttr` | neither |
+| Cross-lingual vocabulary-utilization CoV | (under `vocabulary_utilization`) | `.per_tokenizer.<tok>.per_language_cov` | lower |
+| Rényi efficiency | `renyi_efficiency` | `.per_tokenizer.<tok>.global.renyi_<alpha>`, one field per alpha in 1.0, 2.0, 2.5, 3.0 | higher |
+| Average token rank | (under `renyi_efficiency`) | `.per_tokenizer.<tok>.unigram_distribution.global_avg_token_rank` | neither |
+| Bigram entropy | `bigram_entropy` | `.per_tokenizer.<tok>.global.bigram_entropy` | higher |
+| Trigram entropy | `trigram_entropy` | `.per_tokenizer.<tok>.global_trigram_entropy` | higher |
+| MorphScore | `morphscore` | `.per_tokenizer.<tok>.global.avg_morphscore_recall` and `.avg_morphscore_precision` | higher |
+| Three-digit boundary alignment | `three_digit_boundary_alignment` | `.per_tokenizer.<tok>.per_language.<lang>.mean_f1` (no `global`) | higher |
+| Digit split variability | (under `three_digit_boundary_alignment`) | `.per_tokenizer.<tok>.split_variability.by_digit_length.<n>.<lang>.entropy` | lower |
+| Numeric magnitude consistency | `numeric_magnitude_consistency` | `.per_tokenizer.<tok>.scaling.cv_of_mean_fertility` (no `global`) | lower |
+| Operator isolation rate | `operator_isolation_rate` | `.per_tokenizer.<tok>.global.overall_isolation_rate` | higher |
+| Compound operator preservation | (under `operator_isolation_rate`) | `.per_tokenizer.<tok>.global.overall_compound_preservation_rate` | higher |
+| Round-trip exact match rate | `reconstruction_fidelity` | `.per_tokenizer.<tok>.global.exact_match_rate` | higher |
+| Character error rate | (under `reconstruction_fidelity`) | `.per_tokenizer.<tok>.global.mean_cer` | lower |
+| UNK token rate | (under `reconstruction_fidelity`) | `.per_tokenizer.<tok>.global.unk_token_rate` | lower |
+| Whitespace fidelity | (under `reconstruction_fidelity`) | `.per_tokenizer.<tok>.global.whitespace_fidelity` | higher |
+| Token UTF-8 completeness rate | `utf8_token_integrity` | `.per_tokenizer.<tok>.global.completeness_rate` | higher |
+| Character boundary crossing rate | (under `utf8_token_integrity`) | `.per_tokenizer.<tok>.global.boundary_crossing_rate` | lower |
+| Character boundary split rate | (under `utf8_token_integrity`) | `.per_tokenizer.<tok>.char_split.global.split_rate` | lower |
+| AST leaf-node boundary alignment | `ast_boundary_alignment` | `.per_tokenizer.<tok>.global.full_alignment_rate` | higher |
+| Identifier fragmentation | `identifier_fragmentation` | `.per_tokenizer.<tok>.global.fragmentation_rate` | lower |
+| Indentation depth correlation | `indentation_consistency` | `.per_tokenizer.<tok>.global.depth_proportionality_correlation` | higher |
+| Tokenizer fairness Gini | `tokenizer_fairness_gini` | `.per_tokenizer.<tok>.global.gini_coefficient` | lower |
+| Lorenz curve | (under `tokenizer_fairness_gini`) | `.per_tokenizer.<tok>.lorenz_curve` | n/a, a curve |
+| Encoding speed | `encoding_speed` | `.per_tokenizer.<tok>.mean_ms` | lower |
+
+"Direction" gives the better direction for the quantity as defined.
+"neither" marks a metric that describes a tokenizer without ranking it: a longer
+mean token or a higher type-token ratio is not better or worse on its own. Plot
+titles show an arrow for the subset of metrics listed in
+`METRIC_BETTER_DIRECTION` (`tokenizer_analysis/visualization/plots.py`); metrics
+absent from that map get no arrow.
+
+Two more top-level keys are not metrics. `run_metadata` is described under
+[Provenance](#provenance). `grouped_analysis` is written when
+`--run-grouped-analysis` is passed, and holds the metrics recomputed within each
+language group: `grouped_analysis.<group type>.<group name>.<metric>`. In
+`analysis_results.json` it is written as an empty object, because the slimming
+step recognizes only per-metric shapes; the populated version is in
+`analysis_results_full.json`, so pass `--save-full-results` to read it.
 
 ### JSON Results Schema
 
-`analysis_results.json` is always written with a slimmed schema. Pass `--save-full-results` to also write `analysis_results_full.json` with all computed data. Both files follow the same per-metric layout:
+`analysis_results.json` is always written with a slimmed schema. Pass
+`--save-full-results` to also write `analysis_results_full.json` with all
+computed data.
+
+[OUTPUT_CONTRACT.md](OUTPUT_CONTRACT.md) is the authority for this schema, for
+which fields each metric's `global` block holds, and for which parts are still
+changing before the schema is fixed.
+
+Most metrics follow this layout:
 
 ```json
 {
@@ -305,35 +563,87 @@ results/
 }
 ```
 
-- **`global`**: Aggregate score for this tokenizer. Stats dicts contain `mean`, `std`, `median`, `count`; structured dicts vary by metric.
-- **`per_language`** (inside `per_tokenizer`): Per-language breakdown for this tokenizer.
-- **`per_language`** (top-level): Per-language values keyed by language then tokenizer, where present in raw data.
-- **`metadata`**: Metric configuration and data provenance, where present.
+- **`per_tokenizer.<tok>.global`**: the aggregate for this tokenizer. Stats dicts
+  hold `mean`, `std`, `median`, `count`; structured dicts vary by metric.
+- **`per_tokenizer.<tok>.per_language`**: the per-language breakdown for this
+  tokenizer.
+- **`per_language`** (top level): per-language values keyed by language then
+  tokenizer, where the raw data has them.
+- **`metadata`**: the metric's configuration and data provenance, where it has
+  any.
 
-The slimmed file omits `pairwise_comparisons`, `summary`, `per_category` breakdowns, and derivable stat fields (`sum`, `std_err`, `min`, `max`). The full results file includes `per_category` for metrics that have category breakdowns (e.g. AST node types, operator types). Some metrics use additional keys (e.g. `by_digit_length`, `scaling` for digit metrics; `character_length`/`byte_length` for token length).
+Six metrics depart from that layout:
+
+| Metric | How it differs |
+|---|---|
+| `token_length` | No `global`. Three sibling blocks instead: `character_length`, `byte_length`, `primary_length`, each a stats dict |
+| `trigram_entropy` | No `global` block. Flat fields instead: `global_trigram_entropy`, `global_total_trigrams`, `global_types_evaluated`, `global_types_excluded` |
+| `three_digit_boundary_alignment` | No `global`. `per_language`, `by_digit_length`, `by_bucket` and `split_variability` only |
+| `numeric_magnitude_consistency` | No `global` and no `metadata`. `per_language`, `by_digit_length` and `scaling` only, where `scaling` holds `per_bucket`, `spearman_rho`, `cv_of_mean_fertility` and `linear_fit` |
+| `reconstruction_fidelity` | `per_domain` in place of `per_language`, because it also runs on code and math |
+| `encoding_speed` | No `global` and no `per_language`. `mean_ms`, `total_s`, `num_samples` directly under `per_tokenizer.<tok>` |
+
+`operator_isolation_rate` holds `global`, `per_language` **and** `by_domain`,
+the last splitting the pooled global into `prose`, `code` and `math`. Its
+`per_language` keys natural languages (`arb_Arab`) and programming languages
+(`code:bash`) in one dict.
+
+The slimmed file omits `pairwise_comparisons`, `summary`, `per_category`
+breakdowns, and the derivable stat fields `sum`, `std_err`, `min` and `max`. The
+full results file adds `per_category` for the metrics that have category
+breakdowns (AST node types, operator types). `bigram_entropy` also holds a
+top-level `reference_definition` block with the same measurement under the
+reference normalizer and aggregation.
+
+The slimming step also renames some blocks, so a path read off
+`analysis_results_full.json` does not always hold in `analysis_results.json`.
+`morphscore.per_tokenizer.<tok>.summary` becomes `global`, and
+`ast_boundary_alignment`'s `overall` and `by_language` become `global` and
+`per_language`. The paths in the table above are the slimmed ones.
 
 #### `null` means not measured
 
-A value that could not be computed is `null`, never `0.0`. A rate with no
-denominator, a metric that needs at least two languages when one was given, a
-domain with nothing of the relevant kind in it: all report `null`. This matters
-because `0.0` is a legal value for most of these metrics, so a zero would be
+A value that could not be computed is `null`, never `0.0`. This matters because
+`0.0` is a legal value for most of these metrics, so a zero would be
 indistinguishable from a real measurement. `count` and `sum` stay numeric.
+
+A field is `null` when:
+
+- A rate has no denominator: no operator, no multi-byte character, no digit span
+  of that length in the evaluated text.
+- A metric needs at least two languages and one was given. On a single corpus,
+  `tokenizer_fairness_gini.per_tokenizer.<tok>.global.gini_coefficient` is
+  `null` with the reason in a sibling `warning` field, and
+  `vocabulary_utilization.per_tokenizer.<tok>.per_language_cov` is `null` and
+  omitted from its plot.
+- A domain holds nothing of the relevant kind.
+- The CER time budget was exceeded. `reconstruction_fidelity`'s `mean_cer` and
+  `whitespace_fidelity` are `null` for that tokenizer, and the log names it and
+  the projected time. `--cer-time-budget 0` removes the cap.
 
 Consumers doing arithmetic on these fields need a `None` check.
 
 #### Provenance
 
-Every results file carries a top-level `run_metadata` block: package version,
+Every results file holds a top-level `run_metadata` block: package version,
 git commit, the config files read and their hashes, the tokenizer files measured
 and their hashes, corpus and sample count, and which metric families were
 disabled. Two files with different numbers can be attributed to a change in the
-tokenizer, the corpus, or the library.
+tokenizer, the corpus, or the toolkit.
+
+`git_tree_modified` sits beside `git_commit`. It is `true` when the working tree
+had uncommitted changes at run time, in which case the commit hash does not
+describe the code that ran.
+
+On the `--tokenized-data-file` path, `run_metadata.tokenizers` records the
+vocabulary dumps named by the cache, each tagged
+`"source": "vocabulary file from --tokenized-data-config"`, with no
+`sha256_16`, because no tokenizer file is read on that path.
 
 #### Metrics reported under another metric
 
 Six metrics restate a measurement another metric already publishes, four of them
-as exact algebraic identities. They are reported as a field of the metric that
+as exact algebraic identities. They are written as a field of the metric that
 owns the measurement rather than as separate top-level keys, so the file does not
 present one number twice as if it were two pieces of evidence. Each primary
 records the merge and its evidence under `metadata.merged_metrics`.
@@ -345,343 +655,47 @@ records the merge and its evidence under `metadata.merged_metrics`.
 | `renyi_efficiency` | `unigram_distribution` | unigram entropy is the unnormalized numerator of `renyi_1.0` |
 | `utf8_token_integrity` | `char_split` | the same events counted from the character side |
 | `tokenizer_fairness_gini` | `lorenz_curve` | `1 - 2*area(lorenz)` is the Gini coefficient |
-| `three_digit_boundary_alignment` | `split_variability` | Spearman -0.992 across 37 tokenizers |
-
-## Metrics
-
-### Basic Tokenization Metrics
-- **Compression Rate** (`compression_rate`): Ratio of total text units (bytes/chars/lines) to total tokens across the corpus, measuring encoding efficiency
-- **Fertility** (`fertility`): Tokens per word/character, measuring tokenization granularity
-- **Token Length** (`token_length`): Average token size in bytes and characters. Note this is a mean of per-document ratios, where `compression_rate` is a ratio of totals, so the two differ on short documents
-- **Type-Token Ratio**: Unique tokens / total tokens. Reported under `vocabulary_utilization.type_token_ratio`, because it is that metric rescaled by vocabulary size over token count (see [Metrics reported under another metric](#metrics-reported-under-another-metric))
-- **Vocabulary Utilization** (`vocabulary_utilization`): Fraction of vocabulary actually used
-
-### Information-Theoretic Metrics
-- **Rényi Efficiency** (`renyi_efficiency`): `H_alpha / log2(|V|)` following Zouhar et al. 2023, with `|V|` the declared vocabulary size. The pre-1.0 normalization, which divided by the number of token types observed in the corpus, is still published under `observed_normalization`; the two rank tokenizers at Spearman 0.678, so they are not interchangeable
-- **Average Token Rank** (`avg_token_rank`): Typical position of tokens within the frequency-ordered vocabulary
-- **Bigram Entropy** (`bigram_entropy`): For each token type, looks at what tokens follow it in the corpus and measures whether the followers are evenly spread or concentrated on one or two tokens. A score of 1.0 means every token's followers are perfectly balanced; a score near 0 means most tokens are almost always followed by the same thing. Can interpret this as "how easy the tokenizer makes a very simple case of language modeling." Token types that appear too rarely (fewer than 3 times by default, configurable) are ignored to avoid noisy estimates. Bigrams do not cross document boundaries. Based on the Shannon efficiency metric (η) from [Poelman et al. 2025](https://aclanthology.org/2025.emnlp-main.369/), EMNLP.
-
-### Morphological Metrics
-- **MorphScore V2** (`morphscore_recall`, `morphscore_precision`): Morphological evaluation ([Arnett et al. 2025](https://arxiv.org/abs/2507.06378)). Enable with `--morphscore` or `--morphscore-config` (requires raw tokenization and the MorphScore submodule).
-
-### Mathematical Content Metrics
-
-Evaluates tokenizer handling of mathematical expressions. Based on Singh & Strouse (2024, [arXiv:2402.14903](https://arxiv.org/abs/2402.14903)), who showed that right-to-left tokenization of numbers improved arithmetic accuracy by >22 percentage points. Disable with `--no-digit-boundary`.
-
-> **Data scope:** When `--math-data FILE` or `--use-builtin-math-data` is set, as in the recommended invocation above, these metrics are computed **only on the dedicated math texts**, *not* the general multilingual corpus (the math data replaces the corpus for this metric group). Without either flag they fall back to whatever numbers/operators appear in the main corpus. All per-language results in this group are therefore reported under the synthetic language `math` when dedicated math data is used.
-
-#### Three-Digit Place-Value Boundary Alignment (`three_digit_boundary_f1`)
-
-Measures whether numbers are tokenized with right-aligned 3-digit groupings that match place-value structure (units, thousands, millions).
-
-For each number, compares actual token boundaries against ideal boundaries at positions L-3, L-6, L-9 from the left. Reports precision, recall, and F1. Short numbers (<=3 digits) that remain single tokens score F1 = 1.0; short numbers needlessly split score F1 = 0.
-
-**Example:** The number `1234567` has ideal boundaries at positions 1, 4, yielding `1|234|567` (millions, thousands, units). A tokenizer producing `1|234|567` scores F1 = 1.0. One producing `12|345|67` scores F1 = 0.0, it has three boundaries but none at the right positions. A short number like `42` kept as a single token scores F1 = 1.0 (no boundaries needed, none placed). But `42` split into `4|2` scores F1 = 0.0, a boundary was placed where none was needed.
-
-**Why it matters:** Singh & Strouse (2024) showed that right-to-left digit grouping improves arithmetic accuracy by ensuring corresponding digit positions across operands occupy consistent token positions.
-
-#### Digit Split Variability
-
-For numbers of the same digit length, measures Shannon entropy of the distribution of boundary patterns. Low entropy means the tokenizer uses a consistent splitting scheme; high entropy means chaotic splitting.
-
-Entropy is computed on patterns pooled across languages, not averaged per-language. Reports Shannon entropy (bits), dominant pattern, and dominant frequency per digit-length bucket.
-
-**Example:** A corpus contains three 5-digit numbers. If all are split as `XX|XXX` (pattern `{2}`), the entropy for the 5-digit bucket is 0.0 bits, perfectly consistent. If instead one is split `XX|XXX`, one as `X|XXXX`, and one as `XXX|XX`, there are three distinct patterns with equal frequency, giving entropy of log2(3) ≈ 1.58 bits. The first tokenizer has a learnable (if wrong) scheme; the second forces the model to handle every number as a special case.
-
-**Why it matters:** A tokenizer with moderate F1 but low entropy has a consistent-but-wrong scheme (potentially fixable by retraining). Moderate F1 with high entropy indicates a deeper structural problem.
-
-#### Numeric Magnitude Consistency
-
-Tracks fertility-per-digit (tokens per digit) across digit lengths. Reports Spearman correlation, coefficient of variation, and linear fit (slope, R-squared) between digit length and mean token count.
-
-**Example:** A tokenizer has memorized `0`-`999` as single vocabulary entries, so 1-digit numbers cost 1 token (1.0 tokens/digit), 2-digit numbers cost 1 token (0.5 tokens/digit), and 3-digit numbers cost 1 token (0.33 tokens/digit). Then at 4 digits, it fragments: `1234` -> `12|34` (0.5 tokens/digit). At 7 digits: `1234567` -> `123|45|67` (0.43 tokens/digit). The discontinuity between 3 and 4 digits, where fertility-per-digit jumps from 0.33 to 0.5, shows up as a break in the linear fit and a low R-squared value. A smooth tokenizer would instead show a near-constant ratio across all digit lengths.
-
-**Why it matters:** Tokenizers trained on natural language often have dense vocabulary coverage for small numbers (0-999 as single tokens) but fragment larger numbers unpredictably, creating representational discontinuities.
-
-#### Operator Isolation Rate (`operator_isolation`)
-
-Fraction of mathematical operators (`+`, `-`, `*`, `=`, `<=`, etc.) tokenized as standalone tokens rather than merged with adjacent content. The hyphen-minus `-` is always treated as an operator, even when it appears as a unary negative sign (e.g., `-42`), since disambiguating unary minus from subtraction requires expression parsing. Includes a compound preservation sub-metric measuring whether multi-character operators (`**`, `<=`, `!=`) are kept as single tokens vs. split.
-
-**Example:** In the expression `3+5>=8`, a good tokenizer produces `3` | `+` | `5` | `>=` | `8`, isolation rate 1.0 and compound preservation 1.0. A bad tokenizer produces `3+` | `5` | `>` | `=` | `8`, the `+` is merged with `3` (isolation fails), and `>=` is split into `>` and `=` (compound preservation fails). Isolation rate: 1/3 (only `=` might be isolated depending on boundaries). Compound preservation: 0/1.
-
-**Why it matters:** Merging an operator with its operand (e.g., `+3` as one token) forces the model to disentangle operation from value within a single embedding.
-
-**How the global is computed:** operators are counted in three domains, prose, code and math, and `global` pools all three. The pool is weighted by operator instances, so with a real `--code-ast-config` corpus the pooled rate sits close to the code rate: on the bundled demo, `bpe` scores 0.7285 pooled against 0.6832 for code, which supplies 1932 of the 2258 operator instances. `by_domain` reports the three separately and is written beside `global` for that reason. Read it before quoting the single number.
-
-### Reconstruction Fidelity Metrics
-
-Measures how lossy the encode→decode round-trip is. Tokenizers can lose information through normalization, UNK substitution, whitespace mangling, and decode asymmetry. These metrics run on language text, code, and math data. Requires that the tokenizer supports decoding (most do); non-decodable tokenizers are silently skipped.
-
-#### Round-trip Exact Match Rate (`exact_match_rate`)
-
-Fraction of texts where `decode(encode(text)) == text`. A score of 1.0 means the tokenizer is perfectly lossless for the evaluated data.
-
-**Example:** The text `"Hello, world!"` is encoded to `[15496, 11, 995, 0]` and decoded back to `"Hello, world!"`, exact match. The text `"café"` is encoded and decoded to `"cafe"` (accent stripped by normalization), not an exact match.
-
-#### Character Error Rate (`mean_cer`)
-
-Levenshtein edit distance between the original text and the decoded text,
-normalized by the length of the original. Measures the fraction of
-single-character insertions, deletions, and substitutions needed to
-transform the decoded text back into the original.
-
-CER = 0 means a perfect round-trip. **Note:** CER can exceed 1.0 when the
-decoded text is much longer than the original (e.g., a tokenizer that
-expands byte-fallback tokens into multi-character escape sequences).
-
-**Example:** Original `"hello"` decoded as `"helo"` → edit distance 1 / 5
-characters = CER 0.2. Original `"a"` decoded as `"abcd"` → edit distance
-3 / 1 character = CER 3.0.
-
-#### UNK Token Rate (`unk_token_rate`)
-
-Fraction of encoded tokens that are the tokenizer's UNK token ID. Measures how much of the input the tokenizer cannot represent. A rate of 0.0 means no unknown tokens were produced.
-
-**Example:** Encoding `"𝕳𝖊𝖑𝖑𝖔"` produces `[UNK, UNK, UNK, UNK, UNK]`, UNK rate 1.0. Encoding `"Hello"` produces `[15496]`, UNK rate 0.0.
-
-#### Whitespace Fidelity (`whitespace_fidelity`)
-
-Fraction of whitespace characters (spaces, tabs, newlines) in the original text that are preserved through the encode-decode round-trip. Uses a greedy forward-scan alignment to pair characters.
-
-**Example:** Original `"a b\tc"` decoded as `"a b c"` (tab replaced by space) has 1 out of 2 whitespace chars preserved = fidelity 0.5.
-
-### UTF-8 Character Boundary Metrics
-
-Evaluates how byte-level tokenizers handle multi-byte UTF-8 characters at token boundaries. Runs on any text data (no special config needed). Disable with `--no-utf8-integrity`.
-
-#### Token UTF-8 Completeness Rate
-
-Fraction of content tokens whose bytes form complete UTF-8 characters. A token like `<0xC3>` (a single byte from the two-byte sequence for `é`) is incomplete, it contains the start of a character but not the whole thing. This is a natural consequence of byte-level tokenization, not an error: byte-fallback tokens are working as designed. The completeness rate measures how often the tokenizer's vocabulary is expressive enough to represent whole characters rather than resorting to sub-character byte sequences.
-
-**Example:** The character `é` (U+00E9) is encoded as bytes `C3 A9`. A tokenizer that keeps `café` as `caf` | `é` produces two tokens, both containing complete UTF-8, completeness rate 1.0. A byte-fallback tokenizer that produces `caf` | `<0xC3>` | `<0xA9>` has 3 content tokens, of which 2 contain incomplete UTF-8 sequences, completeness rate 1/3.
-
-#### Character Boundary Crossing Rate (`utf8_boundary_crossing`)
-
-Fraction of content tokens that cross a UTF-8 character boundary, tokens containing bytes from more than one UTF-8 character where at least one of those characters is incomplete within the token. These tokens are the direct product of BPE merges that fused bytes across character boundaries, permanently preventing the affected characters from being represented as whole tokens.
-
-This is distinct from simple byte-fallback tokens. A byte-fallback token like `<0xC3>` is incomplete but does not cross a boundary, it holds bytes from exactly one character. A boundary-crossing token like one containing `A9 E4` (the tail byte of `é` merged with the leading byte of a CJK character) spans two characters and completes neither.
-
-**Example:** Consider bytes `C3 A9 E4 BD A0` (the characters `é你`). A BPE tokenizer that merges the last byte of `é` with the first byte of `你` might produce `C3` | `A9 E4` | `BD A0`. The middle token `A9 E4` crosses a character boundary, it contains the continuation byte of `é` and the leading byte of `你`, completing neither character. The crossing rate would be 1/3.
-
-**Why it matters:** Boundary-crossing tokens are fundamentally unrecoverable. While a byte-fallback token can be recombined with its neighbors to reconstruct a character, a boundary-crossing token has fused bytes from different characters in a way that no amount of context can cleanly separate within a single embedding.
-
-#### Character Boundary Split Count (`utf8_char_split`)
-
-Counts how many multi-byte characters in the source text have their constituent bytes spread across multiple tokens. To decide this, each token's bytes are reconstructed and aligned to the source text. The split rate is `splits / aligned multi-byte characters`, and splits per 1k tokens is also reported.
-
-**Example:** The Chinese text `你好` contains two 3-byte characters (`你` = `E4 BD A0`, `好` = `E5 A5 BD`). A tokenizer that keeps each character as a single token has 0 splits. A byte-fallback tokenizer that splits `你` into `<0xE4>` | `<0xBD>` | `<0xA0>` has 1 split (the character's bytes span 3 different tokens). The split rate would be 1/2 = 0.5 if `好` remains intact.
-
-**Alignment reliability.** When a tokenizer does not reproduce the source bytes (for example an English-trained tokenizer on Cyrillic or CJK, where some characters are dropped or replaced by placeholders), alignment cannot map every source byte to a token. A multi-byte character with any unaligned byte cannot be classified as split-or-not, so it is excluded from both the numerator and the denominator and counted separately. Three fields report this per language and globally: `unaligned_multibyte_chars` (excluded count), `aligned_fraction` (the share of multi-byte characters that aligned), and `alignment_mismatches` (the raw count of unaligned source bytes). When no multi-byte character aligns, `split_rate`, `splits_per_1k_multibyte`, and the per-byte-width split rates are `null` rather than `0.0`, so "no data" is not read as "no splits". A low `aligned_fraction` means the split rate rests on few characters and should be treated with caution. For tokenizers that reproduce the source exactly (`alignment_mismatches == 0`), every multi-byte character aligns and the split rate is unaffected by this handling.
-
-**Corpus resolution.** The denominator is the number of aligned multi-byte characters in the evaluated text. On ASCII-dominant languages measured on a small parallel corpus this is tiny (the English FLORES sample has 57 multi-byte characters), so `split_rate` takes only a few distinct values and carries little information for Latin-script languages. A corpus with more natural multi-byte content (for example FineWeb2) gives better resolution.
-
-**Why it matters:** Split characters are the text-centric complement to the token-centric completeness metric. A tokenizer might have few incomplete tokens overall (high completeness rate) but still split most multi-byte characters because each split produces multiple incomplete tokens, so the split count reveals the actual character-level impact.
-
-### Code Tokenization Metrics
-
-Evaluates tokenizer handling of source code by parsing it with tree-sitter and measuring alignment between AST node boundaries and token boundaries. Tree-sitter support is installed by default. Configured for 19 languages, of which 16 are measured. Swift, Kotlin and Perl are excluded because the node types their grammars use for identifiers are not classified, so the identifier share of classified leaves is 0.073, 0.058 and 0.000 against 0.19 to 0.37 for the supported languages; they are skipped with a named warning rather than scored on a fraction of their code. A grammar that crashes its parser process is likewise reported as unmeasured and named in the log. Configure with `--code-ast-config`; disable with `--no-code-ast`.
-
-Each language is parsed in its own subprocess, because a corrupt parse can abort the whole process. A grammar that hangs is reported as unmeasured and named in the log rather than scored, and the per-language timeout defaults to 120 seconds. Raise it with `TOKEVAL_PARSE_TIMEOUT_S` on a loaded machine, where a grammar can exceed the default and be dropped from a run that would otherwise measure it.
-
-> **Data scope:** These metrics are **always** computed on dedicated source-code snippets (loaded via `--code-ast-config`, or small built-in synthetic samples as a fallback), the general multilingual corpus passed to the analyzer is **never** used for this metric group, regardless of flags.
-
-#### AST Leaf-Node Boundary Alignment (`ast_full_alignment`)
-
-Parses source code with tree-sitter, extracts leaf-node spans, and measures the fraction whose boundaries coincide with token boundaries. Tracks five categories independently: identifiers, keywords, operators, literals, and delimiters.
-
-Reports start-alignment rate, end-alignment rate, full-alignment rate, and cross-boundary rate, broken down by category and language.
-
-**Example:** For the Python snippet `return total`, tree-sitter identifies `return` (keyword, bytes 0-6) and `total` (identifier, bytes 7-12). If the tokenizer produces `return` | ` total`, both AST nodes fully align with token boundaries: full alignment = 1.0. If it produces `ret` | `urn total`, the keyword `return` has start-aligned = True (token changes at position 0) but end-aligned = False (positions 5 and 6 share a token with position 7), so fully_aligned = False. The identifier `total` has start-aligned = False (it shares a token with `urn`), so it also fails. Full alignment rate: 0/2 = 0.0.
-
-**Why it matters:** Code has deterministic grammar, so AST node boundaries are objectively derivable with no manual annotation. A tokenizer that splits `return` into `ret` + `urn` fragments a syntactically atomic unit.
-
-#### Identifier Fragmentation Rate (`ident_fragmentation`)
-
-Fraction of programmer-defined identifiers split into multiple tokens, plus average tokens per identifier. Computed occurrence-weighted from the same AST extraction pass.
-
-**Example:** A Python file contains identifiers `self` (x10 occurrences), `i` (x5), `process_data` (x3), and `MyAuthenticationFactory` (x1). The tokenizer keeps `self`, `i` as single tokens but splits `process_data` -> `process` | `_` | `data` (3 tokens) and `MyAuthenticationFactory` -> `My` | `Auth` | `entication` | `Factory` (4 tokens). Fragmentation rate: 4 fragmented occurrences out of 19 total = 0.21. Average tokens per identifier: (10x1 + 5x1 + 3x3 + 1x4) / 19 = 1.47. The 10 occurrences of `self` contribute 10 of the 19 terms in that average, so the metric mostly reports how the tokenizer handles the most frequent identifier rather than the rarer, longer ones.
-
-**Why it matters:** Identifiers carry domain-specific semantics. Fragmenting `getUserName` into arbitrary sub-pieces destroys meaningful structure, though the current implementation does not yet distinguish semantically-aligned splits (at camelCase/snake_case boundaries) from arbitrary ones.
-
-#### Indentation Depth Proportionality Correlation (`indent_depth_corr`)
-
-Measures whether the number of whitespace tokens a tokenizer produces for leading indentation grows monotonically with nesting depth. Computes the Spearman rank correlation (ρ) between indentation depth and the count of whitespace tokens in the leading indentation of each line. Spearman is rank-based, so ρ = 1 means the count increases monotonically with depth, not in proportion to it; the metric key says proportionality and the statistic measures monotonicity. Only tokens whose surface is entirely whitespace are counted, because a pre-tokenizer that groups a leading space with the following word can emit a token spanning both, and that token is code. Depth is the line's leading-whitespace width divided by the indent unit inferred per snippet as the GCD of its non-zero indent widths; it does not come from the parse tree. Only evaluated on whitespace-significant languages (Python and Haskell). Requires at least 3 distinct depth levels per language; languages with fewer are skipped.
-
-**Example:** A Python file has lines at depths 1, 2, 3, and 4. A proportional tokenizer encodes depth-1 indentation as 1 whitespace token, depth-2 as 2, depth-3 as 3, and depth-4 as 4, perfect rank correlation, ρ = 1.0. A tokenizer that merges all indentation into a single token regardless of depth (1, 1, 1, 1 whitespace tokens) produces ρ ≈ 0.0. A tokenizer that uses *more* tokens for shallow depths than deep ones gives ρ < 0.
-
-**Why it matters:** If indentation depth maps monotonically to whitespace token count, the model receives a natural positional signal for nesting structure without needing to learn it from context.
-
-**How the global is computed:** `global.depth_proportionality_correlation` is one Spearman correlation over the (depth, whitespace-token count) pairs of every whitespace-significant language pooled together, not the mean of the per-language correlations. The two differ: on the bundled demo, `bpe` scores 0.7598 pooled against a per-language mean of 0.8121. Indent conventions differ by language, so the pooled value depends on how much of each language the code corpus holds. Read `per_language` when you want each language separately.
-
-### Multilingual Fairness
-- **Tokenizer Gini Coefficient** (`tokenizer_fairness_gini`): Measures equitable treatment across languages, defined as:
-
-* $`L = \{1, \dots, n\}`$ be the set of languages, each weighted equally.
-* For every language $`\ell \in L`$, define the **token cost**
-```math
-  c_\ell \;=\;
-  \frac{\text{number of tokens produced by the tokenizer on language }\ell}
-       {\text{number of raw bytes (or lines for parallel ds) in the same text}}
-```
-  (lower $`c_\ell`$ means cheaper encoding, higher means more byte-hungry).
-
-* Let the mean cost be
-```math
-  \mu \;=\; \frac{1}{n}\;\sum_{\ell=1}^{n} c_\ell.
-```
-
-Then the **Tokenizer Fairness Gini** with equal weights is
-
-```math
-\mathrm{TFG}
-=\frac{\displaystyle\sum_{i=1}^{n}\sum_{j=1}^{n} \lvert c_i - c_j \rvert}
-        {2\,n^2\,\mu}
-```
-* **Range:** $`0 \le \mathrm{TFG} \le 1`$
-  * $`0`$: perfect parity (every language has identical byte-normalised token cost).
-  * $`1`$: maximal unfairness.
-
-- **Cross-Lingual Vocabulary-Utilization CoV** (`vocab_util_cross_lingual_cov`): Coefficient of variation (sample standard deviation ÷ mean, `ddof=1`) of the per-language vocabulary-utilization *ratio* across languages. Computed on the ratio (not the raw used-token count) so it is comparable across tokenizers with different vocabulary sizes. **Lower is better**: a low value means the tokenizer devotes a similarly-sized share of its vocabulary to each language (balanced cross-lingual utilization); a high value means utilization is concentrated in some languages. Complements the Gini coefficient above: Gini measures fairness of per-language *encoding cost*, while this measures balance of per-language *vocabulary coverage*. Requires ≥2 languages with mean utilization > 0; for single-language corpora it is reported as `---` (markdown) / omitted (plot) rather than a fabricated `0`. The JSON results also carry the underlying `per_language_mean` and `per_language_std`. Surfaced in the markdown results table and as an individual comparison plot (`vocab_util_cross_lingual_cov_individual.svg`).
-
-## Other commands
-
-### Visualizing Tokenization
-
-The `tokenizer-visualize` command renders token boundaries directly on source text, making it easy to inspect how different tokenizers split code, math, and multilingual content.
-
-```bash
-# Show built-in samples (Python code, LaTeX math, multilingual text)
-uv run tokenizer-visualize \
-    --tokenizer-config configs/sample_tokenizers.json
-
-# Show only specific tokenizers
-uv run tokenizer-visualize \
-    --tokenizer-config configs/sample_tokenizers.json \
-    --tokenizers "bpe" "unigramlm"
-
-# Visualize all files in a directory
-# Files can contain multiple samples separated by a line with only "---".
-# Use --samples-per-file to control how many are read (default: 1).
-uv run tokenizer-visualize \
-    --tokenizer-config configs/sample_tokenizers.json \
-    --input data/samples/ --samples-per-file 3
-
-```
-
-Each sample is shown with line-numbered source text followed by a colour-coded token-boundary view for every tokenizer, plus whitespace and indentation statistics.
-
-### Sanity Checking a Tokenizer
-
-The `tokenizer-sanity-check` command runs a single-tokenizer health report: byte coverage, whitespace and digit handling, special-token behaviour, determinism, Unicode normalization, vocabulary integrity, and vocabulary reachability. It flags each check as pass, warn, or fail and sets a non-zero exit code when a check fails, so it can gate a tokenizer before a full analysis.
-
-```bash
-# Check a single tokenizer (CLASS:PATH form)
-uv run tokenizer-sanity-check huggingface:tokenizers/bpe.json
-
-# Check every tokenizer listed in a config
-uv run tokenizer-sanity-check --tokenizer-config configs/sample_tokenizers.json
-
-# Restrict a config run to one tokenizer by name
-uv run tokenizer-sanity-check --tokenizer-config configs/sample_tokenizers.json --only bpe
-
-# Add multilingual breadth (requires a language config)
-uv run tokenizer-sanity-check huggingface:tokenizers/bpe.json \
-    --use-sample-data --language-config configs/core_lang_config.json
-```
-
-Use `--exit-zero` to always return exit code 0 (report without gating) and `--quiet` to collapse passing checks in the text report.
-
-## Data Format Requirements
-
-The framework supports three input text formats:
-
-- **Plain text** (`.txt`): One sentence per line recommended for parallel corpora
-- **JSON**: Object with a `"texts"` array of strings
-- **Parquet**: DataFrame with a `"text"` column
-
-## Module Structure
-
-```
-tokenizer_analysis/
-├── __init__.py                    # Main package exports
-├── main.py                        # UnifiedTokenizerAnalyzer orchestration class
-├── constants.py                   # Package-level constants
-├── config/                        # Configuration modules
-│   ├── language_metadata.py      # LanguageMetadata for grouping analysis
-│   └── text_measurement.py       # Text measurement configuration
-├── core/                          # Core data structures and providers
-│   ├── input_providers.py        # InputProvider implementations
-│   ├── input_types.py            # TokenizedData and core types
-│   ├── input_utils.py            # Input loading and validation utilities
-│   ├── tokenizer_wrapper.py      # Generic wrapper for tokenizer objects
-│   └── validation.py             # Data validation functions
-├── metrics/                       # Metrics computation modules
-│   ├── base.py                   # BaseMetrics with common utilities
-│   ├── basic.py                  # Basic tokenization metrics
-│   ├── information_theoretic.py  # Information-theoretic metrics
-│   ├── math.py                   # Mathematical content metrics (digit boundaries, operators)
-│   ├── code_ast.py               # Code tokenization metrics (AST alignment, indentation)
-│   ├── utf8_integrity.py         # UTF-8 character boundary metrics
-│   ├── morphscore.py             # MorphScore morphological evaluation
-│   └── gini.py                   # Multilingual fairness metrics
-├── diagnostics/                   # Single-tokenizer sanity checks
-│   ├── sanity_check.py           # Health checks (byte coverage, determinism, ...)
-│   └── probe_corpus.py           # Probe corpus for reachability checks
-├── cli/                           # Console-script entry points
-│   ├── run_analysis.py           # tokenizer-analysis
-│   ├── visualize_tokenization.py # tokenizer-visualize
-│   └── sanity_check.py           # tokenizer-sanity-check
-├── per_example.py                 # Per-document metric outputs
-├── loaders/                       # Data loading modules
-│   ├── constants.py              # Language code mappings (ISO639-1 to FLORES)
-│   ├── code_data.py              # Code snippet loader for AST metrics
-│   └── multilingual_data.py      # Multilingual text dataset loader
-├── utils/                         # Utility functions
-│   ├── text_utils.py             # Text processing utilities
-│   └── tokenizer_utils.py        # Tokenizer loading utilities
-└── visualization/                 # Plotting and visualization
-    ├── plotter.py                # TokenizerVisualizer main class
-    ├── plots.py                  # Core plotting functions
-    ├── data_extraction.py        # Data extraction for plotting
-    ├── latex_tables.py           # LaTeX table generation
-    └── visualization_config.py   # Visualization configuration
-
-scripts/
-├── run_tokenizer_analysis.py     # Legacy CLI wrapper (use `uv run tokenizer-analysis` instead)
-└── visualize_tokenization.py     # Token boundary visualization
-```
+| `three_digit_boundary_alignment` | `split_variability` | Spearman -0.992 between pooled `entropy_short` and `avg_f1` |
 
 ## Performance
 
-### Encoding (the main bottleneck)
+### Encoding
 
-Encoding is **single-threaded**: every combination of tokenizer, language, and sample is processed sequentially, so total encode calls scale as **O(N × L × M)** (tokenizers × languages × samples). With 10+ tokenizers, 13 languages, and 1000 samples per language, encoding alone takes roughly 80–165 s depending on tokenizer backend.
+Encoding is single-threaded: every combination of tokenizer, language and sample
+is processed sequentially, so the number of encode calls scales as
+O(N x L x M) for N tokenizers, L languages and M samples per language.
 
-Knobs to reduce encoding time:
+The results file reports what encoding actually cost on the run you just did:
+`encoding_speed.per_tokenizer.<tok>.total_s` is the total seconds spent encoding
+for that tokenizer and `mean_ms` the mean per sample. Read those from a small
+run and scale by N, L and M to size a large one, rather than relying on a figure
+measured on other hardware with other tokenizers.
 
-| Knob | Effect |
-|------|--------|
-| `--samples-per-lang N` | Fewer samples per language (default 2000) |
-| `--save-tokenized-data` | Cache encoded data as a pickle file for reuse |
-| `--tokenized-data-file PATH` | Load previously cached data instead of re-encoding |
+`--samples-per-lang N` (default 2000) is the direct knob.
+`--save-tokenized-data` and `--tokenized-data-file` remove the cost entirely for
+repeat runs; see [Pre-tokenized data cache](#pre-tokenized-data-cache).
 
 ### Reconstruction fidelity
 
-Reconstruction metrics (`mean_cer`, `whitespace_fidelity`) decode every tokenized text back to a string and compare it to the original. Some `transformers` and tiktoken-backed tokenizers add significant per-call Python overhead, so this can account for most of the runtime on large runs. Pass `--no-reconstruction` to skip.
+The reconstruction metrics decode every tokenized text back to a string and
+compare it to the original. `exact_match_rate` and `unk_token_rate` are linear
+in text length. `mean_cer` is not: it runs a Levenshtein dynamic program whose
+cost is the product of the two lengths after the common prefix and suffix are
+stripped, so a tokenizer that round-trips exactly is cheap and one that diverges
+early is not.
 
-### Skipping expensive metrics
+CER is therefore capped per tokenizer by `--cer-time-budget` (default 10
+seconds): after a warmup the total is extrapolated, and if the projection
+exceeds the budget, `mean_cer` and `whitespace_fidelity` are skipped for that
+tokenizer and reported as `null`. On the bundled demo this happens to
+`unigramlm` and not to `bpe`.
 
-| Flag | What it skips |
-|------|---------------|
-| `--no-reconstruction` | Decode round-trip, CER, whitespace fidelity |
-| `--no-digit-boundary` | Digit boundary alignment, digit split variability, numeric magnitude consistency, operator isolation |
-| `--no-code-ast` | AST boundary alignment analysis (also skips synthetic code generation) |
-| `--no-utf8-integrity` | UTF-8 character boundary integrity analysis |
-| `--no-plots` | All matplotlib rendering |
+`--no-reconstruction` skips the group outright. `--cer-time-budget 0` removes
+the cap and measures CER however long it takes.
 
 ### Pre-tokenized data cache
 
-A two-step workflow lets you encode once and iterate on metrics/visualization without re-encoding:
+Encode once, then iterate on metrics and plots without re-encoding.
 
 ```bash
 # Step 1: encode and save (slow, once)
@@ -689,17 +703,42 @@ uv run tokenizer-analysis \
   --tokenizer-config tokenizers.json --language-config languages.json \
   --save-tokenized-data --tokenized-data-output-path results/tokenized_data.pkl
 
-# Step 2: reuse cached data (fast, repeat as needed)
+# Step 2: replay the cache (fast, repeat as needed)
 uv run tokenizer-analysis \
   --tokenized-data-file results/tokenized_data.pkl \
-  --language-config languages.json
+  --tokenized-data-config results/tokenized_data_config.json \
+  --language-config results/tokenized_data_language_config.json
 ```
 
-> **Note:** Code/math metrics that require raw `encode()` calls (AST boundary, MorphScore) are unavailable in pre-tokenized mode.
+Beside the pickle, step 1 writes a `<stem>_config.json` naming the per-tokenizer
+vocabulary dumps, one `<tokenizer>_vocab.txt` dump per tokenizer, and a
+`<stem>_language_config.json` copy of the language metadata. Step 2 needs all of
+them. `--language-config` is required on the replay path and the run aborts
+without it: the pickle holds token ids and language labels but no groupings, and
+replaying against a different language config would relabel the data. Step 1
+logs the exact replay command for the files it just wrote.
+
+The replay path differs from a fresh run in two ways:
+
+- `run_metadata.tokenizers` records the vocabulary dumps named by the cache,
+  each tagged `"source": "vocabulary file from --tokenized-data-config"`, with no
+  tokenizer-file hash, because no tokenizer file is read.
+- The metrics that need raw `encode()` calls are absent from the results:
+  `ast_boundary_alignment`, `identifier_fragmentation`,
+  `indentation_consistency` and `encoding_speed`. `PreTokenizedDataTokenizer`
+  reports `can_encode() == False`, which is what skips them. MorphScore is a
+  separate case: it needs `get_underlying_tokenizer()`, which the pre-tokenized
+  wrapper does not provide, so the `morphscore` key is written with an `error`
+  field per tokenizer rather than a score.
+
+For manually prepared pre-tokenized data, supply a pickle or JSON dict mapping
+tokenizer names to lists of `TokenizedData` objects, a JSON config pointing to
+vocabulary files, and line-by-line vocabulary text files.
 
 ### Quick-iteration recipe
 
-For fast development iterations (~10–20 s), minimize samples and disable expensive extras:
+For fast development iterations, minimize samples and disable the expensive
+metric groups:
 
 ```bash
 uv run tokenizer-analysis \
@@ -710,19 +749,134 @@ uv run tokenizer-analysis \
 
 ## Troubleshooting
 
-**`No module named 'morphscore'`**: Initialize submodules, then install MorphScore into the project environment: `git submodule update --init --recursive && uv pip install -e ./morphscore`
+**`No module named 'morphscore'`**: initialize submodules, then install
+MorphScore into the project environment:
+`git submodule update --init --recursive && uv pip install -e ./morphscore`. If
+it worked before and stopped working, a later `uv sync` removed it; see
+[Optional extras](#optional-extras).
 
-**`Unknown tokenizer class`**: available classes are `"huggingface"` (aliases `"hf"`, `"transformers"`, and the deprecated `"standard"`), `"sentencepiece"`, `"custom_bpe"`, `"unimixlm"`, `"pretokenized"`, `"script_bpe"` and `"mingram"`, plus any you register at runtime with `register_tokenizer_class()` (see Contributing).
+**`Unknown tokenizer class`**: the available classes are listed under
+[Tokenizer Configuration](#tokenizer-configuration), plus any you register at
+runtime with `register_tokenizer_class()`.
 
-**`FileNotFoundError`**: Check that paths in config files are absolute or relative to the working directory.
+**`FileNotFoundError`**: a relative `data_path` in a language config is resolved
+against the package root, not your working directory, while `--input` and a
+relative tokenizer `path` are resolved against your working directory. See
+[How `data_path` is resolved](#how-data_path-is-resolved).
 
-**`_tkinter.TclError: no display name`**: Set `export MPLBACKEND=Agg` before running on headless servers.
+**`Cannot read the parquet file`**: install the extra with
+`uv sync --extra parquet`, naming any other extras in the same command.
+
+**`_tkinter.TclError: no display name`**: set `export MPLBACKEND=Agg` before
+running on a headless server.
+
+**A code language is missing from the results**: three of the 19 configured
+languages are excluded by design, and a grammar that crashes or exceeds
+`TOKEVAL_PARSE_TIMEOUT_S` is reported as unmeasured and named in the log. See
+[METRICS.md](METRICS.md#code-tokenization-metrics).
+
+## CLI reference
+
+Every flag `tokenizer-analysis` accepts.
+
+### Input
+
+| Flag | Description |
+|------|-------------|
+| `--tokenizer-config FILE` | JSON file with tokenizer configurations |
+| `--input PATH` | Analyze a single corpus: one file or a directory. Exclusive with `--language-config` and with `--use-sample-data` |
+| `--input-label NAME` | Name for the `--input` corpus in the results (default: the path stem) |
+| `--language-config FILE` | JSON file with languages and analysis groups |
+| `--measurement-config FILE` | JSON file with the text measurement method |
+| `--use-sample-data` | Run the built-in demo. Exclusive with `--tokenizer-config`, `--language-config`, `--input` and `--measurement-config` |
+| `--samples-per-lang N` | Text samples per language (default: 2000) |
+| `--pairwise TOK1 TOK2` | Restrict the run to two named tokenizers |
+| `--filter-script-family FAMILY` | Restrict to one script family from `analysis_groups` |
+| `--filter-resource-level NAME` | Restrict to one resource level from `analysis_groups` |
+
+### Metric selection
+
+| Flag | Description |
+|------|-------------|
+| `--no-reconstruction` | Skip the decode round trip: `exact_match_rate`, `mean_cer`, `unk_token_rate`, `whitespace_fidelity` |
+| `--cer-time-budget SECONDS` | Cap on CER computation per tokenizer; 0 disables the cap (default: 10) |
+| `--no-digit-boundary` | Skip `three_digit_boundary_alignment`, digit split variability, `numeric_magnitude_consistency` and `operator_isolation_rate` |
+| `--math-data FILE` | Math-rich text file (`.txt`/`.json`) for the digit metrics |
+| `--use-builtin-math-data` | Use the bundled math corpus for the digit metrics. Ignored when `--math-data` is also given |
+| `--no-code-ast` | Skip `ast_boundary_alignment`, `identifier_fragmentation` and `indentation_consistency`, including their synthetic-code fallback. The `code` domain of `operator_isolation_rate` still runs |
+| `--code-ast-config FILE` | JSON mapping languages to code paths for AST analysis |
+| `--no-utf8-integrity` | Skip `utf8_token_integrity` |
+| `--morphscore` | Enable MorphScore with default settings |
+| `--morphscore-config FILE` | Custom MorphScore configuration |
+| `--morphscore-data-dir DIR` | Where MorphScore datasets live (default: `morphscore_data`) |
+| `--no-plots` | Skip all matplotlib rendering |
+
+### Output
+
+| Flag | Description |
+|------|-------------|
+| `--output-dir DIR` | Output directory (default: `results/`) |
+| `--save-full-results` | Also write `analysis_results_full.json` with every computed field |
+| `--verbose` | Detailed console output |
+| `--run-grouped-analysis` | Also compute metrics within each language group from `analysis_groups` |
+| `--per-language-plots` | Per-language grouped bar charts |
+| `--faceted-plots` | One subplot per tokenizer with shared y-axis |
+| `--no-global-lines` | Hide global average reference lines in plots |
+| `--generate-latex-tables` | Generate LaTeX tables into `<output-dir>/latex_tables` |
+| `--latex-table-types ...` | Which LaTeX tables to emit: `basic`, `information`, `comprehensive` (default: `basic comprehensive`) |
+| `--custom-latex-config FILE` | JSON config for a custom LaTeX table, written into `<output-dir>` with no subdirectory |
+| `--latex-output-dir DIR` | Override the destination for both LaTeX paths |
+
+### Tokenization cache
+
+| Flag | Description |
+|------|-------------|
+| `--save-tokenized-data` | Cache the tokenization for reuse |
+| `--tokenized-data-output-path PATH` | Where `--save-tokenized-data` writes (default: `<output-dir>/tokenized_data.pkl`) |
+| `--tokenized-data-file FILE` | Replay a cached tokenization instead of encoding. Requires `--language-config` |
+| `--tokenized-data-config FILE` | The vocabulary map that accompanies a cache |
 
 ## Contributing
 
-### Adding New Tokenizers
+### Repository layout
 
-Subclass `TokenizerWrapper` from `tokenizer_analysis.core.tokenizer_wrapper` and implement the required abstract methods. Then register it so the config system can instantiate it by name.
+The `tokenizer_analysis` package holds the toolkit. `main.py` defines
+`UnifiedTokenizerAnalyzer`, which owns the run: it builds the metric objects,
+calls them, merges the redundant ones and passes the result to the plotters.
+`cli/` holds the three console-script entry points (`run_analysis.py`,
+`visualize_tokenization.py`, `sanity_check.py`), and `cli/run_analysis.py` also
+holds the argument parser, the run-metadata builder and the slimming step that
+produces `analysis_results.json`.
+
+`metrics/` holds one module per metric family (`basic`, `information_theoretic`,
+`math`, `code_ast`, `utf8_integrity`, `morphscore`, `gini`), all subclassing
+`BaseMetrics` in `metrics/base.py`, plus `redundancy.py` for the merges
+described under
+[Metrics reported under another metric](#metrics-reported-under-another-metric)
+and `_treesitter_worker.py` for the parser subprocess.
+
+`core/` holds the data structures the metrics consume: `TokenizedData` and the
+`InputProvider` implementations that produce it, and `tokenizer_wrapper.py` with
+the `TokenizerWrapper` base class and the class registry. `loaders/` reads
+corpora (`multilingual_data.py`) and code (`code_data.py`); `config/` parses the
+language and measurement configs; `visualization/` holds the plotters and the
+LaTeX table generator; `diagnostics/` holds the `tokenizer-sanity-check` logic.
+
+At package level, `constants.py` holds the shared constants, `per_example.py`
+exposes the same computations at single-document granularity for joining with
+LM-eval sample files, `_migration.py` raises named errors for API names removed
+before 1.0.0, and `py.typed` marks the package as typed.
+
+`sample_data/` and the top-level `parallel/` and `tokenizers/` directories hold
+the bundled demo. `tests/` holds the test suite and is excluded from the built
+wheel. `scripts/` holds one-off analysis and job-submission scripts that are not
+part of the toolkit.
+
+### Adding new tokenizers
+
+Subclass `TokenizerWrapper` from `tokenizer_analysis.core.tokenizer_wrapper` and
+implement the required abstract methods. Then register it so the config system
+can instantiate it by name.
 
 #### Required methods (abstract)
 
@@ -730,13 +884,13 @@ Subclass `TokenizerWrapper` from `tokenizer_analysis.core.tokenizer_wrapper` and
 |--------|---------|
 | `get_name() -> str` | Return the tokenizer's display name. |
 | `get_vocab_size() -> int` | Return the total vocabulary size. |
-| `get_vocab() -> Dict[str, int]` | Return `{token_string: id}` mapping. Used for vocabulary utilization metrics and as a fallback for `convert_ids_to_tokens`. Return `None` if unavailable (disables vocab-dependent metrics). |
-| `can_encode() -> bool` | Return `True` if `encode()` works. Return `False` for pre-tokenized-only wrappers, this skips all encoding-dependent metrics (AST, math, UTF-8, indentation). |
-| `encode(text: str) -> List[int]` | Encode text to token IDs. Only called when `can_encode()` is `True`. |
+| `get_vocab() -> Dict[str, int]` | Return the `{token_string: id}` mapping. Used for vocabulary utilization metrics and as a fallback for `convert_ids_to_tokens`. Return `None` if unavailable, which disables the vocab-dependent metrics. |
+| `can_encode() -> bool` | Return `True` if `encode()` works. Return `False` for pre-tokenized-only wrappers, which skips all encoding-dependent metrics (AST, math, UTF-8, indentation). |
+| `encode(text: str) -> List[int]` | Encode text to token ids. Only called when `can_encode()` is `True`. |
 | `can_pretokenize() -> bool` | Whether `pretokenize()` is available. Return `False` if not applicable. |
 | `pretokenize(text: str) -> List[str]` | Split text into subword pieces (strings). Only called when `can_pretokenize()` is `True`. |
-| `get_special_token_strings() -> Optional[Set[str]]` | Return the surface strings the tokenizer declares special, read from its own metadata. Return an empty set if it genuinely has none, or `None` if it cannot report them, in which case the library warns and falls back to `GENERIC_SPECIAL_TOKENS`. Never pattern-match on token surfaces here: the shapes overlap with ordinary content such as `[0]` and `[...]`. |
-| `from_config(cls, name, config) -> TokenizerWrapper` | Class method factory. Receives the tokenizer name and the config dict from the JSON file. |
+| `get_special_token_strings() -> Optional[Set[str]]` | Return the surface strings the tokenizer declares special, read from its own metadata. Return an empty set if it genuinely has none, or `None` if it cannot report them, in which case the toolkit warns and falls back to `GENERIC_SPECIAL_TOKENS`. Never pattern-match on token surfaces here: the shapes overlap with ordinary content such as `[0]` and `[...]`. |
+| `from_config(cls, name, config) -> TokenizerWrapper` | Class-method factory. Receives the tokenizer name and the config dict from the JSON file. |
 
 #### Optional overrides
 
@@ -744,10 +898,10 @@ These have working defaults but can be overridden for better results:
 
 | Method | Default behaviour | Why override |
 |--------|------------------|--------------|
-| `convert_ids_to_tokens(ids) -> List[str]` | Reverses `get_vocab()`. | Faster or more accurate when the underlying library has a direct lookup (e.g., `id_to_token`). |
-| `encode_with_offsets(text) -> (List[int], Optional[List[Tuple[int,int]]])` | Returns `(self.encode(text), None)`. | Provide `(start_char, end_char)` offsets per token for exact source-to-token mapping. Without this, code metrics fall back to greedy character alignment, which can fail for tokenizers that strip whitespace from tokens (e.g., custom BPE with a `Whitespace` pre-tokenizer). HuggingFace `tokenizers` and SentencePiece both expose offsets natively. |
-| `get_underlying_tokenizer()` | Returns `None`. | Expose the raw HuggingFace tokenizer object (if one exists) for specialized consumers like MorphScore (only compatible with HF tokenizers). |
-| `get_unk_token_id() -> Optional[int]` | Returns `None`. | Enables UNK-related analysis. |
+| `convert_ids_to_tokens(ids) -> List[str]` | Reverses `get_vocab()`. | Faster or more accurate when the underlying library has a direct lookup (for example `id_to_token`). |
+| `encode_with_offsets(text) -> (List[int], Optional[List[Tuple[int,int]]])` | Returns `(self.encode(text), None)`. | Provide `(start_char, end_char)` offsets per token for exact source-to-token mapping. Without this, the code metrics fall back to greedy character alignment, which fails for tokenizers that strip whitespace from tokens (for example custom BPE with a `Whitespace` pre-tokenizer), and the operator metric skips the document. HuggingFace `tokenizers` and SentencePiece both expose offsets natively. |
+| `get_underlying_tokenizer()` | Returns `None`. | Expose the raw HuggingFace tokenizer object for consumers like MorphScore, which only works with HF tokenizers. |
+| `get_unk_token_id() -> Optional[int]` | Returns `None`. | Enables `unk_token_rate`. |
 
 #### Minimal example
 
@@ -768,7 +922,7 @@ class MyTokenizer(TokenizerWrapper):
 
     def get_special_token_strings(self):
         # Read from the tokenizer's own metadata. Return None if it cannot
-        # report them, and the library warns and uses a generic list.
+        # report them, and the toolkit warns and uses a generic list.
         return set(self._tok.all_special_tokens)
 
     @classmethod
@@ -781,24 +935,48 @@ register_tokenizer_class('my_class', MyTokenizer)
 
 Then reference `"class": "my_class"` in your tokenizer config.
 
-### Adding New Metrics
-1. Inherit from `BaseMetrics` in `tokenizer_analysis/metrics/base.py`
-2. Implement `compute()` method
-3. Register in `main.py`
+### Adding new metrics
 
-### Submitting Changes
-1. Fork the repository
-2. Create a feature branch
-3. Ensure all existing tests pass
-4. Submit a pull request
+1. Inherit from `BaseMetrics` in `tokenizer_analysis/metrics/base.py`.
+2. Implement the `compute()` method.
+3. Register it in `main.py`.
+4. Add a row to the slimming step in `cli/run_analysis.py`, or the metric will
+   be written as an empty object in `analysis_results.json`.
+
+### Submitting changes
+
+1. Fork the repository.
+2. Create a feature branch.
+3. Ensure the existing tests pass.
+4. Submit a pull request.
+
+`SECURITY.md` describes how to report a vulnerability, and
+`CODE_OF_CONDUCT.md` applies to participation in the project.
+
+## Other documents
+
+| File | What it holds |
+|---|---|
+| [METRICS.md](METRICS.md) | The definition, worked example and caveats for every metric |
+| [OUTPUT_CONTRACT.md](OUTPUT_CONTRACT.md) | The results-file contract: what each metric's `global` block holds, and what is still changing |
+| [MIGRATION.md](MIGRATION.md) | Breaking changes from `tokenizer-analysis-suite` to 1.0.0 and their replacements. The CLI's error messages point here |
+| [CHANGELOG.md](CHANGELOG.md) | Release history |
+| [SECURITY.md](SECURITY.md) | How to report a vulnerability |
+| [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Expectations for participation |
+| [CITATION.cff](CITATION.cff) | Machine-readable citation metadata |
+
+## License
+
+MIT. See [LICENSE](LICENSE), and [NOTICE](NOTICE) for third-party attributions.
 
 ## Citation
 
 ```bibtex
 @software{meister_tokeval_2026,
-  title = {TokEval: A Tokenizer Analysis Suite},
-  author = {Meister, Clara},
-  year = {2026},
-  url = {https://github.com/cimeister/tokenizer-intrinsic-evals}
+  title   = {TokEval: intrinsic evaluation metrics for tokenizers},
+  author  = {Meister, Clara},
+  year    = {2026},
+  version = {1.0.0},
+  url     = {https://github.com/cimeister/tokenizer-intrinsic-evals}
 }
 ```
