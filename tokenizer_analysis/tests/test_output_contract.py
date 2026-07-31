@@ -210,3 +210,38 @@ def test_a_nested_merged_block_is_filtered_to_the_group_languages():
     nested = filtered['per_tokenizer']['bpe']['split_variability']
     assert list(nested['by_digit_length']['2']) == ['eng_Latn']
     assert list(nested['by_bucket']['short']) == ['eng_Latn']
+
+
+def test_tokenized_data_cache_can_be_replayed(tmp_path):
+    """--save-tokenized-data then --tokenized-data-file must complete.
+
+    The replay path never bound `tokenizer_configs`, and the last line of
+    run_from_args reads it to build run_metadata, so every replay crashed with
+    UnboundLocalError after computing every metric and wrote nothing. The
+    provenance block broke the cache workflow, and neither had a test.
+    """
+    saved = tmp_path / "saved"
+    save = subprocess.run(
+        [sys.executable, "-m", "tokenizer_analysis.cli.run_analysis",
+         "--use-sample-data", "--samples-per-lang", "5", "--no-plots",
+         "--no-code-ast", "--save-tokenized-data", "--output-dir", str(saved)],
+        cwd=REPO_ROOT, capture_output=True, timeout=900,
+    )
+    assert save.returncode == 0, save.stderr.decode(errors="replace")[-2000:]
+
+    replayed = tmp_path / "replayed"
+    replay = subprocess.run(
+        [sys.executable, "-m", "tokenizer_analysis.cli.run_analysis",
+         "--tokenized-data-file", str(saved / "tokenized_data.pkl"),
+         "--tokenized-data-config", str(saved / "tokenized_data_config.json"),
+         "--language-config", str(saved / "tokenized_data_language_config.json"),
+         "--no-plots", "--no-code-ast", "--output-dir", str(replayed)],
+        cwd=REPO_ROOT, capture_output=True, timeout=900,
+    )
+    assert replay.returncode == 0, replay.stderr.decode(errors="replace")[-2000:]
+
+    first = json.loads((saved / "analysis_results.json").read_text())
+    again = json.loads((replayed / "analysis_results.json").read_text())
+    assert (first["fertility"]["per_tokenizer"]["bpe"]["global"]["mean"]
+            == again["fertility"]["per_tokenizer"]["bpe"]["global"]["mean"])
+    assert "run_metadata" in again

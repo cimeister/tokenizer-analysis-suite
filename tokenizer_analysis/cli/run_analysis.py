@@ -14,7 +14,7 @@ import argparse
 import json
 import os
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from tokenizer_analysis import create_analyzer_from_raw_inputs, create_analyzer_from_tokenized_data
 from tokenizer_analysis.utils import setup_environment
@@ -955,21 +955,34 @@ def _file_digest(path: str) -> Optional[str]:
         return None
 
 
-def _git_commit() -> Optional[str]:
-    """Current commit of the repo this package is running from, if any."""
+def _git_state() -> Dict[str, Any]:
+    """Commit of the repo this package runs from, and whether it was modified.
+
+    The commit alone does not describe the code that ran: on a modified working
+    tree it names the last commit, not what executed. Every development run is
+    in that state, so a results file recording only the hash overstates what it
+    can reproduce.
+    """
     import subprocess
 
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    state: Dict[str, Any] = {"commit": None, "dirty": None}
     try:
-        out = subprocess.run(
-            ["git", "-C", os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-             "rev-parse", "HEAD"],
-            capture_output=True, timeout=5,
+        head = subprocess.run(
+            ["git", "-C", repo, "rev-parse", "HEAD"], capture_output=True, timeout=5,
         )
-        if out.returncode == 0:
-            return out.stdout.decode().strip()
+        if head.returncode != 0:
+            return state
+        state["commit"] = head.stdout.decode().strip()
+        status = subprocess.run(
+            ["git", "-C", repo, "status", "--porcelain", "--untracked-files=no"],
+            capture_output=True, timeout=10,
+        )
+        if status.returncode == 0:
+            state["dirty"] = bool(status.stdout.decode().strip())
     except (OSError, subprocess.SubprocessError):
         pass
-    return None
+    return state
 
 
 def _build_run_metadata(args: argparse.Namespace, tokenizer_configs: Dict) -> Dict:
@@ -985,9 +998,18 @@ def _build_run_metadata(args: argparse.Namespace, tokenizer_configs: Dict) -> Di
     """
     from tokenizer_analysis import __version__
 
+    # On the --tokenized-data-file path no tokenizer file is read, so the only
+    # artifacts to hash are the vocabulary dumps the cache names. Those are not
+    # the tokenizers that produced the ids, and the class is not known, so the
+    # entries say what they are rather than imitating the full form.
+    replaying_a_cache = args.tokenized_data_file is not None
     tokenizers = {}
     for name, cfg in (tokenizer_configs or {}).items():
-        entry = {"class": cfg.get("class", "huggingface")}
+        entry: Dict[str, Any] = {}
+        if replaying_a_cache:
+            entry["source"] = "vocabulary file from --tokenized-data-config"
+        else:
+            entry["class"] = cfg.get("class", "huggingface")
         path = cfg.get("path")
         if path:
             entry["path"] = path
@@ -1007,9 +1029,11 @@ def _build_run_metadata(args: argparse.Namespace, tokenizer_configs: Dict) -> Di
         if value:
             configs[flag] = {"path": value, "sha256_16": _file_digest(value)}
 
+    git = _git_state()
     return {
         "package_version": __version__,
-        "git_commit": _git_commit(),
+        "git_commit": git["commit"],
+        "git_tree_modified": git["dirty"],
         "configs": configs,
         "tokenizers": tokenizers,
         "corpus": {
@@ -1152,13 +1176,24 @@ def run_from_args(args: argparse.Namespace):
         
         # Load tokenized data
         tokenized_data = InputLoader.load_from_file(args.tokenized_data_file)
-        
+
+        # No tokenizer files are read on this path, so run_metadata records the
+        # vocabulary files the cache names instead. Leaving the name unbound
+        # crashed the whole replay at the last line of the run, after every
+        # metric had been computed, with UnboundLocalError: cannot access local
+        # variable 'tokenizer_configs'.
+        tokenizer_configs: Dict = {}
+
         # Load vocabulary files if config provided
         vocabularies = {}
         if args.tokenized_data_config:
             config = load_config_from_file(args.tokenized_data_config)
             if 'vocabulary_files' in config:
                 vocabularies = InputLoader.load_vocabularies_from_config(config['vocabulary_files'])
+                tokenizer_configs = {
+                    name: {'path': path}
+                    for name, path in config['vocabulary_files'].items()
+                }
         
         # If no vocabularies loaded, estimate from data
         if not vocabularies:
