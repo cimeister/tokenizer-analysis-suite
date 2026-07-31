@@ -1,0 +1,17 @@
+{
+  "bash": "benchmarks/open_source/code_data/bash",
+  "c": "benchmarks/open_source/code_data/c",
+  "csharp": "benchmarks/open_source/code_data/csharp",
+  "go": "benchmarks/open_source/code_data/go",
+  "haskell": "benchmarks/open_source/code_data/haskell",
+  "java": "benchmarks/open_source/code_data/java",
+  "javascript": "benchmarks/open_source/code_data/javascript",
+  "lua": "benchmarks/open_source/code_data/lua",
+  "php": "benchmarks/open_source/code_data/php",
+  "python": "benchmarks/open_source/code_data/python",
+  "r": "benchmarks/open_source/code_data/r",
+  "ruby": "benchmarks/open_source/code_data/ruby",
+  "rust": "benchmarks/open_source/code_data/rust",
+  "scala": "benchmarks/open_source/code_data/scala",
+  "typescript": "benchmarks/open_source/code_data/typescript"
+}

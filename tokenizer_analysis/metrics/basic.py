@@ -16,6 +16,7 @@ from ..core.input_types import TokenizedData
 from ..core.input_providers import InputProvider
 from ..config import TextMeasurementConfig, TextMeasurer, DEFAULT_TEXT_MEASUREMENT_CONFIG, DEFAULT_WORD_MEASUREMENT_CONFIG
 from ..config.language_metadata import LanguageMetadata
+from ..constants import DEFAULT_CER_TIME_BUDGET_S
 from ..utils.text_utils import load_math_data, BUILTIN_MATH_SAMPLES_PATH
 
 logger = logging.getLogger(__name__)
@@ -86,7 +87,7 @@ class BasicTokenizationMetrics(BaseMetrics):
 
     def compute(self, tokenized_data: Optional[Dict[str, List[TokenizedData]]] = None,
                 include_reconstruction: bool = True,
-                cer_time_budget_s: float = 30.0) -> Dict[str, Any]:
+                cer_time_budget_s: float = DEFAULT_CER_TIME_BUDGET_S) -> Dict[str, Any]:
         """
         Compute basic tokenization metrics.
 
@@ -563,7 +564,7 @@ class BasicTokenizationMetrics(BaseMetrics):
 
     def compute_reconstruction_fidelity_analysis(
         self, tokenized_data: Dict[str, List[TokenizedData]],
-        cer_time_budget_s: float = 30.0,
+        cer_time_budget_s: float = DEFAULT_CER_TIME_BUDGET_S,
     ) -> Dict[str, Any]:
         """Compute encode-decode round-trip fidelity metrics.
 
@@ -685,9 +686,17 @@ class BasicTokenizationMetrics(BaseMetrics):
                             stats['ws_preserved'] += ws_preserved
                             stats['ws_total'] += ws_total
 
-                            # Check budget after warmup
+                            # Check the budget after the warmup, or as soon as
+                            # the warmup has itself spent it. The call count
+                            # alone is not enough: one CER call is an edit
+                            # distance over two long strings, so a lossy
+                            # tokenizer can spend minutes inside a single call
+                            # and never reach the 50th. Measured on
+                            # bert-base-uncased over 5035 texts, the warmup ran
+                            # past 10 minutes with the budget set to 120s.
                             if (cer_time_budget_s > 0
-                                    and n_cer_calls == _CER_WARMUP):
+                                    and (n_cer_calls == _CER_WARMUP
+                                         or cer_elapsed > cer_time_budget_s)):
                                 # Estimate remaining non-exact texts
                                 exact_so_far = sum(
                                     ds['exact_matches']
@@ -764,10 +773,11 @@ class BasicTokenizationMetrics(BaseMetrics):
                         stats['ws_preserved'] += ws_preserved
                         stats['ws_total'] += ws_total
 
-                        # Check budget after warmup (if not already checked)
+                        # Same two-sided check as the language loop above.
                         if (cer_time_budget_s > 0
                                 and not cer_skipped
-                                and n_cer_calls == _CER_WARMUP):
+                                and (n_cer_calls == _CER_WARMUP
+                                     or cer_elapsed > cer_time_budget_s)):
                             exact_so_far = sum(
                                 ds['exact_matches']
                                 for ds in domain_stats.values()

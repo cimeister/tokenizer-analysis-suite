@@ -1315,18 +1315,37 @@ class TestSourceCharToTokenMap:
     tokenizers/bpe.json: 19 of 45 characters matched the offsets mapping and 26
     were unmapped, against 0 unmapped from offsets. The tests that covered that
     fallback are gone with it; these cover what replaced it.
+
+    The offsets are normalized by ``_trim_word_start_space_offsets`` before the
+    map is built, so a word-start space is not attributed to the token that
+    carries it.
     """
 
     def setup_method(self):
         self.inst = _make_instance()
 
-    def test_offsets_map_each_character_to_its_token(self):
+    def test_word_start_space_is_not_attributed_to_its_token(self):
+        """The space in 'Ġb' marks the word start; it is not part of 'b'.
+
+        Whether the offsets report it at all is the tokenizer's
+        ``trim_offsets`` setting, not its tokenization: gpt2 ships
+        ``trim_offsets: false`` and reports (3, 7) for ' foo', gpt-neox-20b
+        ships ``trim_offsets: true`` and reports (4, 7) for 'foo', for the same
+        'Ġfoo' token and the same ids. Dropping the space here is what makes
+        the AST alignment read the split rather than the flag.
+        """
         source = "a b"
-        # Token 1 covers the space and the 'b', as a byte-level tokenizer would.
         result = self.inst._build_source_char_to_token_map(
             source, ["a", "Ġb"], offsets=[(0, 1), (1, 3)]
         )
-        assert result == [0, 1, 1]
+        assert result == [0, None, 1]
+
+    def test_offsets_map_each_character_to_its_token(self):
+        source = "ab"
+        result = self.inst._build_source_char_to_token_map(
+            source, ["a", "b"], offsets=[(0, 1), (1, 2)]
+        )
+        assert result == [0, 1]
 
     def test_indentation_maps_to_the_whitespace_token(self):
         source = "    x"
@@ -1368,14 +1387,41 @@ class TestSourceCharToTokenMap:
         """The case the old fallback got wrong: a byte-level vocabulary.
 
         'é' is stored as two remapped characters, so a reconstruction built from
-        token strings diverges from the source here. Offsets do not.
+        token strings diverges from the source here. Offsets do not. Index 4 is
+        the word-start space of 'Ġx' and is unmapped by design; every character
+        of the text itself is mapped.
         """
         source = "café x"
         result = self.inst._build_source_char_to_token_map(
             source, ["caf", "Ã©", "Ġx"], offsets=[(0, 3), (3, 4), (4, 6)]
         )
-        assert result == [0, 0, 0, 1, 2, 2]
-        assert None not in result
+        assert result == [0, 0, 0, 1, None, 2]
+        assert None not in result[:4] + result[5:]
+
+    def test_whitespace_only_token_keeps_all_its_characters(self):
+        """An indentation token has no word to mark the start of.
+
+        Trimming a space here would leave the indentation covered by nothing,
+        and the indentation metric reads these same positions.
+        """
+        source = "    x"
+        result = self.inst._build_source_char_to_token_map(
+            source, ["ĠĠĠĠ", "x"], offsets=[(0, 4), (4, 5)]
+        )
+        assert result == [0, 0, 0, 0, 1]
+
+    def test_leading_newline_inside_a_token_is_kept(self):
+        """'Ċ}' is a merge across a line break, so '}' really does start mid-token.
+
+        Only a space is a word-start marker. Trimming newlines and tabs as well
+        raised full_alignment_rate from 0.5238 to 0.5384 for llama-3 over 169286
+        AST spans, by scoring those merges as if they had not happened.
+        """
+        source = "a\n}"
+        result = self.inst._build_source_char_to_token_map(
+            source, ["a", "Ċ}"], offsets=[(0, 1), (1, 3)]
+        )
+        assert result == [0, 1, 1]
 
 
 
@@ -1494,6 +1540,84 @@ class TestSpearmanCorrelation:
     def test_empty_returns_zero(self):
         rho = ASTBoundaryMetrics._spearman_correlation([], [])
         assert rho == 0.0
+
+
+# ======================================================================
+# Multi-space tokens (regression)
+# ======================================================================
+
+class TestMultiSpaceTokenAlignment:
+    """A tokenizer that groups indentation into one token must still be measured.
+
+    The alignment used to be computed against a text rebuilt from cleaned token
+    strings. ``BaseMetrics._process_token`` removes one leading space from a
+    token, not all of them, so a token whose surface is three spaces
+    (``ĠĠĠ``, which Llama 3, OLMo 2, Qwen 2.5, Mistral NeMo and the bundled
+    tokenizers/bpe.json all have) left two spaces in the reconstruction that the
+    source has no counterpart for. The source-to-reconstruction walk then
+    resynchronized on one of those and every position after it was off.
+
+    This test pins the two consequences on a real tokenizer, using the snippet
+    below, whose indentation is one ``ĠĠĠ`` token followed by ``Ġinner`` and
+    ``Ġreturn``:
+
+    * ``outer`` is split into ``Ġout`` and ``er``, so it is 2 tokens. The
+      reconstruction path returned 7, more tokens than the identifier has
+      characters.
+    * ``return`` on the third line was unmappable under the reconstruction
+      path, and ``compute`` recorded an unmappable span as misaligned, so it
+      was published as a boundary the tokenizer had missed. It is one token and
+      fully aligned.
+    """
+
+    SOURCE = "def outer():\n    inner_value = 1\n    return inner_value\n"
+
+    @pytest.fixture(scope="class")
+    def mapping(self):
+        import numpy as np
+        from tokenizer_analysis.core.tokenizer_wrapper import create_tokenizer_wrapper
+
+        tokenizer = create_tokenizer_wrapper(
+            "bundled-bpe", {"class": "huggingface", "path": "tokenizers/bpe.json"}
+        )
+        token_ids, offsets = tokenizer.encode_with_offsets(self.SOURCE)
+        assert offsets is not None, "the bundled BPE reports offsets"
+        token_strings = tokenizer.convert_ids_to_tokens(token_ids)
+        assert "ĠĠĠ" in token_strings, (
+            "this test needs a tokenizer that emits a multi-space token; "
+            f"tokens/bpe.json produced {token_strings}"
+        )
+
+        inst = _make_instance()
+        s2t = inst._build_source_char_to_token_map(
+            self.SOURCE, token_strings, offsets=offsets, tokenizer_name="bundled-bpe"
+        )
+        return np.fromiter(
+            (-1 if t is None else t for t in s2t), dtype=np.int64, count=len(s2t)
+        )
+
+    def test_identifier_before_the_indentation_token(self, mapping):
+        start = self.SOURCE.index("outer")
+        span = (start, start + len("outer"))
+        assert ASTBoundaryMetrics._count_identifier_tokens_offsets(*span, mapping) == 2
+        alignment = ASTBoundaryMetrics._check_boundary_alignment_offsets(*span, mapping)
+        assert alignment["fully_aligned"] is True
+
+    def test_keyword_after_the_indentation_token(self, mapping):
+        start = self.SOURCE.index("return")
+        span = (start, start + len("return"))
+        alignment = ASTBoundaryMetrics._check_boundary_alignment_offsets(*span, mapping)
+        assert alignment is not None, "the span is mappable, not a measurement failure"
+        assert alignment["fully_aligned"] is True
+
+    def test_identifier_after_the_indentation_token(self, mapping):
+        start = self.SOURCE.rindex("inner_value")
+        span = (start, start + len("inner_value"))
+        # 'Ġinner', '_', 'val', 'ue'
+        assert ASTBoundaryMetrics._count_identifier_tokens_offsets(*span, mapping) == 4
+        alignment = ASTBoundaryMetrics._check_boundary_alignment_offsets(*span, mapping)
+        assert alignment is not None, "the span is mappable, not a measurement failure"
+        assert alignment["fully_aligned"] is True
 
 
 # ======================================================================

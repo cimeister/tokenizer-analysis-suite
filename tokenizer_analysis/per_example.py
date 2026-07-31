@@ -313,9 +313,12 @@ def per_example_ast_alignment(
     """Per-doc AST boundary alignment metrics for code prompts.
 
     Delegates to ``ASTBoundaryMetrics.compute_per_text`` — uses the EXACT
-    canonical alignment scoring (``_check_boundary_alignment_fast``,
-    ``_count_identifier_tokens_fast``) plus in-process tree-sitter parsing
+    canonical alignment scoring (``_check_boundary_alignment_offsets``,
+    ``_count_identifier_tokens_offsets``) plus in-process tree-sitter parsing
     (``parse_snippets``).
+
+    ``tokenizer`` has to report character offsets; one that does not raises
+    ``ValueError`` naming it rather than returning a row.
 
     ``language``: pass the source code's language (e.g. ``"python"``,
     ``"javascript"``). MBPP and HumanEval are Python.

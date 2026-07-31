@@ -1,0 +1,11 @@
+{
+  "gpt2":         {"class": "huggingface", "path": "gpt2"},
+  "bert-base":    {"class": "huggingface", "path": "bert-base-uncased"},
+  "gpt-neox-20b": {"class": "huggingface", "path": "EleutherAI/gpt-neox-20b"},
+  "olmo-2":       {"class": "huggingface", "path": "allenai/OLMo-2-1124-7B"},
+  "llama-3":      {"class": "huggingface", "path": "meta-llama/Meta-Llama-3-8B"},
+  "mistral-nemo": {"class": "huggingface", "path": "mistralai/Mistral-Nemo-Base-2407"},
+  "qwen-2.5":     {"class": "huggingface", "path": "Qwen/Qwen2.5-7B"},
+  "xlm-roberta":  {"class": "huggingface", "path": "xlm-roberta-base"},
+  "gemma-2":      {"class": "huggingface", "path": "google/gemma-2-9b"}
+}

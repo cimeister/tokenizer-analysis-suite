@@ -70,6 +70,48 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   systematically the higher of the two.
 
 ### Fixed (metric correctness)
+- `ast_boundary_alignment` and `identifier_fragmentation` map a source span to
+  tokens through the tokenizer's own offsets, which the code already fetched and
+  passed to the indentation metric, instead of reconstructing the text from
+  token strings and matching it back. The reconstruction path published wrong
+  numbers for any tokenizer that emits a multi-space token.
+
+  `_process_token` removes one leading space, not all of them, so `ĠĠĠ` cleans
+  to two spaces that enter the reconstruction with no source counterpart.
+  `_build_source_to_recon_map` then resynchronizes on a divergence by scanning
+  up to 32 characters ahead, finds one of those residual spaces, and stays wrong
+  from there. A tokenizer whose reconstruction holds no spaces at all has no
+  jump target and stays correct, which is the whole difference between the two
+  groups. Llama 3, OLMo 2, Qwen 2.5 and Mistral NeMo group indentation into one
+  learned merge; GPT-2 emits separate single-space tokens; GPT-NeoX and Gemma
+  hold their whitespace runs in `added_tokens_decoder`, where they are deleted.
+
+  Measured over 629400 AST spans from 1500 real source files in 15 languages.
+  `full_alignment_rate`: Llama 3 0.127 to 0.519, OLMo 2 0.127 to 0.519, Qwen 2.5
+  0.128 to 0.519, Mistral NeMo 0.136 to 0.546, BERT 0.416 to 1.000, Gemma 2
+  0.634 to 0.756, GPT-NeoX 0.742 to 0.768, GPT-2 0.768 to 0.787, XLM-RoBERTa
+  0.893 to 0.893. `identifier_fragmentation.unmappable` of 204184 identifiers:
+  119560 to 0 for Llama 3, 95937 to 0 for BERT, 4215 to 0 for GPT-2, and 0 to 0
+  for XLM-RoBERTa, which was the one tokenizer the old path handled.
+
+  An unmappable span was scored as a missed boundary rather than excluded, which
+  is why `count` was identical for every tokenizer and the failure did not show.
+  Unmappable spans are now counted and reported beside `count`, and a warning
+  names the tokenizer. On this corpus 198 spans per tokenizer remain unmappable,
+  0.03%, and every one is an AST literal whose source text is a single space.
+
+- Offsets are normalized before use: one word-start space is dropped from each
+  token's range, a whitespace-only token is kept whole, and a leading newline or
+  tab is kept. Without this the metric would read `trim_offsets`, a ByteLevel
+  post-processor flag that changes the reported offsets and not the
+  tokenization. GPT-2 ships it false and GPT-NeoX true, which alone moved GPT-2
+  from 0.433 to 0.770 with byte-identical token ids.
+
+- Known limitation, not fixed: the digit metrics in `metrics/math.py` use the
+  same reconstruction path. The bundled math corpus and FLORES prose contain no
+  runs of whitespace, so no tokenizer produces a residual-space token on them
+  and the measured values are unaffected. A math or prose corpus containing
+  indentation would trigger the same defect.
 - `_build_source_to_recon_map` advanced only on a match, so one character the
   reconstruction added (a byte-level vocabulary renders `é` as `Ã©`) left it
   stuck and unmapped the rest of the document. Consumers score an unmappable
@@ -237,6 +279,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   whole-corpus block carry the same metric keys; a group still published
   `type_token_ratio` and `avg_tokens_per_line` after they had been merged away
   everywhere else.
+- The CER time budget is checked on elapsed time as well as on call count. It
+  only fired after 50 non-exact texts, and one call is an edit distance over two
+  long strings, so a lossy tokenizer could spend minutes inside a single call and
+  never reach the 50th: measured on `bert-base-uncased` over 5035 texts, the
+  warmup ran past 10 minutes with the budget set to 120 seconds, which reads as a
+  hung run. The budget now also fires as soon as the warmup has spent it.
 - The CER time budget has one default, `DEFAULT_CER_TIME_BUDGET_S = 10.0`. The
   CLI used 10.0 and `UnifiedTokenizerAnalyzer.run_analysis` used 30.0, so the
   same corpus gave a different answer depending on which entry point started it.

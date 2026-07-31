@@ -98,12 +98,11 @@ def _treesitter_pack_version() -> str:
 def _identifier_stats(items: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """Summarize identifier records, excluding spans that could not be mapped.
 
-    An identifier whose span could not be located in the reconstructed text has
-    ``num_tokens is None``. That is a failure to measure, so it is counted and
-    reported under ``unmappable`` but kept out of both rates. Treating it as a
-    fragmented identifier with a token count of -1 made
-    ``avg_tokens_per_identifier`` negative for C# under every tokenizer, which
-    is not a possible token count.
+    An identifier no token covered has ``num_tokens is None``. That is a
+    failure to measure, so it is counted and reported under ``unmappable`` but
+    kept out of both rates. Treating it as a fragmented identifier with a token
+    count of -1 made ``avg_tokens_per_identifier`` negative for C# under every
+    tokenizer, which is not a possible token count.
 
     Returns None when nothing was measurable, so the caller can omit the entry
     rather than publish a zero.
@@ -455,15 +454,76 @@ class ASTBoundaryMetrics(BaseMetrics):
                 result[pos] = tok_idx
         return result
 
+    @staticmethod
+    def _trim_word_start_space_offsets(
+        source_code: str,
+        offsets: List[Tuple[int, int]],
+    ) -> List[Tuple[int, int]]:
+        """Drop the word-start space from each token's claimed source range.
+
+        A ByteLevel or SentencePiece vocabulary marks a word start by keeping
+        one space inside the token (``Ġfoo``, ``▁foo``). Whether the reported
+        offsets include that space is set by the ``trim_offsets`` flag of the
+        ByteLevel post-processor, which is part of the tokenizer's configuration
+        and not part of how it splits text. Measured on ``def foo():`` with the
+        same ``Ġfoo`` token in both vocabularies: gpt2 ships
+        ``trim_offsets: false`` and reports (3, 7) for ``' foo'``; gpt-neox-20b
+        ships ``trim_offsets: true`` and reports (4, 7) for ``'foo'``. Setting
+        the flag on gpt2 leaves the token ids byte-identical and changes only
+        the offsets.
+
+        Reading the raw offsets publishes that flag rather than the
+        tokenization: an AST node beginning at ``foo`` starts mid-token under
+        gpt2 and token-initial under gpt-neox-20b, for the same split. Measured
+        over 169296 AST spans on 15 languages, ``full_alignment_rate`` was
+        0.4327 for gpt2 against 0.7697 for gpt-neox-20b on raw offsets, and
+        0.7905 against 0.7697 after this trim.
+
+        Only one space is dropped, and only from a token that has something
+        other than whitespace after it:
+
+        * A token whose range is entirely whitespace keeps all of it. An
+          indentation token has nothing else to cover, and the indentation
+          metric reads these same positions.
+        * A leading newline or tab is kept. ``Ċ}`` is a merge the tokenizer
+          learned across a line break, so the ``}`` really does start
+          mid-token, whereas the space in ``Ġfoo`` is the marker every
+          word-initial token in these vocabularies carries. Dropping newlines
+          and tabs as well raises ``full_alignment_rate`` from 0.5238 to 0.5384
+          for llama-3 and from 0.5455 to 0.5579 for mistral-nemo, and leaves
+          gpt2, gemma-2, bert-base, gpt-neox-20b and xlm-roberta unchanged.
+
+        This is the convention ``BaseMetrics._process_token`` already applied
+        when the alignment was measured against reconstructed text: it decoded
+        the marker to a space and stripped one leading space, never a newline
+        or a tab.
+        """
+        limit = len(source_code)
+        trimmed: List[Tuple[int, int]] = []
+        for start, end in offsets:
+            stop = min(end, limit)
+            if (
+                start < stop
+                and source_code[start] == " "
+                and source_code[start:stop].strip()
+            ):
+                trimmed.append((start + 1, end))
+            else:
+                trimmed.append((start, end))
+        return trimmed
+
     def _build_source_char_to_token_map(
         self,
         source_code: str,
         token_strings: List[str],
         offsets: Optional[List[Tuple[int, int]]] = None,
+        tokenizer_name: Optional[str] = None,
     ) -> List[Optional[int]]:
         """Map each source character (including whitespace) to a token index.
 
         Requires *offsets* from ``encode_with_offsets``, which is exact.
+        *tokenizer_name* only names the tokenizer in the error raised when the
+        offsets are missing.
 
         There used to be a fallback that rebuilt the text by concatenating token
         strings and walked the two in step. It advanced only on an exact
@@ -480,12 +540,17 @@ class ASTBoundaryMetrics(BaseMetrics):
         on source character positions, and guessing produced numbers that looked
         valid.
 
+        The offsets are normalized by
+        :meth:`_trim_word_start_space_offsets` first, so that the map does not
+        depend on the tokenizer's ``trim_offsets`` setting.
+
         Returns a list of length ``len(source_code)`` where entry *i* is
         the token index covering source char *i*, or ``None``.
         """
         if offsets is None:
+            named = f"tokenizer {tokenizer_name!r}" if tokenizer_name else "this tokenizer"
             raise ValueError(
-                "Code AST metrics need character offsets, and this tokenizer's "
+                f"Code AST metrics need character offsets, and {named}'s "
                 "encode_with_offsets() returned none. Offsets are the only exact "
                 "way to say which token covers which source character; the "
                 "previous fallback guessed by matching token strings against the "
@@ -493,7 +558,10 @@ class ASTBoundaryMetrics(BaseMetrics):
                 "tokenizer that reports offsets, or disable the code metrics "
                 "with --no-code-ast."
             )
-        return self._map_from_offsets(len(source_code), offsets)
+        return self._map_from_offsets(
+            len(source_code),
+            self._trim_word_start_space_offsets(source_code, offsets),
+        )
 
     @staticmethod
     def _infer_indent_unit(
@@ -600,8 +668,23 @@ class ASTBoundaryMetrics(BaseMetrics):
         }
 
     # ------------------------------------------------------------------
-    # Numpy-accelerated helpers (used by compute() hot loop)
+    # Numpy-accelerated helpers (reconstructed-text coordinates)
     # ------------------------------------------------------------------
+    #
+    # Neither of the two ``_fast`` helpers below is called by compute() or
+    # compute_per_text() any more. They read positions in the text rebuilt by
+    # concatenating cleaned token strings, and that reconstruction drops one
+    # leading space per token instead of all of them, so a token whose surface
+    # is several spaces (``ĠĠĠ`` in Llama 3, OLMo 2, Qwen 2.5 and Mistral NeMo)
+    # left residual spaces in it that the source has no counterpart for. The
+    # source-to-reconstruction walk then resynchronized on one of those residual
+    # spaces and every position after it was off. Measured over 169296 AST spans
+    # on 15 languages: full_alignment_rate 0.0717 for llama-3 against 0.5238
+    # from the offsets, and 0.2429 for bert-base against 1.0000.
+    #
+    # The alignment and identifier paths now use the ``_offsets`` helpers below.
+    # These two are kept only because they are unit-tested against their
+    # list-based counterparts; do not wire them back into a metric.
 
     @staticmethod
     def _check_boundary_alignment_fast(
@@ -686,6 +769,103 @@ class ASTBoundaryMetrics(BaseMetrics):
         return int(np.unique(c2t_arr[recon_start:recon_end]).size)
 
     # ------------------------------------------------------------------
+    # Offsets-based helpers (source-code coordinates, used by compute())
+    # ------------------------------------------------------------------
+    #
+    # Both take *s2t_arr*: one entry per source character holding the index of
+    # the token that covers it, or ``-1`` where no token does. It comes from
+    # ``_build_source_char_to_token_map``, which reads the tokenizer's encoding
+    # offsets. Character positions are the ones tree-sitter reports, so no
+    # reconstruction and no resynchronization are involved.
+
+    @staticmethod
+    def _check_boundary_alignment_offsets(
+        char_start: int,
+        char_end: int,
+        s2t_arr: np.ndarray,
+    ) -> Optional[Dict[str, bool]]:
+        """Check whether an AST node's boundaries coincide with token boundaries.
+
+        *char_start* is inclusive and *char_end* exclusive, in source-code
+        character positions (tree-sitter's convention).
+
+        The test is the one :meth:`_check_boundary_alignment_fast` applies,
+        stated in source coordinates: the token index must change at the span
+        start and at the span end. "At the span start" compares against the
+        nearest covered character before the span, because the characters
+        between two tokens are the ones no token covers (whitespace, under a
+        tokenizer such as bert-base-uncased that drops it). A span starting at
+        the first covered character of the snippet counts as start-aligned, and
+        one ending at the last counts as end-aligned.
+
+        Returns ``None`` when no character of the span is covered by any token.
+        The caller counts that as unmappable instead of scoring it as
+        misaligned.
+        """
+        s_len = int(s2t_arr.shape[0])
+        hi = min(char_end, s_len)
+        if char_start >= hi:
+            return None
+
+        segment = s2t_arr[char_start:hi]
+        covered = segment >= 0
+        if not covered.any():
+            return None
+
+        first_offset = int(covered.argmax())
+        last_offset = len(segment) - 1 - int(np.flip(covered).argmax())
+        first_token = int(segment[first_offset])
+        last_token = int(segment[last_offset])
+
+        prev = char_start + first_offset - 1
+        while prev >= 0 and int(s2t_arr[prev]) < 0:
+            prev -= 1
+        start_aligned = prev < 0 or int(s2t_arr[prev]) != first_token
+
+        nxt = char_start + last_offset + 1
+        while nxt < s_len and int(s2t_arr[nxt]) < 0:
+            nxt += 1
+        end_aligned = nxt >= s_len or int(s2t_arr[nxt]) != last_token
+
+        fully_aligned = start_aligned and end_aligned
+
+        return {
+            "start_aligned": start_aligned,
+            "end_aligned": end_aligned,
+            "fully_aligned": fully_aligned,
+            "cross_boundary": not fully_aligned,
+        }
+
+    @staticmethod
+    def _count_identifier_tokens_offsets(
+        char_start: int,
+        char_end: int,
+        s2t_arr: np.ndarray,
+    ) -> Optional[int]:
+        """Count the distinct tokens covering a source character range.
+
+        Same coordinates and same ``-1``-for-uncovered convention as
+        :meth:`_check_boundary_alignment_offsets`. Characters no token covers
+        contribute nothing to the count, so an identifier a tokenizer splits
+        across three tokens returns 3 whether or not the tokenizer also covers
+        the whitespace around it.
+
+        Returns ``None`` when no character of the span is covered, which the
+        caller reports under ``unmappable`` rather than as a token count.
+        """
+        s_len = int(s2t_arr.shape[0])
+        hi = min(char_end, s_len)
+        if char_start >= hi:
+            return None
+
+        segment = s2t_arr[char_start:hi]
+        covered = segment[segment >= 0]
+        if covered.size == 0:
+            return None
+
+        return int(np.unique(covered).size)
+
+    # ------------------------------------------------------------------
     # Main compute
     # ------------------------------------------------------------------
 
@@ -720,6 +900,19 @@ class ASTBoundaryMetrics(BaseMetrics):
         # acc: tok_name -> code_lang -> category -> list of alignment dicts
         acc: Dict[str, Dict[str, Dict[str, List[Dict]]]] = defaultdict(
             lambda: defaultdict(lambda: defaultdict(list))
+        )
+
+        # unmappable_acc: tok_name -> code_lang -> category -> count of spans no
+        # token covered. Offsets cover every character a tokenizer encoded, so
+        # this is expected to be 0; a non-zero count means the encoding left
+        # part of the source uncovered and the affected spans were not measured.
+        # They are excluded from the rates rather than scored as misaligned,
+        # which is what the previous code did and what made every tokenizer
+        # report the same span count. Under that code, 37128 of llama-3's 54216
+        # identifier spans in a 15-language run had not been measured at all,
+        # and every one of them was published as a boundary it had missed.
+        unmappable_acc: Dict[str, Dict[str, Dict[str, int]]] = defaultdict(
+            lambda: defaultdict(lambda: defaultdict(int))
         )
 
         # ident_acc: tok -> lang -> [{text, num_tokens, fragmented}]
@@ -920,52 +1113,44 @@ class ASTBoundaryMetrics(BaseMetrics):
                     token_strings = self._convert_ids_to_tokens(
                         tokenizer, token_ids
                     )
-                    recon_text, char_to_token = self._build_char_to_token_map(
-                        token_strings
-                    )
-                    if not char_to_token:
-                        continue
 
-                    source_to_recon = self._build_source_to_recon_map(
-                        snippet, recon_text
+                    # Source character -> token index, straight from the
+                    # encoding offsets. Built ONCE per (snippet, tokenizer) and
+                    # shared by the alignment, identifier and indentation paths.
+                    source_char_to_token = self._build_source_char_to_token_map(
+                        snippet, token_strings,
+                        offsets=enc_offsets, tokenizer_name=tok_name,
                     )
-
-                    # Build numpy arrays ONCE per (snippet, tokenizer).
-                    s2r_arr = np.array(
-                        [x if x is not None else -1 for x in source_to_recon],
+                    s2t_arr = np.fromiter(
+                        (-1 if t is None else t for t in source_char_to_token),
                         dtype=np.int64,
+                        count=len(source_char_to_token),
                     )
-                    c2t_arr = np.array(char_to_token, dtype=np.int64)
-                    c2t_len = len(char_to_token)
 
                     for category, char_spans in char_spans_by_category.items():
                         for span_idx, (c_start, c_end) in enumerate(char_spans):
-                            alignment = self._check_boundary_alignment_fast(
-                                c_start, c_end, s2r_arr, c2t_arr, c2t_len
+                            alignment = self._check_boundary_alignment_offsets(
+                                c_start, c_end, s2t_arr
                             )
                             if alignment is None:
-                                alignment = {
-                                    "start_aligned": False,
-                                    "end_aligned": False,
-                                    "fully_aligned": False,
-                                    "cross_boundary": True,
-                                }
-                            acc[tok_name][code_lang][category].append(alignment)
+                                unmappable_acc[tok_name][code_lang][category] += 1
+                            else:
+                                acc[tok_name][code_lang][category].append(alignment)
 
                             # Identifier fragmentation tracking
                             if category == "identifier":
-                                num_tokens = self._count_identifier_tokens_fast(
-                                    c_start, c_end, s2r_arr, c2t_arr, c2t_len
+                                num_tokens = self._count_identifier_tokens_offsets(
+                                    c_start, c_end, s2t_arr
                                 )
-                                # num_tokens is None when the identifier span
-                                # could not be mapped into the reconstructed
-                                # text. That is a measurement failure, not a
-                                # fragmented identifier, so it is recorded as
-                                # unmappable and excluded from both rates rather
-                                # than counted as fragmented with a -1 token
-                                # count. Averaging that sentinel produced a
-                                # negative avg_tokens_per_identifier for C# in
-                                # every tokenizer.
+                                # num_tokens is None when no token covers any
+                                # character of the identifier. That is a
+                                # measurement failure, not a fragmented
+                                # identifier, so it is recorded as unmappable and
+                                # excluded from both rates rather than counted as
+                                # fragmented with a -1 token count. Averaging
+                                # that sentinel produced a negative
+                                # avg_tokens_per_identifier for C# in every
+                                # tokenizer.
                                 ident_acc[tok_name][code_lang].append({
                                     "text": ident_texts[span_idx],
                                     "num_tokens": num_tokens,
@@ -974,14 +1159,9 @@ class ASTBoundaryMetrics(BaseMetrics):
                                     ),
                                 })
 
-                    # Indentation consistency (whitespace-significant languages)
+                    # Indentation consistency (whitespace-significant languages).
+                    # Reuses the source_char_to_token map built above.
                     if indentation is not None:
-                        source_char_to_token = (
-                            self._build_source_char_to_token_map(
-                                snippet, token_strings,
-                                offsets=enc_offsets,
-                            )
-                        )
                         for ws_string, line_start, ws_end in indentation:
                             if not ws_string:
                                 continue
@@ -1025,13 +1205,26 @@ class ASTBoundaryMetrics(BaseMetrics):
                 for items in lang_cats.values()
             )
             tok_lang_count = len(acc.get(tok_name, {}))
+            tok_unmappable = sum(
+                n
+                for lang_cats in unmappable_acc.get(tok_name, {}).values()
+                for n in lang_cats.values()
+            )
             logger.info(
                 "Phase 2 complete for %s: %d AST nodes aligned across %d language(s).",
                 tok_name, tok_node_count, tok_lang_count,
             )
+            if tok_unmappable:
+                logger.warning(
+                    "%s: %d AST span(s) had no token covering any of their "
+                    "characters and were not measured. They are reported under "
+                    "'unmappable' and left out of the alignment rates. The "
+                    "encoding offsets did not cover part of the source.",
+                    tok_name, tok_unmappable,
+                )
 
         return {
-            "ast_boundary_alignment": self._build_results(acc),
+            "ast_boundary_alignment": self._build_results(acc, unmappable_acc),
             "identifier_fragmentation": self._build_identifier_fragmentation_results(ident_acc),
             "indentation_consistency": self._build_indentation_consistency_results(indent_acc),
         }
@@ -1041,8 +1234,20 @@ class ASTBoundaryMetrics(BaseMetrics):
     # ------------------------------------------------------------------
 
     def _build_results(
-        self, acc: Dict[str, Dict[str, Dict[str, List[Dict]]]]
+        self,
+        acc: Dict[str, Dict[str, Dict[str, List[Dict]]]],
+        unmappable_acc: Optional[Dict[str, Dict[str, Dict[str, int]]]] = None,
     ) -> Dict[str, Any]:
+        """Aggregate the per-span alignment records into the published results.
+
+        *unmappable_acc* holds the spans no token covered, counted by tokenizer,
+        language and category. They are not in *acc* because they were not
+        measured. Every level of the output carries the count next to ``count``
+        so a reader can see how much of the corpus each rate is computed over;
+        it is 0 whenever the encoding offsets cover the whole source, which is
+        the normal case.
+        """
+        unmappable_acc = unmappable_acc or {}
         results: Dict[str, Any] = {"per_tokenizer": {}, "summary": {}}
 
         for tok_name in self.tokenizer_names:
@@ -1052,22 +1257,50 @@ class ASTBoundaryMetrics(BaseMetrics):
                 "overall": {},
             }
 
+            tok_acc = acc.get(tok_name, {})
+            tok_unmappable = unmappable_acc.get(tok_name, {})
+
             all_full: List[float] = []
             all_start: List[float] = []
             all_end: List[float] = []
             all_cross: List[float] = []
             total_count = 0
+            total_unmappable = 0
             languages_seen: set = set()
 
-            for code_lang in sorted(acc.get(tok_name, {})):
+            for code_lang in sorted(set(tok_acc) | set(tok_unmappable)):
                 lang_full: List[float] = []
                 lang_start: List[float] = []
                 lang_end: List[float] = []
                 lang_cross: List[float] = []
+                lang_unmappable = 0
 
-                for category in sorted(acc[tok_name][code_lang]):
-                    items = acc[tok_name][code_lang][category]
+                lang_acc = tok_acc.get(code_lang, {})
+                lang_unmappable_by_cat = tok_unmappable.get(code_lang, {})
+
+                for category in sorted(set(lang_acc) | set(lang_unmappable_by_cat)):
+                    items = lang_acc.get(category, [])
+                    cat_unmappable = int(lang_unmappable_by_cat.get(category, 0))
+                    if not items and not cat_unmappable:
+                        continue
+
+                    lang_unmappable += cat_unmappable
+
+                    if category not in tok_data["by_category"]:
+                        tok_data["by_category"][category] = {}
+
                     if not items:
+                        # Every span of this category was unmappable, so there is
+                        # no rate to report. The rates are null rather than 0.0
+                        # so they cannot be read as "nothing aligned".
+                        tok_data["by_category"][category][code_lang] = {
+                            "start_alignment_rate": None,
+                            "end_alignment_rate": None,
+                            "full_alignment_rate": None,
+                            "cross_boundary_rate": None,
+                            "count": 0,
+                            "unmappable": cat_unmappable,
+                        }
                         continue
 
                     s_rates = [1.0 if it["start_aligned"] else 0.0 for it in items]
@@ -1075,21 +1308,21 @@ class ASTBoundaryMetrics(BaseMetrics):
                     f_rates = [1.0 if it["fully_aligned"] else 0.0 for it in items]
                     c_rates = [1.0 if it["cross_boundary"] else 0.0 for it in items]
 
-                    if category not in tok_data["by_category"]:
-                        tok_data["by_category"][category] = {}
-
                     tok_data["by_category"][category][code_lang] = {
                         "start_alignment_rate": float(np.mean(s_rates)),
                         "end_alignment_rate": float(np.mean(e_rates)),
                         "full_alignment_rate": float(np.mean(f_rates)),
                         "cross_boundary_rate": float(np.mean(c_rates)),
                         "count": len(items),
+                        "unmappable": cat_unmappable,
                     }
 
                     lang_full.extend(f_rates)
                     lang_start.extend(s_rates)
                     lang_end.extend(e_rates)
                     lang_cross.extend(c_rates)
+
+                total_unmappable += lang_unmappable
 
                 if lang_full:
                     tok_data["by_language"][code_lang] = {
@@ -1098,6 +1331,7 @@ class ASTBoundaryMetrics(BaseMetrics):
                         "overall_end_alignment_rate": float(np.mean(lang_end)),
                         "overall_cross_boundary_rate": float(np.mean(lang_cross)),
                         "count": len(lang_full),
+                        "unmappable": lang_unmappable,
                     }
                     all_full.extend(lang_full)
                     all_start.extend(lang_start)
@@ -1105,6 +1339,15 @@ class ASTBoundaryMetrics(BaseMetrics):
                     all_cross.extend(lang_cross)
                     total_count += len(lang_full)
                     languages_seen.add(code_lang)
+                elif lang_unmappable:
+                    tok_data["by_language"][code_lang] = {
+                        "overall_full_alignment_rate": None,
+                        "overall_start_alignment_rate": None,
+                        "overall_end_alignment_rate": None,
+                        "overall_cross_boundary_rate": None,
+                        "count": 0,
+                        "unmappable": lang_unmappable,
+                    }
 
             if all_full:
                 tok_data["overall"] = {
@@ -1113,6 +1356,7 @@ class ASTBoundaryMetrics(BaseMetrics):
                     "end_alignment_rate": float(np.mean(all_end)),
                     "cross_boundary_rate": float(np.mean(all_cross)),
                     "count": total_count,
+                    "unmappable": total_unmappable,
                 }
 
             results["per_tokenizer"][tok_name] = tok_data
@@ -1124,6 +1368,7 @@ class ASTBoundaryMetrics(BaseMetrics):
                     "avg_end_alignment_rate": float(np.mean(all_end)),
                     "avg_cross_boundary_rate": float(np.mean(all_cross)),
                     "total_nodes_analyzed": total_count,
+                    "total_nodes_unmappable": total_unmappable,
                     "languages_analyzed": len(languages_seen),
                 }
 
@@ -1383,6 +1628,7 @@ class ASTBoundaryMetrics(BaseMetrics):
                     print(f"  {'End Alignment':25}: {s['avg_end_alignment_rate']:.3f}")
                     print(f"  {'Cross-Boundary Rate':25}: {s['avg_cross_boundary_rate']:.3f}")
                     print(f"  {'Nodes Analyzed':25}: {s['total_nodes_analyzed']:,}")
+                    print(f"  {'Nodes Unmappable':25}: {s.get('total_nodes_unmappable', 0):,}")
                     print(f"  {'Languages':25}: {s['languages_analyzed']}")
 
         # By category
@@ -1399,17 +1645,24 @@ class ASTBoundaryMetrics(BaseMetrics):
                     if category not in by_cat:
                         continue
                     lang_data = by_cat[category]
-                    total_items = sum(d["count"] for d in lang_data.values())
+                    # A language whose spans were all unmappable has a null rate
+                    # and count 0; it contributes only to the unmappable total.
+                    measured = [
+                        d for d in lang_data.values()
+                        if d["count"] and d["full_alignment_rate"] is not None
+                    ]
+                    total_items = sum(d["count"] for d in measured)
+                    unmappable = sum(d.get("unmappable", 0) for d in lang_data.values())
                     if total_items == 0:
                         continue
                     weighted_full = sum(
-                        d["full_alignment_rate"] * d["count"]
-                        for d in lang_data.values()
+                        d["full_alignment_rate"] * d["count"] for d in measured
                     ) / total_items
                     print(
                         f"  {category:15}: "
                         f"full_align={weighted_full:.3f}  "
-                        f"n={total_items}"
+                        f"n={total_items}  "
+                        f"unmappable={unmappable}"
                     )
 
             # By language
@@ -1423,12 +1676,20 @@ class ASTBoundaryMetrics(BaseMetrics):
                 print(f"\n{tok_name}:")
                 for lang in sorted(by_lang):
                     d = by_lang[lang]
+                    unmappable = d.get("unmappable", 0)
+                    if d["overall_full_alignment_rate"] is None:
+                        print(
+                            f"  {lang:15}: not measured, "
+                            f"unmappable={unmappable}"
+                        )
+                        continue
                     print(
                         f"  {lang:15}: "
                         f"full_align={d['overall_full_alignment_rate']:.3f}  "
                         f"start={d['overall_start_alignment_rate']:.3f}  "
                         f"end={d['overall_end_alignment_rate']:.3f}  "
-                        f"n={d['count']}"
+                        f"n={d['count']}  "
+                        f"unmappable={unmappable}"
                     )
 
         # --- Identifier Fragmentation ---
@@ -1502,11 +1763,19 @@ class ASTBoundaryMetrics(BaseMetrics):
         under ONE tokenizer.
 
         Reuses :func:`parse_snippets_fenced` for parsing, then routes
-        ``_check_boundary_alignment_fast``, ``_count_identifier_tokens_fast``,
-        and ``_build_char_to_token_map`` at single-snippet granularity. The
-        standard ``compute()`` workflow is unaffected: this method snapshots
-        and restores ``self._char_decode_table``, ``self._special_tokens`` and
+        ``_check_boundary_alignment_offsets``,
+        ``_count_identifier_tokens_offsets`` and
+        ``_build_source_char_to_token_map`` at single-snippet granularity, which
+        is the same chain ``compute()`` uses. The standard ``compute()``
+        workflow is unaffected: this method snapshots and restores
+        ``self._char_decode_table``, ``self._special_tokens`` and
         ``self._subword_markers`` and does not touch the aggregator state.
+
+        *tokenizer_obj* has to report character offsets, either through a
+        wrapper's ``encode_with_offsets`` or through a ``tokenizers.Encoding``
+        with an ``offsets`` attribute. One that does not raises ``ValueError``
+        naming it, rather than returning a row: the shortfall applies to every
+        text the caller would pass, so it is not a per-row condition.
 
         Parsing goes through the same subprocess fence ``compute()`` uses. An
         earlier version parsed in-process on the theory that a single snippet
@@ -1521,17 +1790,20 @@ class ASTBoundaryMetrics(BaseMetrics):
         all alignment scalars come back NaN with ``n_ast_nodes = 0`` and
         ``parse_status`` naming the reason, so the caller can drop the row.
 
-        Returns a dict with keys: ``n_ast_nodes`` (total spans considered
-        across all categories), ``full_alignment_rate``,
+        Returns a dict with keys: ``n_ast_nodes`` (spans scored, across all
+        categories), ``n_unmappable_nodes`` (spans no token covered, which are
+        left out of the rates), ``full_alignment_rate``,
         ``start_alignment_rate``, ``end_alignment_rate``, plus per-category
         rates (``identifier_full_alignment_rate``, etc.),
         ``identifier_fragmentation_rate`` (fraction of identifiers split
-        into more than one token), ``n_identifiers``, and ``n_tokens``.
+        into more than one token), ``n_identifiers`` (identifiers the rate is
+        computed over), ``n_identifiers_unmappable``, and ``n_tokens``.
         """
         from ..loaders.code_data import CodeDataLoader
 
         empty = {
             "n_ast_nodes": 0,
+            "n_unmappable_nodes": 0,
             "full_alignment_rate": float("nan"),
             "start_alignment_rate": float("nan"),
             "end_alignment_rate": float("nan"),
@@ -1542,6 +1814,7 @@ class ASTBoundaryMetrics(BaseMetrics):
             "delimiter_full_alignment_rate": float("nan"),
             "identifier_fragmentation_rate": float("nan"),
             "n_identifiers": 0,
+            "n_identifiers_unmappable": 0,
             "n_tokens": 0,
             "parse_status": "empty",
         }
@@ -1620,18 +1893,22 @@ class ASTBoundaryMetrics(BaseMetrics):
                 self._resolve_subword_markers(tokenizer_obj),
             )
 
-            # Encode source (with offsets for the indentation path; we don't
-            # use indentation here, but encode_with_offsets is the standard
-            # tokenizer entry point used elsewhere in this class).
+            # Encode source. The offsets are what the alignment is measured
+            # against, so they are required rather than optional here.
             try:
+                enc_offsets: Optional[List[Tuple[int, int]]]
                 if hasattr(tokenizer_obj, "encode_with_offsets"):
-                    token_ids, _ = tokenizer_obj.encode_with_offsets(source_code)
+                    token_ids, enc_offsets = tokenizer_obj.encode_with_offsets(source_code)
                 else:
                     try:
                         ids_raw = tokenizer_obj.encode(source_code, add_special_tokens=False)
                     except TypeError:
                         ids_raw = tokenizer_obj.encode(source_code)
                     token_ids = list(ids_raw.ids) if hasattr(ids_raw, "ids") else list(ids_raw)
+                    enc_offsets = (
+                        [tuple(pair) for pair in ids_raw.offsets]
+                        if hasattr(ids_raw, "offsets") else None
+                    )
             except Exception as e:
                 out = dict(empty)
                 out["parse_status"] = f"encode_error:{type(e).__name__}"
@@ -1643,53 +1920,58 @@ class ASTBoundaryMetrics(BaseMetrics):
                 return out
 
             token_strings = self._convert_ids_to_tokens(tokenizer_obj, token_ids)
-            recon_text, char_to_token = self._build_char_to_token_map(token_strings)
-            if not char_to_token:
-                out = dict(empty)
-                out["parse_status"] = "empty_recon"
-                out["n_tokens"] = len(token_ids)
-                return out
-
-            source_to_recon = self._build_source_to_recon_map(source_code, recon_text)
-
-            s2r_arr = np.array(
-                [x if x is not None else -1 for x in source_to_recon],
-                dtype=np.int64,
+            source_char_to_token = self._build_source_char_to_token_map(
+                source_code, token_strings,
+                offsets=enc_offsets,
+                tokenizer_name=(
+                    tokenizer_obj.get_name()
+                    if hasattr(tokenizer_obj, "get_name")
+                    else getattr(tokenizer_obj, "name_or_path", None)
+                    or type(tokenizer_obj).__name__
+                ),
             )
-            c2t_arr = np.array(char_to_token, dtype=np.int64)
-            c2t_len = len(char_to_token)
+            s2t_arr = np.fromiter(
+                (-1 if t is None else t for t in source_char_to_token),
+                dtype=np.int64,
+                count=len(source_char_to_token),
+            )
 
             # Per-category alignment counters (one record per AST span).
             per_cat_full: Dict[str, List[float]] = defaultdict(list)
             per_cat_start: Dict[str, List[float]] = defaultdict(list)
             per_cat_end: Dict[str, List[float]] = defaultdict(list)
 
+            n_unmappable = 0
             n_idents = 0
+            n_idents_unmappable = 0
             n_idents_fragmented = 0
 
             for category, char_spans in char_spans_by_category.items():
                 for c_start, c_end in char_spans:
-                    alignment = self._check_boundary_alignment_fast(
-                        c_start, c_end, s2r_arr, c2t_arr, c2t_len
+                    alignment = self._check_boundary_alignment_offsets(
+                        c_start, c_end, s2t_arr
                     )
                     if alignment is None:
-                        alignment = {
-                            "start_aligned": False,
-                            "end_aligned": False,
-                            "fully_aligned": False,
-                            "cross_boundary": True,
-                        }
-                    per_cat_full[category].append(1.0 if alignment["fully_aligned"] else 0.0)
-                    per_cat_start[category].append(1.0 if alignment["start_aligned"] else 0.0)
-                    per_cat_end[category].append(1.0 if alignment["end_aligned"] else 0.0)
+                        # No token covers any character of this span, so it was
+                        # not measured. Counting it as misaligned, which this
+                        # used to do, reports a failure to measure as a property
+                        # of the tokenizer.
+                        n_unmappable += 1
+                    else:
+                        per_cat_full[category].append(1.0 if alignment["fully_aligned"] else 0.0)
+                        per_cat_start[category].append(1.0 if alignment["start_aligned"] else 0.0)
+                        per_cat_end[category].append(1.0 if alignment["end_aligned"] else 0.0)
 
                     if category == "identifier":
-                        n_idents += 1
-                        n_tok = self._count_identifier_tokens_fast(
-                            c_start, c_end, s2r_arr, c2t_arr, c2t_len
+                        n_tok = self._count_identifier_tokens_offsets(
+                            c_start, c_end, s2t_arr
                         )
-                        if n_tok is None or n_tok > 1:
-                            n_idents_fragmented += 1
+                        if n_tok is None:
+                            n_idents_unmappable += 1
+                        else:
+                            n_idents += 1
+                            if n_tok > 1:
+                                n_idents_fragmented += 1
 
             # Aggregate
             all_full = [v for vals in per_cat_full.values() for v in vals]
@@ -1702,10 +1984,12 @@ class ASTBoundaryMetrics(BaseMetrics):
 
             result: Dict[str, Any] = {
                 "n_ast_nodes": n_total,
+                "n_unmappable_nodes": n_unmappable,
                 "full_alignment_rate": _rate(all_full),
                 "start_alignment_rate": _rate(all_start),
                 "end_alignment_rate": _rate(all_end),
                 "n_identifiers": n_idents,
+                "n_identifiers_unmappable": n_idents_unmappable,
                 "identifier_fragmentation_rate": (
                     (n_idents_fragmented / n_idents) if n_idents else float("nan")
                 ),

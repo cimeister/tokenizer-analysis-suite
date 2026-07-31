@@ -105,3 +105,6 @@ configs/*.bak.*
 # FLORES+ evaluation corpus. CC-BY-SA 4.0, fetched rather than redistributed:
 #   uv run python scripts/fetch_flores.py
 parallel/
+
+# Benchmark code corpus, fetched by benchmarks/open_source/fetch_code_corpus.py
+benchmarks/open_source/code_data/

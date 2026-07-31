@@ -447,6 +447,19 @@ between the character before it and its first character. It is end-aligned when
 it ends at the end of the text or the token changes between its last character
 and the character after. Full alignment requires both.
 
+The correspondence between source characters and tokens comes from the
+tokenizer's own offsets, not from decoding the tokens and matching the result
+back against the source. One word-start space is dropped from each token's
+range first, because `trim_offsets` is a ByteLevel post-processor flag that
+changes the reported offsets without changing the tokenization: GPT-2 ships it
+false and GPT-NeoX true, and reading the raw offsets scored GPT-2 at 0.433
+against GPT-NeoX at 0.770 on token ids that were byte-identical.
+
+A span that no token covers is counted as `unmappable` and excluded, rather than
+scored as a missed boundary. Measured on 1500 real source files, 198 spans per
+tokenizer are unmappable, 0.03%, and every one is a literal whose source text is
+a single space, which no token covers once the word-start space is dropped.
+
 **Example:** for the Python snippet `return total`, tree-sitter identifies
 `return` (keyword, characters 0 to 6) and `total` (identifier, characters 7 to
 12).
