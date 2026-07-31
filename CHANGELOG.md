@@ -185,6 +185,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   sees an ideal boundary and 74.2% of the sample falls in the vacuous
   length-3-or-under case. The warning matches the one `--code-ast-config`
   already prints.
+- A corpus path that does not exist raises `FileNotFoundError` naming it,
+  instead of logging a warning and returning an empty list. The caller reported
+  "no texts read from <path>" for the empty result, which reads as an empty file
+  rather than as a path that is not there.
 - A relative `data_path` in a language config is resolved against the package
   root (the directory holding `tokenizer_analysis`, which is the repository root
   in a source checkout) rather than the process working directory. The same
@@ -273,6 +277,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   pre-tokenizer and the merges, not on byte-level encoding as such.
 
 ### Added
+- `scripts/fetch_flores.py`, which downloads the FLORES+ corpus the configs
+  name. Needs the `flores` extra (`uv sync --extra flores`) and a Hugging Face
+  login, since the dataset is gated.
 - `TOKEVAL_PARSE_TIMEOUT_S` overrides the per-language tree-sitter subprocess
   timeout, default 120 seconds. On a loaded machine a grammar can exceed the
   default and be dropped from the run: the php grammar timed out at 120 seconds
@@ -288,6 +295,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   until it is added. See MIGRATION.md.
 
 ### Removed
+- The FLORES+ corpus is no longer in the repository. `parallel/` is untracked
+  and stripped from the history: FLORES+ is CC-BY-SA 4.0 and this project does
+  not redistribute it. `scripts/fetch_flores.py` downloads it, the shipped
+  configs and `--use-sample-data` are unchanged, and a run that names a file
+  which is not there aborts repeating the fetch command rather than proceeding
+  on a smaller corpus. Nothing in the library requires FLORES+: `--input` and
+  `--language-config` take your own corpus.
 - `--test`. It built the whole analyzer, logged `Test methods not yet updated
   for unified system`, and exited 0 without running anything.
 - `indentation_consistency.pattern_stability_rate` and its

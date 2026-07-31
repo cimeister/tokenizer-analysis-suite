@@ -187,8 +187,10 @@ def load_language_data(data_path: str, max_texts: int) -> List[str]:
         List of text samples
     """
     if not os.path.exists(data_path):
-        logger.warning(f"Path does not exist: {data_path}")
-        return []
+        # Raise rather than return []. The caller reports "no texts read from
+        # <path>" for an empty result, which reads as an empty file rather than
+        # as a path that is not there, and the two need different fixes.
+        raise FileNotFoundError(f"Corpus path does not exist: {data_path}")
     
     texts = []
     

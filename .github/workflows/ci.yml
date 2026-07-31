@@ -32,10 +32,41 @@ jobs:
         # visible rather than decaying into log noise nobody reads.
         run: uv run pytest tokenizer_analysis/tests -q -W error::DeprecationWarning
 
-      - name: Run the demo end to end
-        # The quickstart is the first thing a new user runs; a green unit suite
-        # does not tell us it still works.
-        run: uv run tokenizer-analysis --use-sample-data --samples-per-lang 20 --no-plots --output-dir /tmp/ci
+      - name: Build a corpus for the end-to-end run
+        # Not FLORES+. The corpus the demo reads is CC-BY-SA 4.0 and gated on
+        # the Hub, so a job that fetched it would need a secret and would fail
+        # on every fork pull request. Two small generated languages exercise the
+        # same assembly path, including the cross-language metrics, which need
+        # at least two.
+        run: |
+          mkdir -p /tmp/corpus
+          uv run python -c "
+          import pathlib
+          en = ['The quick brown fox jumps over the lazy dog number %d.' % i for i in range(200)]
+          de = ['Der schnelle braune Fuchs springt uber den faulen Hund Nummer %d.' % i for i in range(200)]
+          pathlib.Path('/tmp/corpus/eng_Latn.txt').write_text('\n'.join(en) + '\n')
+          pathlib.Path('/tmp/corpus/deu_Latn.txt').write_text('\n'.join(de) + '\n')
+          import json
+          json.dump({'languages': {
+              'eng_Latn': {'name': 'English', 'data_path': '/tmp/corpus/eng_Latn.txt'},
+              'deu_Latn': {'name': 'German',  'data_path': '/tmp/corpus/deu_Latn.txt'}},
+            'analysis_groups': {'script_family': {'Latin': ['eng_Latn', 'deu_Latn']}}},
+            open('/tmp/corpus/languages.json', 'w'))
+          "
+
+      - name: Run the CLI end to end
+        # A green unit suite does not tell us the assembly path still works.
+        run: uv run tokenizer-analysis --tokenizer-config configs/sample_tokenizers.json --language-config /tmp/corpus/languages.json --samples-per-lang 50 --no-plots --output-dir /tmp/ci
+
+      - name: A missing corpus must name the fetch script
+        # The shipped configs point at parallel/, which this repository does not
+        # redistribute. That has to fail with the command that produces it.
+        run: |
+          set +e
+          out=$(uv run tokenizer-analysis --tokenizer-config configs/sample_tokenizers.json --language-config configs/core_lang_config.json --output-dir /tmp/ci_noflores 2>&1)
+          test $? -ne 0 || { echo "a missing corpus should have failed"; exit 1; }
+          echo "$out" | grep -q "scripts/fetch_flores.py" || { echo "the error did not name the fetch script"; echo "$out" | tail -3; exit 1; }
+          echo "missing corpus names the fetch script"
 
       - name: Check the results file is strict JSON
         run: |
@@ -55,7 +86,7 @@ jobs:
           test $? -ne 0 || { echo "no corpus flag should have failed"; exit 1; }
           uv run tokenizer-analysis --use-sample-data --tokenizer-config configs/sample_tokenizers.json --output-dir /tmp/ci3
           test $? -ne 0 || { echo "conflicting flags should have failed"; exit 1; }
-          uv run tokenizer-analysis --use-sample-data --morphological-config x
+          uv run tokenizer-analysis --input /tmp/corpus/eng_Latn.txt --morphological-config x
           test $? -ne 0 || { echo "removed flag should have failed"; exit 1; }
           echo "all failure paths exited non-zero"
 

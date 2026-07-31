@@ -62,6 +62,12 @@ sentencepiece = [
     "sentencepiece>=0.2.0,<1",
 ]
 
+# Fetching the FLORES+ evaluation corpus with scripts/fetch_flores.py. Only the
+# fetch needs it; the library reads the .txt files the script writes.
+flores = [
+    "datasets>=2.14.0",
+]
+
 [dependency-groups]
 dev = [
     "sentencepiece>=0.2.0,<1",   # so the SentencePieceTokenizer tests run rather than skip

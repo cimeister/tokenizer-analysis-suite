@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from .conftest import requires_flores
+
 from tokenizer_analysis.cli.run_analysis import (
     build_parser,
     _validate_corpus_source,

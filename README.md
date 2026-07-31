@@ -11,6 +11,7 @@ Python 3.10 or newer. Install from a git checkout:
 git clone https://github.com/cimeister/tokenizer-intrinsic-evals.git
 cd tokenizer-intrinsic-evals
 uv sync
+uv run python scripts/fetch_flores.py    # the evaluation corpus, see below
 ```
 
 This project is not published to PyPI, so there is nothing to `pip install` by
@@ -47,6 +48,27 @@ need a different order.
 automatically. Data files are downloaded separately (see the
 [MorphScore repository](https://github.com/cimeister/morphscore)) and placed in
 `morphscore_data/`.
+
+### The evaluation corpus
+
+The configs in `configs/` and the `--use-sample-data` demo read
+`parallel/<iso639-3>_<Script>.txt`. Those files are not in this repository:
+they come from FLORES+, which is CC-BY-SA 4.0, and this repository does not
+redistribute it. Fetch them:
+
+```bash
+uv pip install datasets            # or: uv sync --extra flores
+hf auth login                      # FLORES+ is gated, approval is automatic
+uv run python scripts/fetch_flores.py                              # 13 languages
+uv run python scripts/fetch_flores.py --config configs/flores60_lang_config.json
+uv run python scripts/fetch_flores.py --all                        # every language
+```
+
+A run that names a file which is not there aborts and repeats that command; it
+never proceeds on a smaller corpus than the config asked for. Nothing in the
+library requires FLORES+: `--input` and `--language-config` take your own
+corpus, and only the demo and the shipped configs point at `parallel/`.
+See NOTICE for the attribution terms.
 
 ## Quick Start
 
@@ -115,8 +137,9 @@ Two sample tokenizers over five FLORES+ languages. Plots are written to
 `results/` as SVG; open `results/fertility_individual.svg` in a browser or an
 image viewer.
 
-The demo needs a source checkout: the corpus lives in `parallel/` and the
-tokenizers in `tokenizers/`, neither of which is part of an installable package.
+The demo needs a source checkout and the fetched corpus: it reads `parallel/`,
+written by `scripts/fetch_flores.py`, and `tokenizers/`, neither of which is
+part of an installable package.
 `--use-sample-data` supplies its own tokenizers, corpus and measurement
 settings, so it cannot be combined with `--tokenizer-config`,
 `--language-config`, `--input` or `--measurement-config`.

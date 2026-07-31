@@ -14,6 +14,8 @@ import sys
 
 import pytest
 
+from .conftest import requires_flores
+
 from tokenizer_analysis.metrics.base import BaseMetrics
 from tokenizer_analysis.metrics.redundancy import MERGES, merge_redundant_metrics
 
@@ -47,6 +49,7 @@ def demo_results(tmp_path_factory):
     return json.loads((out / "analysis_results.json").read_text())
 
 
+@requires_flores
 def test_results_file_is_strict_json(demo_results, tmp_path_factory):
     """No NaN or Infinity tokens, which Python writes but strict parsers reject.
 
@@ -58,6 +61,7 @@ def test_results_file_is_strict_json(demo_results, tmp_path_factory):
     json.loads(text, parse_constant=_reject_non_standard)
 
 
+@requires_flores
 def test_run_metadata_identifies_what_produced_the_file(demo_results):
     """A results file must be traceable to the code and inputs behind it."""
     meta = demo_results.get("run_metadata")
@@ -69,6 +73,7 @@ def test_run_metadata_identifies_what_produced_the_file(demo_results):
     assert meta["corpus"]["samples_per_lang"] == 10
 
 
+@requires_flores
 def test_merged_metrics_are_not_top_level_and_are_reachable(demo_results):
     """Each merged metric moved under its primary, and the move is recorded.
 
@@ -94,6 +99,7 @@ def test_merged_metrics_are_not_top_level_and_are_reachable(demo_results):
         )
 
 
+@requires_flores
 def test_every_metric_has_a_per_tokenizer_block(demo_results):
     """The documented shape is {metric: {per_tokenizer: {tok: ...}}}."""
     for name, block in demo_results.items():
@@ -138,6 +144,7 @@ class TestNoDataIsNull:
         assert stats["sum"] == 0
 
 
+@requires_flores
 def test_single_corpus_does_not_report_perfect_fairness(tmp_path):
     """Gini is undefined for one corpus and must say so, not report 0.0.
 
@@ -165,6 +172,7 @@ def test_single_corpus_does_not_report_perfect_fairness(tmp_path):
     assert isinstance(gini["mean_cost"], float) and gini["mean_cost"] > 0
 
 
+@requires_flores
 def test_grouped_analysis_runs_after_the_metric_merge(tmp_path):
     """--run-grouped-analysis must read the merged results, not the old keys.
 
@@ -212,6 +220,7 @@ def test_a_nested_merged_block_is_filtered_to_the_group_languages():
     assert list(nested['by_bucket']['short']) == ['eng_Latn']
 
 
+@requires_flores
 def test_tokenized_data_cache_can_be_replayed(tmp_path):
     """--save-tokenized-data then --tokenized-data-file must complete.
 

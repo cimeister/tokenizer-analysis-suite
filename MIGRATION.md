@@ -137,6 +137,16 @@ such as `[0]` and `[...]` while missing `<s>` and `</s>`.
 
 ## Data and artifacts
 
+- The FLORES+ corpus that used to sit in `parallel/` is no longer distributed
+  with this repository, and it is stripped from the git history, so every commit
+  hash before 1.0.0 has changed. An existing clone cannot fast-forward: re-clone,
+  or `git fetch origin && git reset --hard origin/main`. FLORES+ is CC-BY-SA 4.0
+  and redistributing it was not intended. Fetch it with
+  `uv run python scripts/fetch_flores.py` (needs `uv sync --extra flores` and a
+  Hugging Face login, since the dataset is gated). The shipped configs and
+  `--use-sample-data` are unchanged and read the same paths; a run that cannot
+  find a named file aborts and repeats the fetch command.
+
 - The bundled OpenAI tiktoken vocabulary JSONs were removed. Load GPT-4 /
   GPT-4o tokenizers via `tiktoken` (a core dependency) at run time instead.
 - Apertus-specific reports and design docs were removed from the tracked tree.

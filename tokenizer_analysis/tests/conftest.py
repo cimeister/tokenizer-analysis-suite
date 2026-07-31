@@ -1,6 +1,9 @@
 """Shared test infrastructure for tokenizer_analysis.metrics tests."""
 
+from pathlib import Path
 from typing import Dict, List, Optional
+
+import pytest
 from tokenizer_analysis.core.input_types import TokenizedData, InputProvider
 
 
@@ -46,3 +49,23 @@ class SimpleProvider(InputProvider):
 
     def get_languages(self, tokenizer_name: Optional[str] = None) -> List[str]:
         return ["en"]
+
+
+# --------------------------------------------------------------------------
+# FLORES+ corpus availability
+# --------------------------------------------------------------------------
+
+_FLORES_DIR = Path(__file__).resolve().parents[2] / "parallel"
+
+#: Skip a test that needs the FLORES+ corpus, which this repository does not
+#: redistribute (CC-BY-SA 4.0). Anything driving `--use-sample-data` or a config
+#: from `configs/` needs it. Without the marker those tests fail on a fresh
+#: checkout with a corpus error, which looks like a defect in the code rather
+#: than a missing download.
+requires_flores = pytest.mark.skipif(
+    not (_FLORES_DIR / "eng_Latn.txt").exists(),
+    reason=(
+        "FLORES+ corpus not present in parallel/. Fetch it with "
+        "`uv run python scripts/fetch_flores.py`."
+    ),
+)

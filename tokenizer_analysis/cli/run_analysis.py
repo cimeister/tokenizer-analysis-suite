@@ -18,7 +18,11 @@ from typing import Any, Dict, List, Optional
 
 from tokenizer_analysis import create_analyzer_from_raw_inputs, create_analyzer_from_tokenized_data
 from tokenizer_analysis.utils import setup_environment
-from tokenizer_analysis.config.language_metadata import LanguageMetadata
+from tokenizer_analysis.config.language_metadata import (
+    LanguageMetadata,
+    PACKAGE_ROOT,
+    resolve_corpus_path,
+)
 from tokenizer_analysis.loaders.multilingual_data import (
     load_multilingual_data,
     ParquetEngineMissing,
@@ -96,6 +100,31 @@ def create_sample_configs() -> Dict[str, Dict]:
     }
 
 
+# One message, used wherever a shipped config names a corpus file that is not
+# on disk. FLORES+ is CC-BY-SA 4.0 and is fetched rather than redistributed, so
+# a fresh checkout has the configs but not the corpus, and the error has to say
+# which command produces it.
+FLORES_MISSING_HINT = (
+    "The FLORES+ corpus is not in {directory}. This repository does not "
+    "redistribute it: fetch it with `uv run python scripts/fetch_flores.py` "
+    "(the Hugging Face dataset is gated, so run `hf auth login` first). Use "
+    "`--input` or `--language-config` to analyze your own corpus instead."
+)
+
+
+def _require_flores_corpus(paths) -> None:
+    """Abort with the fetch instruction when a named FLORES+ file is absent."""
+    missing = [p for p in paths if not Path(p).exists()]
+    if not missing:
+        return
+    directory = Path(missing[0]).parent
+    raise FileNotFoundError(
+        f"{len(missing)} of {len(paths)} corpus file(s) named by this run do "
+        f"not exist, starting with {missing[0]}. "
+        + FLORES_MISSING_HINT.format(directory=directory)
+    )
+
+
 def create_sample_language_metadata() -> str:
     """Create sample LanguageMetadata configuration and return path to temp file."""
     import tempfile
@@ -151,6 +180,14 @@ def create_sample_language_metadata() -> str:
         }
     }
     
+    # Check before writing the config, so --use-sample-data on a fresh checkout
+    # names the fetch command instead of failing several steps later with a
+    # per-language load report.
+    _require_flores_corpus([
+        resolve_corpus_path(entry["data_path"])
+        for entry in sample_metadata["languages"].values()
+    ])
+
     # Write to temp file
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
         json.dump(sample_metadata, f, indent=2)
@@ -1337,7 +1374,15 @@ def run_from_args(args: argparse.Namespace):
             # corpus it names: an unknown group, a language with no data path, a
             # path that did not load. The message is the whole of what a caller
             # needs, so print it without a stack.
-            raise ConfigurationError(str(e))
+            message = str(e)
+            # A config shipped in configs/ names files under parallel/, which
+            # this repository does not redistribute, so on a fresh checkout the
+            # per-language report is a wall of missing paths with no hint about
+            # what produces them.
+            flores_dir = str(PACKAGE_ROOT / "parallel")
+            if flores_dir in message and not Path(flores_dir).exists():
+                message += " " + FLORES_MISSING_HINT.format(directory=flores_dir)
+            raise ConfigurationError(message)
         
         if not language_texts:
             raise ValueError("No valid language texts loaded")
