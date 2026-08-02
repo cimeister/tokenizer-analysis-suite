@@ -907,7 +907,7 @@ Examples:
     parser.add_argument(
         "--latex-output-dir",
         type=str,
-        help="Directory for LaTeX table output (default: same as --output-dir)"
+        help="Directory for LaTeX table output. --generate-latex-tables defaults to <output-dir>/latex_tables, --custom-latex-config to <output-dir> itself."
     )
     parser.add_argument(
         "--custom-latex-config",

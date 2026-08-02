@@ -913,7 +913,7 @@ class UnifiedTokenizerAnalyzer:
         
         # Save to file if path provided
         if output_path:
-            latex_generator.save_table(table_content, output_path)#, caption, label)
+            latex_generator.save_table(table_content, output_path, caption, label)
             logger.info(f"Custom LaTeX table saved to {output_path}")
         
         return table_content

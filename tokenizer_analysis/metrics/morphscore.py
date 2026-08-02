@@ -270,10 +270,15 @@ class MorphScoreMetrics(BaseMetrics):
                     'summary': {
                         'languages_evaluated': 0,
                         'total_samples': 0,
-                        'avg_morphscore_recall': 0.0,
-                        'avg_morphscore_precision': 0.0,
-                        'avg_micro_f1': 0.0,
-                        'avg_macro_f1': 0.0
+                        # None, not 0.0, for the same reason as the
+                        # zero-languages branch above: a tokenizer whose
+                        # evaluation raised has no morphological score, and 0.0
+                        # records it as scoring the worst possible value on
+                        # every axis on a run that exits 0.
+                        'avg_morphscore_recall': None,
+                        'avg_morphscore_precision': None,
+                        'avg_micro_f1': None,
+                        'avg_macro_f1': None
                     }
                 }
         

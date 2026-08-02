@@ -108,3 +108,7 @@ parallel/
 
 # Benchmark code corpus, fetched by benchmarks/open_source/fetch_code_corpus.py
 benchmarks/open_source/code_data/
+
+# Files the README Quick Start tells the reader to create in the checkout.
+corpus.txt
+my_tokenizers.json

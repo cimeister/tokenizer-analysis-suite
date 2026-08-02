@@ -16,9 +16,11 @@ replacements.
   or clone it and run `uv sync`. The console scripts are unchanged
   (`tokenizer-analysis`, `tokenizer-visualize`, `tokenizer-sanity-check`), as is
   `import tokenizer_analysis`.
-- The old repository was renamed, so existing clones keep working: `git pull`
-  fast-forwards, and the old URL redirects for both web and git. To point a
-  remote at the new name explicitly:
+- The old repository was renamed, and the old URL redirects for both web and
+  git. An existing clone cannot fast-forward, because the history was rewritten
+  for 1.0.0 (see "Data and artifacts" below): re-clone, or
+  `git fetch origin && git reset --hard origin/master`. To point a remote at the
+  new name explicitly:
   `git remote set-url origin https://github.com/cimeister/tokenizer-intrinsic-evals.git`.
 - Minimum Python is now 3.10 (was 3.8).
 - tree-sitter (code AST metrics) is a core dependency. Parquet reading and
@@ -140,7 +142,7 @@ such as `[0]` and `[...]` while missing `<s>` and `</s>`.
 - The FLORES+ corpus that used to sit in `parallel/` is no longer distributed
   with this repository, and it is stripped from the git history, so every commit
   hash before 1.0.0 has changed. An existing clone cannot fast-forward: re-clone,
-  or `git fetch origin && git reset --hard origin/main`. FLORES+ is CC-BY-SA 4.0
+  or `git fetch origin && git reset --hard origin/master`. FLORES+ is CC-BY-SA 4.0
   and redistributing it was not intended. Fetch it with
   `uv run python scripts/fetch_flores.py` (needs `uv sync --extra flores` and a
   Hugging Face login, since the dataset is gated). The shipped configs and

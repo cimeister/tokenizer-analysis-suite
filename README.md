@@ -97,16 +97,20 @@ cat > my_tokenizers.json <<'TOKENIZERS'
 TOKENIZERS
 
 # 3. run
-tokenizer-analysis --tokenizer-config my_tokenizers.json --input corpus.txt
+uv run tokenizer-analysis --tokenizer-config my_tokenizers.json --input corpus.txt
 
 # 4. read one number: bytes per token, higher meaning fewer tokens
-python -c "
+uv run python -c "
 import json
 d = json.load(open('results/analysis_results.json'))
 for tok, block in d['compression_rate']['per_tokenizer'].items():
     print(tok, round(block['global']['compression_rate'], 3))
 "
 ```
+
+That prints `gpt2 3.8` and `xlm-r 3.119` on those four lines. `uv run` is what
+puts the console script on the path after `uv sync`; activate the venv instead
+if you prefer, and drop the prefix.
 
 `--input` takes a single file (`.txt`, `.json`, `.jsonl`, `.parquet`) or a
 directory of them. A `.txt` file is one document per line, which is what the
@@ -271,10 +275,9 @@ print(results["fertility"]["per_tokenizer"]["bpe"]["global"]["mean"])
 `run_analysis` also takes `include_digit_boundary`, `include_code_ast`,
 `include_utf8_integrity`, `include_reconstruction`, `cer_time_budget_s`,
 `save_tokenized_data` and `tokenized_data_path`, matching the corresponding CLI
-flags. `cer_time_budget_s` defaults to 30.0 here against 10.0 for
-`--cer-time-budget`, so the same corpus can produce a measured `mean_cer` from
-the API and `null` from the CLI. `create_analyzer_from_tokenized_data` is the
-equivalent factory for pre-tokenized input.
+flags, and taking the same defaults.
+`create_analyzer_from_tokenized_data` is the equivalent factory for
+pre-tokenized input.
 
 The returned dict is the full result. The CLI always writes a slimmed projection
 of it to `analysis_results.json`, and writes the full dict to

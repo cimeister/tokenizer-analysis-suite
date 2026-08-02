@@ -250,3 +250,46 @@ class TestOperatorIsolationSlimProjection:
         assert tok_out["by_domain"]["code"]["overall_isolation_rate"] == pytest.approx(0.9)
         assert tok_out["by_domain"]["math"]["overall_isolation_rate"] == pytest.approx(0.9)
         assert "by_category" not in tok_out["by_domain"]["code"]
+
+
+class TestCorpusSegmentationIsNotCumulative:
+    """One segmentation per file, not several concatenated.
+
+    extract_texts_with_fallback_strategies ran its strategies additively
+    despite the name, so the same content came back twice under two
+    segmentations and every per-document metric was computed over a corpus
+    twice the size of the file. A line-per-document file of 10 or more lines
+    was correct, which is why FLORES+ never showed it.
+    """
+
+    def test_paragraph_file_returns_paragraphs_only(self):
+        from tokenizer_analysis.utils.text_utils import (
+            extract_texts_with_fallback_strategies,
+        )
+        paragraphs = [
+            "\n".join(f"Paragraph {p} line {l} with enough text here." for l in range(3))
+            for p in range(12)
+        ]
+        texts = extract_texts_with_fallback_strategies("\n\n".join(paragraphs) + "\n", 2000)
+        assert len(texts) == 12, (
+            "12 paragraphs of 3 lines returned the 12 paragraphs and then all 36 "
+            f"lines inside them; got {len(texts)}"
+        )
+
+    def test_short_line_file_returns_each_line_once(self):
+        from tokenizer_analysis.utils.text_utils import (
+            extract_texts_with_fallback_strategies,
+        )
+        # Under 10 lines took the sentence split as well. The sentence and the
+        # line differ by the trailing period, so the duplicate check missed it.
+        source = "\n".join(f"Sentence number {i} is here." for i in range(4)) + "\n"
+        texts = extract_texts_with_fallback_strategies(source, 2000)
+        assert len(texts) == 4, f"4 lines became {len(texts)} texts"
+
+    def test_line_file_above_the_threshold_is_unchanged(self):
+        """The case FLORES+ exercises, which was always correct."""
+        from tokenizer_analysis.utils.text_utils import (
+            extract_texts_with_fallback_strategies,
+        )
+        source = "\n".join(f"Sentence number {i} is here." for i in range(20)) + "\n"
+        assert len(extract_texts_with_fallback_strategies(source, 2000)) == 20

@@ -121,10 +121,11 @@ def chunk_text(text: str, chunk_size: int = DEFAULT_CHUNK_SIZE, max_chunks: int 
 
 def extract_texts_with_fallback_strategies(content: str, max_texts: int) -> List[str]:
     """
-    Extract texts from content using multiple fallback strategies.
-    
-    This function implements the same text extraction logic that was duplicated
-    across multiple loading functions.
+    Split *content* into documents, trying one segmentation at a time.
+
+    Paragraphs first when the file has blank lines, then newline-separated
+    lines, then sentences, then fixed-size chunks. The first that yields
+    anything wins; they are not combined.
     
     Args:
         content: Raw text content to process
@@ -135,41 +136,29 @@ def extract_texts_with_fallback_strategies(content: str, max_texts: int) -> List
     """
     if not content or not content.strip():
         return []
-    
-    texts = []
-    
-    # Strategy 1: Split by double newlines (paragraph-like)
-    if len(texts) < max_texts:
-        paragraphs = split_into_paragraphs(content)
-        for para in paragraphs:
-            if len(texts) >= max_texts:
-                break
-            texts.append(para)
-    
-    # Strategy 2: Split by single newlines if we don't have enough texts
-    if len(texts) < max_texts:
-        lines = split_into_lines(content)
-        for line in lines:
-            if len(texts) >= max_texts:
-                break
-            if line not in texts:  # Avoid duplicates
-                texts.append(line)
-    
-    # Strategy 3: Split by sentences if we still don't have enough
-    if len(texts) < max_texts and len(texts) < 10:
-        sentences = split_into_sentences(content)
-        for sentence in sentences:
-            if len(texts) >= max_texts:
-                break
-            if sentence not in texts:  # Avoid duplicates
-                texts.append(sentence)
-    
-    # Strategy 4: If still no luck, chunk the text
-    if len(texts) == 0 and len(content) > MIN_CONTENT_LENGTH:
+
+    # Each strategy is a fallback for the one above it, not an addition to it.
+    # They used to run cumulatively, so the same content was returned twice
+    # under two segmentations. A file of 12 paragraphs of 3 lines each returned
+    # 48 texts: the 12 paragraphs, then all 36 lines inside them. A file of
+    # fewer than 10 lines returned each line twice, once from the line split and
+    # once from the sentence split, which differ by a trailing period so the
+    # duplicate check did not catch them: the four-line corpus in the README
+    # Quick Start became 7 texts. A file of 10 or more newline-separated lines
+    # and no blank line was correct, which is why FLORES+ never showed it.
+    #
+    # Precedence: a blank line means the file is paragraph-separated documents,
+    # otherwise a newline separates them. Sentences and fixed-size chunks are
+    # for content that has neither.
+    texts = split_into_paragraphs(content)
+    if not texts:
+        texts = split_into_lines(content)
+    if not texts:
+        texts = split_into_sentences(content)
+    if not texts and len(content) > MIN_CONTENT_LENGTH:
         chunk_size = min(DEFAULT_CHUNK_SIZE, len(content) // max(1, max_texts))
-        chunks = chunk_text(content, chunk_size, max_texts)
-        texts.extend(chunks)
-    
+        texts = chunk_text(content, chunk_size, max_texts)
+
     return texts[:max_texts]
 
 

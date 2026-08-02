@@ -70,6 +70,26 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   systematically the higher of the two.
 
 ### Fixed (metric correctness)
+- A `.txt` or `.json` corpus is segmented one way, not several ways at once.
+  `extract_texts_with_fallback_strategies` ran its strategies additively despite
+  the name, so the same content came back twice under two segmentations and
+  every per-document metric was computed over a corpus twice the size of the
+  file. A file of 12 paragraphs of 3 lines returned 48 texts: the 12 paragraphs,
+  then all 36 lines inside them. A file of fewer than 10 lines returned each
+  line twice, once from the line split and once from the sentence split, which
+  differ by a trailing period so the duplicate check missed them: the four-line
+  corpus in the README Quick Start became 7 texts and every number was computed
+  over it. A line-per-document file of 10 or more lines with no blank line was
+  correct, which is why FLORES+ and the committed benchmark never showed it and
+  their figures do not change. Precedence is now paragraphs when the file has
+  blank lines, otherwise lines, then sentences, then fixed-size chunks.
+- MorphScore reports `null` on its exception path too. The zero-languages branch
+  was fixed to report null earlier in this release and the `except` handler 60
+  lines below still wrote 0.0 to all four fields, recording a tokenizer whose
+  evaluation raised as scoring worst on every axis.
+- `generate_custom_latex_table` passes `caption` and `label` through. Both were
+  accepted, documented, and commented out at the call site, so a caller
+  following the docstring got neither.
 - `ast_boundary_alignment` and `identifier_fragmentation` map a source span to
   tokens through the tokenizer's own offsets, which the code already fetched and
   passed to the indentation metric, instead of reconstructing the text from
@@ -343,6 +363,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   until it is added. See MIGRATION.md.
 
 ### Removed
+- The `morphscore_data` symlink, which was tracked and pointed at an absolute
+  path on the author's cluster. It resolved only there, it published that
+  directory layout, and it stopped a reader from creating the directory the
+  README tells them to create.
 - The FLORES+ corpus is no longer in the repository. `parallel/` is untracked
   and stripped from the history: FLORES+ is CC-BY-SA 4.0 and this project does
   not redistribute it. `scripts/fetch_flores.py` downloads it, the shipped
