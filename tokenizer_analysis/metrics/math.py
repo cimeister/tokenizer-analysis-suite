@@ -22,6 +22,7 @@ Four failure modes are measured here:
 """
 
 import math
+import os
 import re
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -36,6 +37,25 @@ from ..core.input_providers import InputProvider
 from ..utils.text_utils import load_math_data, BUILTIN_MATH_SAMPLES_PATH
 
 logger = logging.getLogger(__name__)
+
+
+def _relative_to_package(path: Any) -> Any:
+    """Render a path inside the installed package relative to it.
+
+    A path the caller supplied is returned unchanged: it is theirs and naming it
+    in full is the point. Only the bundled corpora, whose location depends on
+    where the package happens to sit, are shortened.
+    """
+    if not isinstance(path, str):
+        return path
+    package_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    try:
+        inside = os.path.commonpath([os.path.abspath(path), package_root]) == package_root
+    except ValueError:
+        return path
+    return os.path.join(
+        "tokenizer_analysis", os.path.relpath(os.path.abspath(path), package_root)
+    ) if inside else path
 
 
 class DigitBoundaryMetrics(BaseMetrics):
@@ -539,10 +559,14 @@ class DigitBoundaryMetrics(BaseMetrics):
                 self._tokenize_texts_cached("math", {"math": self._op_math_texts})
             ),
         }
+        # Bundled paths are recorded relative to the package. They are derived
+        # from __file__, so the absolute form bakes the author's checkout
+        # directory into every results file, and a reader comparing two files
+        # sees a difference that is only where the package was installed.
         domain_sources = {
             "prose": "multilingual corpus",
-            "code": self._op_code_source,
-            "math": self._op_math_source,
+            "code": _relative_to_package(self._op_code_source),
+            "math": _relative_to_package(self._op_math_source),
         }
         # Size of each domain's corpus, so the pooled micro-average can be traced
         # back to which corpus supplied the operators.
