@@ -11,8 +11,12 @@ Python 3.10 or newer. Install from a git checkout:
 git clone https://github.com/cimeister/tokenizer-intrinsic-evals.git
 cd tokenizer-intrinsic-evals
 uv sync
-uv run python scripts/fetch_flores.py    # the evaluation corpus, see below
 ```
+
+That is enough for the [Quick Start](#quick-start), which runs on a corpus you
+supply. The bundled demo and the configs in `configs/` additionally need the
+FLORES+ corpus, which is fetched rather than shipped; see
+[The evaluation corpus](#the-evaluation-corpus).
 
 This project is not published to PyPI, so there is nothing to `pip install` by
 name. To install it as a dependency rather than working in the checkout, use
@@ -72,27 +76,50 @@ See NOTICE for the attribution terms.
 
 ## Quick Start
 
-Analyze your own tokenizers on one corpus. `--input` takes a single file
-(`.txt`, `.json`, `.jsonl`, `.parquet`) or a directory of them; see
-[Data Configuration](#data-configuration) for what each format may contain.
+Compare tokenizers on one corpus. This example downloads nothing: it writes a
+small corpus file, names two tokenizers from the Hugging Face Hub, and runs.
 
 ```bash
-tokenizer-analysis \
-    --tokenizer-config my_tokenizers.json \
-    --input path/to/corpus.txt
-```
+# 1. a corpus: one plain-text file, one document per line
+cat > corpus.txt <<'CORPUS'
+The quick brown fox jumps over the lazy dog.
+Tokenizers differ most on text they were not trained on.
+def compute_total(items): return sum(i.price for i in items)
+The invoice totalled 1234567 euros on 2024-03-15.
+CORPUS
 
-`my_tokenizers.json` is a name-to-tokenizer map:
-
-```json
+# 2. the tokenizers to compare
+cat > my_tokenizers.json <<'TOKENIZERS'
 {
-  "my_bpe":  {"class": "huggingface", "path": "/path/to/tokenizer.json"},
-  "llama3":  {"class": "huggingface", "path": "meta-llama/Meta-Llama-3-8B"}
+  "gpt2":     {"class": "huggingface", "path": "gpt2"},
+  "xlm-r":    {"class": "huggingface", "path": "xlm-roberta-base"}
 }
+TOKENIZERS
+
+# 3. run
+tokenizer-analysis --tokenizer-config my_tokenizers.json --input corpus.txt
+
+# 4. read one number: bytes per token, higher meaning fewer tokens
+python -c "
+import json
+d = json.load(open('results/analysis_results.json'))
+for tok, block in d['compression_rate']['per_tokenizer'].items():
+    print(tok, round(block['global']['compression_rate'], 3))
+"
 ```
 
-Results land in `results/analysis_results.json`, with plots beside it. For
-several corpora at once, and for the cross-lingual metrics, use
+`--input` takes a single file (`.txt`, `.json`, `.jsonl`, `.parquet`) or a
+directory of them. A `.txt` file is one document per line, which is what the
+example above writes; see [Data Configuration](#data-configuration) for the
+other three. A tokenizer `path` is either a Hub model id, as here, or a local
+`tokenizer.json`.
+
+Results land in `results/analysis_results.json`, with plots beside it. Every
+metric is defined in [METRICS.md](METRICS.md), and
+[the worked comparison](benchmarks/open_source/REPORT.md) runs the same command
+shape over nine tokenizers.
+
+For several corpora at once, and for the cross-lingual metrics, use
 `--language-config` instead (see [Data Configuration](#data-configuration)).
 
 This command leaves three things at their defaults, which is fine for a first
@@ -129,17 +156,23 @@ tokenizer-analysis \
 
 ### The bundled demo
 
+The demo runs on FLORES+, which this repository does not redistribute, so fetch
+the corpus first:
+
 ```bash
+uv sync --extra flores
+hf auth login                                  # FLORES+ is gated
+uv run python scripts/fetch_flores.py          # writes parallel/
 uv run tokenizer-analysis --use-sample-data
 ```
 
 Two sample tokenizers over five FLORES+ languages. Plots are written to
 `results/` as SVG; open `results/fertility_individual.svg` in a browser or an
-image viewer.
+image viewer. Without the corpus the run exits naming that fetch command; see
+[The evaluation corpus](#the-evaluation-corpus).
 
-The demo needs a source checkout and the fetched corpus: it reads `parallel/`,
-written by `scripts/fetch_flores.py`, and `tokenizers/`, neither of which is
-part of an installable package.
+The demo also needs a source checkout: it reads `parallel/` and `tokenizers/`,
+neither of which is part of an installable package.
 `--use-sample-data` supplies its own tokenizers, corpus and measurement
 settings, so it cannot be combined with `--tokenizer-config`,
 `--language-config`, `--input` or `--measurement-config`.
