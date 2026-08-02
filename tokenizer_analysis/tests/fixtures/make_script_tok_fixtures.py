@@ -5,7 +5,8 @@ These fixtures back the ``ScriptBPETokenizer`` / ``MinGramTokenizer`` tests in
 train anything; this script only needs to be re-run if the fixtures must be
 regenerated.
 
-Requires the ``script_bpe`` package (from https://github.com/... /script_tok),
+Requires the ``script_bpe`` package, whose repository the maintainers can
+point you at; it is not public at a URL this file can name.
 which is not a dependency of this library. Run it from an environment that has
 ``script_bpe`` installed, for example:
 

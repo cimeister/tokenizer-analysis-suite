@@ -4,7 +4,13 @@ All notable changes to this project are recorded here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.0.0] (unreleased)
+
+Everything below ships in 1.0.0. Nothing has been published yet, so this
+section and the one at the end of the file are the same release: the summary
+there describes the consolidation from `tokenizer-analysis-suite`, and this
+section records the vetting that followed it. Set the date at tag time.
+
 
 ### Changed (output format, breaking)
 - A value that could not be measured is now `null`, not `0.0`. This affects
@@ -418,7 +424,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `--update-results-md` without `--dataset` blocked on `input()` from stdin,
   which hung batch and SLURM runs. The flag is gone.
 
-## [1.0.0] - 2026-07-04
+## [1.0.0] (unreleased), the consolidation itself
 
 First release under the consolidated repository
 `github.com/cimeister/tokenizer-intrinsic-evals`. This version supersedes the

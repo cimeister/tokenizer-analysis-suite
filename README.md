@@ -931,8 +931,8 @@ before 1.0.0, and `py.typed` marks the package as typed.
 
 `sample_data/` and the top-level `parallel/` and `tokenizers/` directories hold
 the bundled demo. `tests/` holds the test suite and is excluded from the built
-wheel. `scripts/` holds one-off analysis and job-submission scripts that are not
-part of the toolkit.
+wheel. `scripts/` holds `fetch_flores.py`, which downloads the evaluation
+corpus, and nothing else.
 
 ### Adding new tokenizers
 
