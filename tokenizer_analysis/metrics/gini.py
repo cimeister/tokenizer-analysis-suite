@@ -9,7 +9,7 @@ from typing import Dict, List, Any, Optional
 import numpy as np
 import logging
 
-from .base import BaseMetrics, TokenizedDataProcessor
+from .base import BaseMetrics, TokenizedDataProcessor, format_optional
 from ..core.input_types import TokenizedData
 from ..core.input_providers import InputProvider
 from ..config import TextMeasurementConfig, TextMeasurer, DEFAULT_TEXT_MEASUREMENT_CONFIG
@@ -219,7 +219,14 @@ class TokenizerGiniMetrics(BaseMetrics):
                 'sorted_language_costs': sorted_langs
             }
             
-            logger.info(f"  TFG: {tfg:.4f}, Mean cost: {mu:.4f}, Cost ratio: {cost_ratio:.2f}")
+            # tfg is None when the mean cost is 0 and cost_ratio is None when the
+            # cheapest language cost 0, both published as null rather than as a
+            # number. Formatting a null here raised TypeError and took the whole
+            # metric down on a corpus that produced no tokens for some language.
+            logger.info(
+                "  TFG: %s, Mean cost: %.4f, Cost ratio: %s",
+                format_optional(tfg, ".4f"), mu, format_optional(cost_ratio, ".2f"),
+            )
         
         return results
     

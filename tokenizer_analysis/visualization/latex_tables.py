@@ -2,12 +2,22 @@
 LaTeX table generation for tokenizer analysis results.
 """
 
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional, Sequence, Tuple
 import logging
 import numpy as np
 from pathlib import Path
 
+from ..metrics.redundancy import MERGES
+
 logger = logging.getLogger(__name__)
+
+# Metrics that merge_redundant_metrics() deletes from the top level of a results
+# dict, mapped to where it files them. A key_path rooted at one of these can
+# never resolve against a results dict the pipeline produces, so the registry
+# check below rejects it instead of rendering '---' in every row.
+_MERGED_INTO: Dict[str, Tuple[str, str]] = {
+    secondary: (primary, field) for secondary, primary, field, _ in MERGES
+}
 
 
 class LaTeXTableGenerator:
@@ -51,11 +61,13 @@ class LaTeXTableGenerator:
                 'lower_is_better': False,
                 'multiplier': 100. #Turn into percentage but with escaped % for LaTeX
             },
+            # Merged into vocabulary_utilization under 'type_token_ratio'
+            # (metrics/redundancy.py), so it is read from there.
             'type_token_ratio': {
                 'title': 'TTR',
-                'key_path': ['type_token_ratio', 'per_tokenizer'],
-                'value_key': 'global_ttr',
-                'stat_key': None,
+                'key_path': ['vocabulary_utilization', 'per_tokenizer'],
+                'value_key': 'type_token_ratio',
+                'stat_key': 'global_ttr',
                 'err_key': None,
                 'format': '{:.4f}',
                 'lower_is_better': False
@@ -105,11 +117,13 @@ class LaTeXTableGenerator:
                 'format': '{:.3f}',
                 'lower_is_better': False
             },
+            # Merged into renyi_efficiency under 'unigram_distribution'
+            # (metrics/redundancy.py), so it is read from there.
             'avg_token_rank': {
                 'title': 'Avg Token Rank',
-                'key_path': ['unigram_distribution_metrics', 'per_tokenizer'],
-                'value_key': 'global_avg_token_rank',
-                'stat_key': None,
+                'key_path': ['renyi_efficiency', 'per_tokenizer'],
+                'value_key': 'unigram_distribution',
+                'stat_key': 'global_avg_token_rank',
                 'err_key': None,
                 'format': '{:.1f}',
                 'lower_is_better': True
@@ -123,11 +137,13 @@ class LaTeXTableGenerator:
                 'format': '{:.2f}',
                 'lower_is_better': False
             },
+            # Merged into compression_rate under 'tokens_per_line'
+            # (metrics/redundancy.py), so it is read from there.
             'avg_tokens_per_line': {
                 'title': 'Tokens per Line',
-                'key_path': ['avg_tokens_per_line', 'per_tokenizer'],
-                'value_key': 'global_avg',
-                'stat_key': None,
+                'key_path': ['compression_rate', 'per_tokenizer'],
+                'value_key': 'tokens_per_line',
+                'stat_key': 'global_avg',
                 'err_key': 'global_std_err',
                 'format': '{:.1f}',
                 'lower_is_better': False
@@ -208,11 +224,15 @@ class LaTeXTableGenerator:
                 'format': '{:.4f}',
                 'lower_is_better': True
             },
+            # Merged into utf8_token_integrity under 'char_split'
+            # (metrics/redundancy.py). The merge carries the per-tokenizer
+            # block, not the summary, so the rate is read from that block's
+            # 'global' entry.
             'utf8_char_split': {
                 'title': 'Char Split',
-                'key_path': ['utf8_char_split', 'summary'],
-                'value_key': 'split_rate',
-                'stat_key': None,
+                'key_path': ['utf8_token_integrity', 'per_tokenizer'],
+                'value_key': ('char_split', 'global'),
+                'stat_key': 'split_rate',
                 'err_key': None,
                 'format': '{:.4f}',
                 'lower_is_better': True
@@ -255,15 +275,65 @@ class LaTeXTableGenerator:
                 'lower_is_better': False
             }
         }
-    
+
+        # A results dict is the wrong place to catch a stale key_path: a metric
+        # that was not computed is absent for the same reason a mistyped path
+        # is, and both render '---'. What can be checked without one is whether
+        # a key_path names a metric that merge_redundant_metrics() always
+        # deletes, which no run can ever produce.
+        self._validate_registry()
+
+    def _validate_registry(self) -> None:
+        """Reject registry entries whose key_path no run can resolve.
+
+        ``merge_redundant_metrics`` deletes six metrics from the top level of
+        every results dict and files them under the metric that owns the
+        measurement. An entry still rooted at a deleted metric renders '---' in
+        every row of every table, which reads as a metric that was not computed.
+        That is a defect in this registry rather than a property of the run, so
+        it raises here instead of being rendered.
+        """
+        stale = []
+        for metric_key, config in self.metric_configs.items():
+            root = config['key_path'][0]
+            if root in _MERGED_INTO:
+                primary, field = _MERGED_INTO[root]
+                stale.append(
+                    f"  {metric_key}: key_path starts at {root!r}, which "
+                    f"merge_redundant_metrics() deletes. Read it from "
+                    f"['{primary}', 'per_tokenizer'] with value_key {field!r}."
+                )
+        if stale:
+            raise ValueError(
+                "LaTeX metric registry points at metrics that no results file "
+                "contains:\n" + "\n".join(stale) + "\n"
+                "See MERGES in tokenizer_analysis/metrics/redundancy.py."
+            )
+
+    @staticmethod
+    def _walk(entry: Any, keys: Sequence[str]) -> Any:
+        """Follow *keys* through nested dicts, returning None if any is absent."""
+        for key in keys:
+            if not isinstance(entry, dict):
+                return None
+            entry = entry.get(key)
+            if entry is None:
+                return None
+        return entry
+
     def _extract_metric_value(self, metric_config: Dict[str, Any], tokenizer_name: str) -> Tuple[Optional[float], Optional[float]]:
         """
         Extract metric value and error for a tokenizer.
         
+        ``value_key`` is a single key into the per-tokenizer entry, or a tuple
+        of keys when the value sits deeper (a merged metric keeps its own
+        'global' block under the primary metric's per-tokenizer entry).
+        ``stat_key``, when set, is the final key below that.
+
         Args:
             metric_config: Metric configuration
             tokenizer_name: Name of tokenizer
-            
+
         Returns:
             Tuple of (value, error) or (None, None) if not found
         """
@@ -274,41 +344,73 @@ class LaTeXTableGenerator:
                 if key not in data:
                     return None, None
                 data = data[key]
-            
+
             # Get tokenizer-specific data
             if tokenizer_name not in data:
                 return None, None
-            
+
             tokenizer_data = data[tokenizer_name]
-            
+
+            value_key = metric_config['value_key']
+            value_path = list(value_key) if isinstance(value_key, tuple) else [value_key]
+            stat_key = metric_config['stat_key']
+
             # Extract value
-            if metric_config['stat_key']:
+            if stat_key:
                 # Value is nested (e.g., global.mean)
-                value_data = tokenizer_data.get(metric_config['value_key'], {})
+                value_data = self._walk(tokenizer_data, value_path)
                 if isinstance(value_data, dict):
-                    value = value_data.get(metric_config['stat_key'])
+                    value = value_data.get(stat_key)
                 else:
                     value = value_data
             else:
                 # Value is direct
-                value = tokenizer_data.get(metric_config['value_key'])
-            
+                value = self._walk(tokenizer_data, value_path)
+
             # Extract error if available
             error = None
             if metric_config['err_key'] and self.include_std_err:
-                if metric_config['stat_key']:
-                    error_data = tokenizer_data.get(metric_config['value_key'], {})
+                if stat_key:
+                    error_data = self._walk(tokenizer_data, value_path)
                     if isinstance(error_data, dict):
                         error = error_data.get(metric_config['err_key'])
                 else:
                     error = tokenizer_data.get(metric_config['err_key'])
-            
+
             return value, error
             
         except Exception as e:
             logger.warning(f"Error extracting metric {metric_config['title']} for {tokenizer_name}: {e}")
             return None, None
     
+    def _warn_if_block_present_but_unresolved(
+        self,
+        metric_key: str,
+        values: Dict[str, Tuple[Optional[float], Optional[float]]],
+    ) -> None:
+        """Log when a metric's block is in the results but no value came out.
+
+        A metric family that did not run is absent from the results dict, and
+        the '---' its column gets is correct. This is the other case: the block
+        is there and every tokenizer still came back empty, which is either a
+        key_path that no longer matches the metric's output or a metric that
+        published nulls for every tokenizer. Both are worth naming in the log,
+        and neither is grounds for failing the run.
+        """
+        config = self.metric_configs[metric_key]
+        if config['key_path'][0] not in self.results:
+            return
+        if any(value is not None for value, _ in values.values()):
+            return
+        logger.warning(
+            "LaTeX table: %s renders '---' for all %d tokenizer(s) although the "
+            "'%s' block is present. key_path=%s value_key=%r stat_key=%r either "
+            "no longer matches that block's shape, or the metric published null "
+            "for every tokenizer.",
+            metric_key, len(values), config['key_path'][0],
+            config['key_path'], config['value_key'], config['stat_key'],
+        )
+
     def _wrap_column_title(self, title: str, max_length: int = 15) -> str:
         """
         Wrap long column titles into multiple lines for LaTeX.
@@ -468,7 +570,8 @@ class LaTeXTableGenerator:
             for tokenizer in self.tokenizer_names:
                 value, error = self._extract_metric_value(self.metric_configs[metric], tokenizer)
                 all_values[metric][tokenizer] = (value, error)
-        
+            self._warn_if_block_present_but_unresolved(metric, all_values[metric])
+
         # Find best values for each metric
         best_tokenizers = {}
         for metric in valid_metrics:

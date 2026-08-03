@@ -23,10 +23,16 @@ from typing import Dict, List, Optional, Set, Tuple
 CATEGORIES = ("identifier", "keyword", "operator", "literal", "delimiter")
 
 # Extra key in each categorised-spans dict holding the byte spans of tree-sitter
-# ERROR nodes. It is deliberately not in CATEGORIES: ERROR spans are never
-# aligned against tokens, they exist so callers can tell a clean parse from a
-# partial one. Consumers index the dict by category name, so the extra key is
-# inert for them.
+# ERROR nodes: regions the grammar could not parse. It is deliberately not in
+# CATEGORIES, because an ERROR span is not a syntax node and must not be scored
+# against token boundaries.
+#
+# Consumers iterate this dict, they do not index it by the five category names,
+# so the extra key is not inert: every consumer has to skip it by name.
+# ASTBoundaryMetrics does that in compute() and compute_per_text(), counts the
+# spans, and publishes the count under parse_error_spans. Until 1.0 it did not,
+# and unparsed source was scored as a sixth AST category: 4645 of gpt2's 1594200
+# spans on the benchmark corpus, 0.2914% of every published full_alignment_rate.
 ERROR_SPANS_KEY = "_error_spans"
 
 IDENTIFIER_TYPES: Set[str] = {

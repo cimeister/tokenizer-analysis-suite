@@ -4,6 +4,40 @@ All notable changes to this project are recorded here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] (unreleased)
+
+### Fixed
+- `--generate-latex-tables` shipped tables with empty columns. Four entries in
+  the `metric_configs` registry pointed at top-level keys that the 1.0 metric
+  merge deletes, and a path that does not resolve renders as `---` silently.
+  `type_token_ratio` is in the default metric list, so the default basic table
+  had a blank column for every tokenizer. It now reads 0.7063 and 0.5782 for the
+  two demo tokenizers. All 24 registry entries were checked against two real
+  merged results files. A registry entry naming a merged-away metric now raises
+  at construction, and a metric present in the results where no tokenizer
+  resolves a value logs a warning naming the path.
+- Tree-sitter ERROR spans were scored as an AST category, so regions the grammar
+  failed to parse entered every published `full_alignment_rate`. On the
+  benchmark corpus they were 4645 of 1594200 spans, 0.29%, and they scored above
+  each tokenizer's own average, so every rate was slightly optimistic: gpt2
+  0.744090 to 0.743862, llama-3 0.492519 to 0.492070. They are counted and
+  published as `parse_error_spans` instead, beside the existing token-side
+  `unmappable`, since how much of a corpus failed to parse is worth knowing. An
+  unrecognized category key now raises rather than being scored.
+- The verbose printers rendered a value the metric published as `null` either as
+  `0.000` or as a `TypeError` that aborted the summary. MorphScore printed
+  `0.000` for all four scores of a tokenizer evaluated on zero languages, which
+  is the misleading zero this release removed from the JSON, in the console. A
+  shared `format_optional` prints `n/a`, applied to MorphScore, the operator
+  rates, the Gini log line and the UTF-8 summary.
+- Grouped analysis reintroduced the same zero. `_filter_operator_results`
+  published `0.0` for an isolation or compound-preservation rate with no
+  operators of that kind in the group, where the top level publishes `null`.
+
+### Added
+- `MISSING_VALUE_DISPLAY = "n/a"`, the console rendering for a value that could
+  not be computed. Two sites that spelled it `N/A` now match.
+
 ## [1.0.0] - 2026-08-04
 
 Everything below ships in 1.0.0. This section and the one at the end of the

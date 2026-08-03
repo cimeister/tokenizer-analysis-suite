@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import logging
 
-from .base import BaseMetrics, TokenizedDataProcessor
+from .base import BaseMetrics, TokenizedDataProcessor, format_optional
 from ..constants import AGGREGATION_MICRO_POOLED, GENERIC_SPECIAL_TOKENS
 from ..core.input_types import TokenizedData
 from ..core.input_providers import InputProvider
@@ -916,22 +916,20 @@ class UTF8IntegrityMetrics(BaseMetrics):
             for tok_name in self.tokenizer_names:
                 if tok_name in char_split['summary']:
                     s = char_split['summary'][tok_name]
-                    def _fmt(v, spec):
-                        return format(v, spec) if v is not None else 'n/a'
                     print(f"{tok_name}:")
-                    print(f"  {'Split Rate':25}: {_fmt(s['split_rate'], '.4f')}")
-                    print(f"  {'Splits/1k Tokens':25}: {_fmt(s['splits_per_1k_tokens'], '.2f')}")
+                    print(f"  {'Split Rate':25}: {format_optional(s['split_rate'], '.4f')}")
+                    print(f"  {'Splits/1k Tokens':25}: {format_optional(s['splits_per_1k_tokens'], '.2f')}")
                     print(f"  {'Total Splits':25}: {s['total_splits']:,}")
                     print(f"  {'Multi-byte Chars':25}: {s['total_multibyte_chars']:,}")
                     print(f"  {'Unaligned Mb Chars':25}: {s.get('unaligned_multibyte_chars', 0):,}")
-                    print(f"  {'Aligned Fraction':25}: {_fmt(s.get('aligned_fraction'), '.4f')}")
+                    print(f"  {'Aligned Fraction':25}: {format_optional(s.get('aligned_fraction'), '.4f')}")
                     pw = s.get('per_byte_width', {})
                     for w in (2, 3, 4):
                         wd = pw.get(f'{w}_byte', {})
                         ws = wd.get('splits', 0)
                         wt = wd.get('total', 0)
                         wr = wd.get('split_rate')
-                        print(f"  {f'  {w}-byte splits':25}: {ws:,}/{wt:,} ({_fmt(wr, '.4f')})")
+                        print(f"  {f'  {w}-byte splits':25}: {ws:,}/{wt:,} ({format_optional(wr, '.4f')})")
                     print(f"  {'Languages':25}: {s['languages_analyzed']}")
 
             print("\n" + "=" * 60)

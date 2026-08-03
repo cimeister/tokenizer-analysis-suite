@@ -6,7 +6,7 @@ from typing import Dict, List, Any, Optional
 import numpy as np
 import logging
 
-from .base import BaseMetrics
+from .base import BaseMetrics, format_optional
 from ..constants import AGGREGATION_MACRO_LANGUAGES
 from ..core.input_types import TokenizedData
 from ..core.input_providers import InputProvider, RawTokenizationProvider
@@ -333,19 +333,22 @@ class MorphScoreMetrics(BaseMetrics):
                     print(f"{tok_name:20}: Error - {tok_data['error']}")
                     continue
                 
+                # A tokenizer evaluated on zero languages has all four scores
+                # published as None (see compute()). They print as 'n/a', not
+                # 0.000, which would record it as scoring worst on every axis.
                 summary = tok_data.get('summary', {})
-                recall = summary.get('avg_morphscore_recall', 0.0)
-                precision = summary.get('avg_morphscore_precision', 0.0)
-                micro_f1 = summary.get('avg_micro_f1', 0.0)
-                macro_f1 = summary.get('avg_macro_f1', 0.0)
+                recall = summary.get('avg_morphscore_recall')
+                precision = summary.get('avg_morphscore_precision')
+                micro_f1 = summary.get('avg_micro_f1')
+                macro_f1 = summary.get('avg_macro_f1')
                 langs = summary.get('languages_evaluated', 0)
                 samples = summary.get('total_samples', 0)
-                
+
                 print(f"{tok_name:20}:")
-                print(f"  {'Recall':15}: {recall:.3f}")
-                print(f"  {'Precision':15}: {precision:.3f}")
-                print(f"  {'Micro F1':15}: {micro_f1:.3f}")
-                print(f"  {'Macro F1':15}: {macro_f1:.3f}")
+                print(f"  {'Recall':15}: {format_optional(recall)}")
+                print(f"  {'Precision':15}: {format_optional(precision)}")
+                print(f"  {'Micro F1':15}: {format_optional(micro_f1)}")
+                print(f"  {'Macro F1':15}: {format_optional(macro_f1)}")
                 print(f"  {'Languages':15}: {langs}")
                 print(f"  {'Samples':15}: {samples:,}")
         
@@ -367,15 +370,17 @@ class MorphScoreMetrics(BaseMetrics):
                 print("-" * 30)
                 
                 for lang_code, lang_results in tok_data['per_language'].items():
-                    recall = lang_results.get('morphscore_recall', 0.0)
-                    precision = lang_results.get('morphscore_precision', 0.0)
-                    micro_f1 = lang_results.get('micro_f1', 0.0)
-                    macro_f1 = lang_results.get('macro_f1', 0.0)
+                    recall = lang_results.get('morphscore_recall')
+                    precision = lang_results.get('morphscore_precision')
+                    micro_f1 = lang_results.get('micro_f1')
+                    macro_f1 = lang_results.get('macro_f1')
                     samples = lang_results.get('num_samples', 0)
-                    
+
                     print(f"  {lang_code}:")
-                    print(f"    Recall: {recall:.3f}, Precision: {precision:.3f}")
-                    print(f"    Micro F1: {micro_f1:.3f}, Macro F1: {macro_f1:.3f}")
+                    print(f"    Recall: {format_optional(recall)}, "
+                          f"Precision: {format_optional(precision)}")
+                    print(f"    Micro F1: {format_optional(micro_f1)}, "
+                          f"Macro F1: {format_optional(macro_f1)}")
                     print(f"    Samples: {samples:,}")
             
         print("\n" + "="*60)

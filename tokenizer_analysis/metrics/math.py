@@ -31,7 +31,7 @@ import numpy as np
 from scipy.stats import spearmanr
 import logging
 
-from .base import BaseMetrics, TokenizedDataProcessor
+from .base import BaseMetrics, TokenizedDataProcessor, format_optional
 from ..constants import AGGREGATION_MICRO_POOLED
 from ..core.input_types import TokenizedData
 from ..core.input_providers import InputProvider
@@ -1703,8 +1703,7 @@ class DigitBoundaryMetrics(BaseMetrics):
                         print(f"  {'Avg Fertility':25}: {s['avg_fertility']:.3f}")
                         print(f"  {'CV of Mean Fertility':25}: {s['cv_of_mean_fertility']:.3f}")
                         rho = s.get('spearman_rho')
-                        rho_str = f"{rho:.3f}" if rho is not None else "N/A"
-                        print(f"  {'Spearman rho':25}: {rho_str}")
+                        print(f"  {'Spearman rho':25}: {format_optional(rho)}")
                         if 'linear_r_squared' in s:
                             print(f"  {'Linear R^2':25}: {s['linear_r_squared']:.3f}")
                             print(f"  {'Linear Slope':25}: {s['linear_slope']:.3f}")
@@ -1744,8 +1743,11 @@ class DigitBoundaryMetrics(BaseMetrics):
                     if tok_name in ops["summary"]:
                         s = ops["summary"][tok_name]
                         print(f"{tok_name}:")
-                        print(f"  {'Isolation Rate':30}: {s['overall_isolation_rate']:.3f}")
-                        print(f"  {'Compound Preservation':30}: {s['overall_compound_preservation_rate']:.3f}")
+                        # overall_compound_preservation_rate is None when the
+                        # corpus held no compound operator, so there was no rate
+                        # to compute (see _build_operator_results).
+                        print(f"  {'Isolation Rate':30}: {format_optional(s['overall_isolation_rate'])}")
+                        print(f"  {'Compound Preservation':30}: {format_optional(s['overall_compound_preservation_rate'])}")
                         print(f"  {'Total Operators':30}: {s['total_operators']:,}")
                         print(f"  {'Total Compound Ops':30}: {s['total_compound_operators']:,}")
 
@@ -1759,12 +1761,15 @@ class DigitBoundaryMetrics(BaseMetrics):
                         continue
                     print(f"\n{tok_name}:")
                     for cat, d in sorted(by_cat.items()):
-                        cpr = d.get('compound_preservation_rate', 0.0)
+                        # Both rates are None for a category the corpus had no
+                        # operator of, in the compound case even when it had
+                        # simple ones.
+                        cpr = d.get('compound_preservation_rate')
                         ct = d.get('compound_total', 0)
                         print(
                             f"  {cat:20}: "
-                            f"isolation={d['isolation_rate']:.3f}  "
-                            f"compound={cpr:.3f} ({ct} compound)  "
+                            f"isolation={format_optional(d['isolation_rate'])}  "
+                            f"compound={format_optional(cpr)} ({ct} compound)  "
                             f"n={d['total']}"
                         )
 

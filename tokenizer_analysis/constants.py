@@ -40,6 +40,12 @@ SHANNON_ENTROPY_ALPHA = 1.0
 # JSON is the artifact people read. Changed in 1.0; see CHANGELOG.
 DEFAULT_SAFE_DIVIDE_VALUE = None
 
+# What the console printers show in place of a number that was not computed,
+# i.e. wherever the results file carries the null above. Printing 0.000 there
+# puts the same misleading zero the results file avoids into the other output a
+# reader sees.
+MISSING_VALUE_DISPLAY = "n/a"
+
 PERCENTAGE_MULTIPLIER = 100
 DEFAULT_PRECISION = 4
 

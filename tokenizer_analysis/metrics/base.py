@@ -17,11 +17,29 @@ from ..core.tokenizer_wrapper import resolve_special_token_strings
 from ..constants import (
     DEFAULT_SAFE_DIVIDE_VALUE,
     GENERIC_SPECIAL_TOKENS,
+    MISSING_VALUE_DISPLAY,
     PERCENTAGE_MULTIPLIER,
     MAX_ERROR_DISPLAY_COUNT,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def format_optional(value: Any, spec: str = ".3f") -> str:
+    """Format *value*, or return 'n/a' when it is None.
+
+    The metrics publish None for a value they could not compute, so that a
+    reader cannot mistake it for a measured zero. ``format(None, '.3f')``
+    raises TypeError, and the usual guard against that, ``d.get(key, 0.0)``,
+    returns the stored None when the key is present and prints 0.000 when it is
+    not. Both outcomes are worse than the null they came from: one aborts the
+    run's summary, the other reinstates in the console the zero the results file
+    was careful not to publish.
+    """
+    if value is None:
+        return MISSING_VALUE_DISPLAY
+    return format(value, spec)
+
 
 # Subword-marker strings that _process_token strips, and only when the
 # tokenizer being processed actually shows it uses that marker (see

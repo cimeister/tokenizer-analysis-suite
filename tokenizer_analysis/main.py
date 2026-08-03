@@ -612,9 +612,15 @@ class UnifiedTokenizerAnalyzer:
 
             ftok: Dict[str, Any] = {"by_language": fbl, "by_category": {
                 category: {
-                    "isolation_rate": (c["isolated"] / c["total"]) if c["total"] else 0.0,
+                    # None, not 0.0, matching _build_operator_results in
+                    # metrics/math.py. A category with no operator of that kind
+                    # in this language group was not measured, and 0.0 reads as
+                    # a tokenizer that isolated none of them. The top level
+                    # avoided this zero and the grouped filter reintroduced it.
+                    "isolation_rate": (c["isolated"] / c["total"]) if c["total"] else None,
                     "compound_preservation_rate": (
-                        (c["compound_ok"] / c["compound_total"]) if c["compound_total"] else 0.0
+                        (c["compound_ok"] / c["compound_total"])
+                        if c["compound_total"] else None
                     ),
                     "total": c["total"],
                     "compound_total": c["compound_total"],
@@ -629,7 +635,7 @@ class UnifiedTokenizerAnalyzer:
                 filtered["summary"][tok_name] = {
                     "overall_isolation_rate": tot_iso / tot_ops,
                     "overall_compound_preservation_rate": (
-                        (tot_cok / tot_ctot) if tot_ctot else 0.0
+                        (tot_cok / tot_ctot) if tot_ctot else None
                     ),
                     "total_operators": tot_ops,
                     "total_compound_operators": tot_ctot,

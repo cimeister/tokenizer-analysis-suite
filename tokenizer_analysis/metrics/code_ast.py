@@ -27,7 +27,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import numpy as np
 import logging
 
-from .base import BaseMetrics
+from .base import BaseMetrics, format_optional
 from ..constants import AGGREGATION_MICRO_POOLED
 from ..core.input_providers import InputProvider
 
@@ -36,6 +36,7 @@ from ..core.input_providers import InputProvider
 # so it can be spawned as a subprocess without pulling in the tokenizer stack.
 from ._treesitter_worker import (
     CATEGORIES as _CATEGORIES_TUPLE,
+    ERROR_SPANS_KEY,
     IDENTIFIER_TYPES as _IDENTIFIER_TYPES,
     LITERAL_TYPES as _LITERAL_TYPES,
     DELIMITER_CHARS as _DELIMITER_CHARS,
@@ -927,6 +928,14 @@ class ASTBoundaryMetrics(BaseMetrics):
             lambda: defaultdict(lambda: defaultdict(int))
         )
 
+        # parse_error_acc: lang -> count of tree-sitter ERROR spans. An ERROR
+        # span is a region of the source the grammar could not parse, so it is
+        # not a syntax node and is not scored against token boundaries. It is
+        # counted here and published so a reader can see how much of the corpus
+        # failed to parse. There is one count per language rather than one per
+        # tokenizer because parsing happens before any tokenizer is involved.
+        parse_error_acc: Dict[str, int] = defaultdict(int)
+
         # ident_acc: tok -> lang -> [{text, num_tokens, fragmented}]
         ident_acc: Dict[str, Dict[str, List[Dict]]] = defaultdict(
             lambda: defaultdict(list)
@@ -1081,6 +1090,23 @@ class ASTBoundaryMetrics(BaseMetrics):
                 # Pre-convert ALL byte spans to char spans.
                 char_spans_by_category: Dict[str, List[Tuple[int, int]]] = {}
                 for category, spans in categorized_spans.items():
+                    if category == ERROR_SPANS_KEY:
+                        # A region the grammar could not parse. Scoring it as a
+                        # sixth AST category put unparsed source into
+                        # full_alignment_rate: 4645 of gpt2's 1594200 spans on
+                        # the benchmark corpus, 0.2914%. Counted here and
+                        # published under parse_error_spans instead.
+                        parse_error_acc[code_lang] += len(spans)
+                        continue
+                    if category not in self._CATEGORIES:
+                        raise ValueError(
+                            f"tree-sitter worker returned span category "
+                            f"{category!r} for {code_lang}, which is neither one "
+                            f"of {self._CATEGORIES} nor {ERROR_SPANS_KEY!r}. "
+                            f"Scoring it would put it in the alignment rates; "
+                            f"add it to CATEGORIES in _treesitter_worker.py or "
+                            f"handle it here."
+                        )
                     char_spans: List[Tuple[int, int]] = []
                     for byte_start, byte_end in spans:
                         if byte_start >= len(byte_to_char) or byte_end >= len(byte_to_char):
@@ -1235,8 +1261,24 @@ class ASTBoundaryMetrics(BaseMetrics):
                     tok_name, tok_unmappable,
                 )
 
+        total_parse_errors = sum(parse_error_acc.values())
+        if total_parse_errors:
+            logger.warning(
+                "tree-sitter emitted %d ERROR span(s) across %d language(s): %s. "
+                "These are regions the grammar could not parse, so they are not "
+                "AST nodes and are not scored against token boundaries. They are "
+                "reported under 'parse_error_spans', which is a parse failure, "
+                "not the token-side failure 'unmappable' counts.",
+                total_parse_errors, len(parse_error_acc),
+                ", ".join(
+                    f"{lang}={n}" for lang, n in sorted(parse_error_acc.items())
+                ),
+            )
+
         return {
-            "ast_boundary_alignment": self._build_results(acc, unmappable_acc),
+            "ast_boundary_alignment": self._build_results(
+                acc, unmappable_acc, parse_error_acc
+            ),
             "identifier_fragmentation": self._build_identifier_fragmentation_results(ident_acc),
             "indentation_consistency": self._build_indentation_consistency_results(indent_acc),
         }
@@ -1249,6 +1291,7 @@ class ASTBoundaryMetrics(BaseMetrics):
         self,
         acc: Dict[str, Dict[str, Dict[str, List[Dict]]]],
         unmappable_acc: Optional[Dict[str, Dict[str, Dict[str, int]]]] = None,
+        parse_error_acc: Optional[Dict[str, int]] = None,
     ) -> Dict[str, Any]:
         """Aggregate the per-span alignment records into the published results.
 
@@ -1258,8 +1301,18 @@ class ASTBoundaryMetrics(BaseMetrics):
         so a reader can see how much of the corpus each rate is computed over;
         it is 0 whenever the encoding offsets cover the whole source, which is
         the normal case.
+
+        *parse_error_acc* holds the tree-sitter ERROR spans per language: source
+        the grammar could not parse. It is published next to ``unmappable`` and
+        deliberately named differently, because the two count different
+        failures. ``unmappable`` is token-side (the encoding covered no
+        character of a span that did parse) and differs by tokenizer;
+        ``parse_error_spans`` is parse-side and is the same for every tokenizer.
+        Neither is in the alignment rates.
         """
         unmappable_acc = unmappable_acc or {}
+        parse_error_acc = parse_error_acc or {}
+        total_parse_errors = sum(parse_error_acc.values())
         results: Dict[str, Any] = {
             "per_tokenizer": {},
             "summary": {},
@@ -1270,6 +1323,13 @@ class ASTBoundaryMetrics(BaseMetrics):
                 ),
                 "aggregation": AGGREGATION_MICRO_POOLED,
                 "count_unit": "AST nodes",
+                "parse_error_spans": (
+                    "tree-sitter ERROR spans, meaning source the grammar could "
+                    "not parse. They are not AST nodes, so they are excluded "
+                    "from every rate here and counted instead. The count is a "
+                    "property of the corpus and the grammar, so it is identical "
+                    "for every tokenizer, unlike 'unmappable'."
+                ),
             },
         }
 
@@ -1291,12 +1351,15 @@ class ASTBoundaryMetrics(BaseMetrics):
             total_unmappable = 0
             languages_seen: set = set()
 
-            for code_lang in sorted(set(tok_acc) | set(tok_unmappable)):
+            for code_lang in sorted(
+                set(tok_acc) | set(tok_unmappable) | set(parse_error_acc)
+            ):
                 lang_full: List[float] = []
                 lang_start: List[float] = []
                 lang_end: List[float] = []
                 lang_cross: List[float] = []
                 lang_unmappable = 0
+                lang_parse_errors = int(parse_error_acc.get(code_lang, 0))
 
                 lang_acc = tok_acc.get(code_lang, {})
                 lang_unmappable_by_cat = tok_unmappable.get(code_lang, {})
@@ -1355,6 +1418,7 @@ class ASTBoundaryMetrics(BaseMetrics):
                         "overall_cross_boundary_rate": float(np.mean(lang_cross)),
                         "count": len(lang_full),
                         "unmappable": lang_unmappable,
+                        "parse_error_spans": lang_parse_errors,
                     }
                     all_full.extend(lang_full)
                     all_start.extend(lang_start)
@@ -1362,7 +1426,12 @@ class ASTBoundaryMetrics(BaseMetrics):
                     all_cross.extend(lang_cross)
                     total_count += len(lang_full)
                     languages_seen.add(code_lang)
-                elif lang_unmappable:
+                elif lang_unmappable or lang_parse_errors:
+                    # Nothing was measured for this language. It still gets an
+                    # entry, because a language that produced only unparsable or
+                    # uncovered spans is not the same as a language that was
+                    # never loaded, and dropping it here would make the two look
+                    # identical in the results.
                     tok_data["by_language"][code_lang] = {
                         "overall_full_alignment_rate": None,
                         "overall_start_alignment_rate": None,
@@ -1370,6 +1439,7 @@ class ASTBoundaryMetrics(BaseMetrics):
                         "overall_cross_boundary_rate": None,
                         "count": 0,
                         "unmappable": lang_unmappable,
+                        "parse_error_spans": lang_parse_errors,
                     }
 
             if all_full:
@@ -1380,6 +1450,7 @@ class ASTBoundaryMetrics(BaseMetrics):
                     "cross_boundary_rate": float(np.mean(all_cross)),
                     "count": total_count,
                     "unmappable": total_unmappable,
+                    "parse_error_spans": total_parse_errors,
                 }
 
             results["per_tokenizer"][tok_name] = tok_data
@@ -1392,6 +1463,7 @@ class ASTBoundaryMetrics(BaseMetrics):
                     "avg_cross_boundary_rate": float(np.mean(all_cross)),
                     "total_nodes_analyzed": total_count,
                     "total_nodes_unmappable": total_unmappable,
+                    "total_parse_error_spans": total_parse_errors,
                     "languages_analyzed": len(languages_seen),
                 }
 
@@ -1670,6 +1742,7 @@ class ASTBoundaryMetrics(BaseMetrics):
                     print(f"  {'Cross-Boundary Rate':25}: {s['avg_cross_boundary_rate']:.3f}")
                     print(f"  {'Nodes Analyzed':25}: {s['total_nodes_analyzed']:,}")
                     print(f"  {'Nodes Unmappable':25}: {s.get('total_nodes_unmappable', 0):,}")
+                    print(f"  {'Parse Error Spans':25}: {s.get('total_parse_error_spans', 0):,}")
                     print(f"  {'Languages':25}: {s['languages_analyzed']}")
 
         # By category
@@ -1718,10 +1791,12 @@ class ASTBoundaryMetrics(BaseMetrics):
                 for lang in sorted(by_lang):
                     d = by_lang[lang]
                     unmappable = d.get("unmappable", 0)
+                    parse_errors = d.get("parse_error_spans", 0)
                     if d["overall_full_alignment_rate"] is None:
                         print(
                             f"  {lang:15}: not measured, "
-                            f"unmappable={unmappable}"
+                            f"unmappable={unmappable}  "
+                            f"parse_errors={parse_errors}"
                         )
                         continue
                     print(
@@ -1730,7 +1805,8 @@ class ASTBoundaryMetrics(BaseMetrics):
                         f"start={d['overall_start_alignment_rate']:.3f}  "
                         f"end={d['overall_end_alignment_rate']:.3f}  "
                         f"n={d['count']}  "
-                        f"unmappable={unmappable}"
+                        f"unmappable={unmappable}  "
+                        f"parse_errors={parse_errors}"
                     )
 
         # --- Identifier Fragmentation ---
@@ -1779,10 +1855,9 @@ class ASTBoundaryMetrics(BaseMetrics):
                         for lang in sorted(by_lang):
                             d = by_lang[lang]
                             corr = d.get("depth_proportionality_correlation")
-                            corr_str = f"{corr:.3f}" if corr is not None else "N/A"
                             print(
                                 f"    {lang:13}: "
-                                f"depth_corr={corr_str}  "
+                                f"depth_corr={format_optional(corr)}  "
                                 f"levels={d['num_depth_levels']}  "
                                 f"lines={d['total_indented_lines']}"
                             )
@@ -1833,7 +1908,9 @@ class ASTBoundaryMetrics(BaseMetrics):
 
         Returns a dict with keys: ``n_ast_nodes`` (spans scored, across all
         categories), ``n_unmappable_nodes`` (spans no token covered, which are
-        left out of the rates), ``full_alignment_rate``,
+        left out of the rates), ``n_parse_error_spans`` (tree-sitter ERROR
+        spans, source the grammar could not parse, also left out of the rates),
+        ``full_alignment_rate``,
         ``start_alignment_rate``, ``end_alignment_rate``, plus per-category
         rates (``identifier_full_alignment_rate``, etc.),
         ``identifier_fragmentation_rate`` (fraction of identifiers split
@@ -1845,6 +1922,7 @@ class ASTBoundaryMetrics(BaseMetrics):
         empty = {
             "n_ast_nodes": 0,
             "n_unmappable_nodes": 0,
+            "n_parse_error_spans": 0,
             "full_alignment_rate": float("nan"),
             "start_alignment_rate": float("nan"),
             "end_alignment_rate": float("nan"),
@@ -1912,8 +1990,22 @@ class ASTBoundaryMetrics(BaseMetrics):
         source_bytes = source_code.encode("utf-8")
         byte_to_char = self._byte_to_char_offsets(source_bytes)
 
+        # ERROR spans are source the grammar could not parse. They are counted
+        # and reported, not scored: including them in the rates would measure
+        # token boundaries against a region that has no syntax structure. Same
+        # rule as compute().
+        n_parse_error_spans = len(categorized_spans.get(ERROR_SPANS_KEY, ()))
+
         char_spans_by_category: Dict[str, List[Tuple[int, int]]] = {}
         for category, spans in categorized_spans.items():
+            if category == ERROR_SPANS_KEY:
+                continue
+            if category not in self._CATEGORIES:
+                raise ValueError(
+                    f"tree-sitter worker returned span category {category!r} "
+                    f"for {language}, which is neither one of "
+                    f"{self._CATEGORIES} nor {ERROR_SPANS_KEY!r}."
+                )
             char_spans: List[Tuple[int, int]] = []
             for byte_start, byte_end in spans:
                 if byte_start >= len(byte_to_char) or byte_end >= len(byte_to_char):
@@ -2026,6 +2118,7 @@ class ASTBoundaryMetrics(BaseMetrics):
             result: Dict[str, Any] = {
                 "n_ast_nodes": n_total,
                 "n_unmappable_nodes": n_unmappable,
+                "n_parse_error_spans": n_parse_error_spans,
                 "full_alignment_rate": _rate(all_full),
                 "start_alignment_rate": _rate(all_start),
                 "end_alignment_rate": _rate(all_end),

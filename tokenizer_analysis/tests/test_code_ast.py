@@ -1016,6 +1016,144 @@ class TestEndToEnd:
 
 
 # ======================================================================
+# Tree-sitter ERROR spans
+# ======================================================================
+
+# Python whose middle function does not parse, so tree-sitter emits an ERROR
+# node covering it while the two functions around it parse normally.
+_SNIPPET_WITH_PARSE_ERROR = (
+    "def add(a, b):\n"
+    "    return a + b\n"
+    "\n"
+    "def broken(:::\n"
+    "    ??? not python at all ***\n"
+    "\n"
+    "def mul(a, b):\n"
+    "    return a * b\n"
+)
+
+
+class TestErrorSpansAreCountedNotScored:
+    """An ERROR span is source the grammar could not parse, not an AST node.
+
+    ``compute`` iterates the categorized-spans dict generically, so the worker's
+    extra ``_error_spans`` key became a sixth category and its spans went into
+    the published alignment rates. On the benchmark corpus that was 4645 of
+    gpt2's 1594200 spans, 0.2914% of every full_alignment_rate. They belong in a
+    count of what failed to parse, under a name that is not ``unmappable``,
+    which counts a different failure (a span no token covered).
+    """
+
+    @pytest.fixture(scope="class")
+    def ts_pack(self):
+        try:
+            import tree_sitter_language_pack
+            return tree_sitter_language_pack
+        except ImportError:
+            pytest.skip("tree-sitter-language-pack not installed")
+
+    @pytest.fixture(scope="class")
+    def n_error_spans(self, ts_pack):
+        """How many ERROR spans the grammar emits for the snippet."""
+        parsed, dropped = parse_snippets_fenced(
+            {"python": [_SNIPPET_WITH_PARSE_ERROR]},
+            CodeDataLoader._LANG_TO_TREESITTER,
+        )
+        assert not dropped, f"python was not parsed: {dropped}"
+        n = len(parsed["python"][0].get(ERROR_SPANS_KEY, []))
+        assert n > 0, "snippet was meant to contain unparsable source"
+        return n
+
+    def _run(self, ts_pack):
+        inst = object.__new__(ASTBoundaryMetrics)
+        inst._tokenizer_vocab_cache = {}
+        inst._warned_tokenizers = set()
+        inst._char_decode_table = None
+        inst._special_tokens = None
+        inst._special_token_cache = {}
+        inst._subword_markers = None
+        inst._subword_marker_cache = {}
+        inst._treesitter_available = True
+        inst._ts_pack = ts_pack
+        inst._parser_cache = {}
+        inst.input_provider = _MockProvider("char_tok", _CharTokenizer())
+        inst.tokenizer_names = ["char_tok"]
+        inst.max_snippets_per_lang = 1
+        loader = CodeDataLoader()
+        loader.code_snippets = {"python": [_SNIPPET_WITH_PARSE_ERROR]}
+        inst.code_loader = loader
+        return inst, inst.compute()["ast_boundary_alignment"]
+
+    def test_error_spans_are_not_a_scored_category(self, ts_pack):
+        _, ast = self._run(ts_pack)
+        by_cat = ast["per_tokenizer"]["char_tok"]["by_category"]
+        assert ERROR_SPANS_KEY not in by_cat
+        assert set(by_cat) <= set(ASTBoundaryMetrics._CATEGORIES)
+
+    def test_scored_count_is_the_five_categories_only(self, ts_pack):
+        _, ast = self._run(ts_pack)
+        tok = ast["per_tokenizer"]["char_tok"]
+        per_category = sum(
+            entry["count"]
+            for langs in tok["by_category"].values()
+            for entry in langs.values()
+        )
+        assert tok["overall"]["count"] == per_category
+
+    def test_error_spans_are_counted_at_every_level(self, ts_pack, n_error_spans):
+        _, ast = self._run(ts_pack)
+        tok = ast["per_tokenizer"]["char_tok"]
+        assert tok["overall"]["parse_error_spans"] == n_error_spans
+        assert tok["by_language"]["python"]["parse_error_spans"] == n_error_spans
+        assert ast["summary"]["char_tok"]["total_parse_error_spans"] == n_error_spans
+        # Named apart from unmappable, which is the token-side failure.
+        assert tok["overall"]["unmappable"] == 0
+
+    def test_per_text_path_excludes_and_counts_them_too(self, ts_pack, n_error_spans):
+        inst, _ = self._run(ts_pack)
+        out = inst.compute_per_text(
+            _CharTokenizer(), _SNIPPET_WITH_PARSE_ERROR, language="python"
+        )
+        assert out["parse_status"] == "ok"
+        assert out["n_parse_error_spans"] == n_error_spans
+        # n_ast_nodes counts the scored spans, so the ERROR spans are not in it.
+        clean = inst.compute_per_text(
+            _CharTokenizer(), "def add(a, b):\n    return a + b\n", language="python"
+        )
+        assert clean["n_parse_error_spans"] == 0
+
+    def test_unknown_span_category_is_rejected(self, ts_pack):
+        """A new key from the worker must not be scored by accident.
+
+        Silently skipping it would repeat this defect the other way round: a
+        real category would stop being measured with nothing in the output to
+        say so.
+        """
+        inst, _ = self._run(ts_pack)
+        loader = CodeDataLoader()
+        loader.code_snippets = {"python": ["x = 1\n"]}
+        inst.code_loader = loader
+
+        import tokenizer_analysis.metrics.code_ast as code_ast_module
+
+        real_parse = code_ast_module.parse_snippets_fenced
+
+        def _parse_with_extra_key(*args, **kwargs):
+            parsed, dropped = real_parse(*args, **kwargs)
+            for spans_list in parsed.values():
+                for spans in spans_list:
+                    spans["_something_new"] = [(0, 1)]
+            return parsed, dropped
+
+        code_ast_module.parse_snippets_fenced = _parse_with_extra_key
+        try:
+            with pytest.raises(ValueError, match="_something_new"):
+                inst.compute()
+        finally:
+            code_ast_module.parse_snippets_fenced = real_parse
+
+
+# ======================================================================
 # print_results smoke test
 # ======================================================================
 
