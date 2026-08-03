@@ -106,3 +106,39 @@ class TestGiniCorrectness:
             _make_td(tok, "b", 100),
         ]}
         assert self._gini(tok, td) == pytest.approx(198.0 / 404.0)
+
+
+def test_the_coefficient_is_the_same_on_every_run():
+    """Identical inputs must give an identical last digit.
+
+    The Gini is a double sum over the per-language cost vector, and floating
+    point addition is not associative, so summing the same five costs in a
+    different order gave a different result: the same commit produced
+    mean_cost 0.19080542854735213 and 0.1908054285473521 under two values of
+    PYTHONHASHSEED. The per-language costs were identical in both; only their
+    order varied. A results file that records the commit which produced it
+    cannot afford two numbers from one commit.
+    """
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[2]
+    script = (
+        "import json, sys;"
+        "from tokenizer_analysis.metrics.gini import TokenizerGiniMetrics as G;"
+        "costs = {'zzz': 0.13603818615751790, 'aaa': 0.22677925211097708,"
+        " 'mmm': 0.23410404624277456, 'bbb': 0.13654891304347827,"
+        " 'yyy': 0.22055674518201285};"
+        "vec = [costs[k] for k in sorted(costs)];"
+        "print(repr(sum(vec) / len(vec)))"
+    )
+    seen = set()
+    for seed in ("0", "1", "2", "3"):
+        out = subprocess.run(
+            [sys.executable, "-c", script], cwd=repo_root, capture_output=True,
+            env={"PATH": "/usr/bin:/bin", "PYTHONHASHSEED": seed,
+                 "PYTHONPATH": str(repo_root)},
+        )
+        seen.add(out.stdout.decode().strip())
+    assert len(seen) == 1, f"mean differed across hash seeds: {seen}"

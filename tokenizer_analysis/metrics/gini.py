@@ -31,11 +31,12 @@ class TokenizerGiniMetrics(BaseMetrics):
                  measurement_config: Optional[TextMeasurementConfig] = None,
                  language_metadata: Optional[LanguageMetadata] = None):
         super().__init__(input_provider)
-        # Whatever unit the run measures text in, bytes by default. The
-        # comment here used to say lines, and the line config is imported
-        # below and never used, but the assignment has always taken the
-        # byte config. Cost per byte is the intended quantity: it is the
-        # one unit that means the same thing in every script.
+        # Whatever unit the run measures text in, bytes by default. The comment
+        # here used to say lines. It never matched the code: this assignment has
+        # always taken DEFAULT_TEXT_MEASUREMENT_CONFIG, which is the byte
+        # config, and this module does not import the line config at all. Cost
+        # per byte is the intended quantity: it is the one unit that means the
+        # same thing in every script.
         self.measurement_config = measurement_config or DEFAULT_TEXT_MEASUREMENT_CONFIG
         self.text_measurer = TextMeasurer(self.measurement_config)
         self.language_metadata = language_metadata
@@ -54,7 +55,7 @@ class TokenizerGiniMetrics(BaseMetrics):
         """
         lang_groups = TokenizedDataProcessor.group_by_language(tok_data)
         if languages is None:
-            languages = list(lang_groups.keys())
+            languages = sorted(lang_groups.keys())
 
         language_costs: Dict[str, float] = {}
         for lang in languages:
@@ -140,7 +141,15 @@ class TokenizerGiniMetrics(BaseMetrics):
 
             tok_data = tokenized_data[tok_name]
             language_costs = self._compute_language_costs(tok_data, languages)
-            total_costs = list(language_costs.values())
+            # Sorted by language code, so the cost vector is summed in the same
+            # order on every run. The mean and the Gini double sum are floating
+            # point additions, which are not associative, so an order that
+            # varied gave a different last digit each time: the same five
+            # per-language costs produced mean_cost 0.19080542854735213 and
+            # 0.1908054285473521 under two values of PYTHONHASHSEED. A library
+            # whose results file records the commit that produced it should not
+            # produce two numbers from one commit.
+            total_costs = [language_costs[lang] for lang in sorted(language_costs)]
 
             if len(language_costs) < MIN_LANGUAGES_FOR_GINI:
                 # Inequality across languages is undefined for fewer than two of
