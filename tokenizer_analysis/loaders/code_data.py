@@ -70,27 +70,44 @@ class CodeDataLoader:
         "bash": "bash",
     }
 
-    # Default cap on snippets loaded per language from files/parquet.
-    # Keeps memory usage bounded when large code corpora are provided.
-    DEFAULT_MAX_SNIPPETS_PER_LANG: int = 100
+    # Default cap on snippets (files) loaded per language from files/parquet.
+    # 0 means no cap: every file a code_config path matches is loaded. Off by
+    # default since 1.0.0; a caller that wants a bounded corpus re-enables
+    # this with --max-code-files-per-lang on the CLI (cli/run_analysis.py) or
+    # by passing max_snippets_per_lang explicitly. Before 1.0.0 this defaulted
+    # to 100, which silently dropped files beyond the first 100 per language
+    # (by sort order) with nothing in the CLI or the results file recording
+    # that a cap had been applied.
+    DEFAULT_MAX_SNIPPETS_PER_LANG: int = 0
 
-    # Maximum character length for a single snippet.  Snippets longer than
-    # this are truncated before storage.  Keeps pickle payloads and
-    # tree-sitter parse times bounded.
-    MAX_SNIPPET_SIZE_CHARS: int = 15_000
+    # Default maximum character length kept per snippet; longer files are
+    # truncated to this length. 0 means no cap: files are kept in full. Off
+    # by default since 1.0.0; re-enable with --max-code-file-chars on the CLI
+    # or by passing max_snippet_chars explicitly. Before 1.0.0 this defaulted
+    # to 15_000, which silently discarded the tail of any longer file with
+    # nothing in the CLI or the results file recording that truncation had
+    # happened.
+    MAX_SNIPPET_SIZE_CHARS: int = 0
 
     def __init__(
         self,
         code_config: Optional[Dict[str, str]] = None,
         max_snippets_per_lang: Optional[int] = None,
+        max_snippet_chars: Optional[int] = None,
     ):
         """
         Args:
             code_config: Dict mapping language names to file/directory paths.
                 Example: {"python": "code_data/python/", "javascript": "code_data/js/"}
-            max_snippets_per_lang: Maximum number of snippets to keep per
-                language.  ``None`` uses :attr:`DEFAULT_MAX_SNIPPETS_PER_LANG`.
-                Set to ``0`` to disable the cap entirely.
+            max_snippets_per_lang: Maximum number of files to keep per
+                language. 0 disables the cap (keep every file found).
+                ``None`` uses :attr:`DEFAULT_MAX_SNIPPETS_PER_LANG`, which is
+                0 (no cap) unless the caller changed it.
+            max_snippet_chars: Maximum character length kept for a single
+                file; longer files are truncated to this length. 0 disables
+                truncation (keep each file in full). ``None`` uses
+                :attr:`MAX_SNIPPET_SIZE_CHARS`, which is 0 (no cap) unless
+                the caller changed it.
         """
         self.config = self._validate_config(code_config)
         self.code_snippets: Dict[str, List[str]] = {}
@@ -98,6 +115,18 @@ class CodeDataLoader:
             self.max_snippets_per_lang = self.DEFAULT_MAX_SNIPPETS_PER_LANG
         else:
             self.max_snippets_per_lang = max_snippets_per_lang
+        if max_snippet_chars is None:
+            self.max_snippet_chars = self.MAX_SNIPPET_SIZE_CHARS
+        else:
+            self.max_snippet_chars = max_snippet_chars
+
+        # Per-language counts of files dropped by max_snippets_per_lang and
+        # characters discarded by max_snippet_chars, filled in by
+        # _load_language. Lets a caller (e.g. run metadata) report what a
+        # cap actually did without re-scanning the corpus; both are 0 for
+        # every language when no cap is active, which is the default.
+        self.dropped_file_counts: Dict[str, int] = {}
+        self.truncated_char_counts: Dict[str, int] = {}
 
     @staticmethod
     def _validate_config(code_config: Optional[Dict[str, str]]) -> Dict[str, str]:
@@ -163,19 +192,32 @@ class CodeDataLoader:
     def _load_language(self, lang: str, path: str) -> None:
         """Load code snippets for a single language from *path*.
 
-        Respects :attr:`max_snippets_per_lang`: when a cap is active
-        (value > 0), only the first *N* snippets are kept.
+        Respects :attr:`max_snippets_per_lang` (0 disables the cap: every
+        matching file is kept) and :attr:`max_snippet_chars` (0 disables
+        truncation: each file is kept in full). Both are read here without a
+        cap and truncated/trimmed afterward, so the amount an active cap
+        actually discards can be measured exactly rather than approximated
+        from file sizes; when a cap discards anything, a warning names the
+        language and the amount, and the totals are added to
+        :attr:`dropped_file_counts` / :attr:`truncated_char_counts`. A run
+        with no active cap logs nothing extra.
         """
         existing = len(self.code_snippets.get(lang, []))
         cap = self.max_snippets_per_lang
         cap_active = cap > 0
+        char_cap = self.max_snippet_chars
+        char_cap_active = char_cap > 0
 
         snippets: List[str] = []
+        candidates_found = 0
+        candidates_attempted = 0
 
         if os.path.isfile(path):
             if path.endswith(".parquet"):
                 snippets.extend(self._read_parquet(path))
+                candidates_found = candidates_attempted = len(snippets)
             else:
+                candidates_found = candidates_attempted = 1
                 text = self._read_file(path)
                 if text:
                     snippets.append(text)
@@ -183,21 +225,58 @@ class CodeDataLoader:
             extensions = self._LANG_EXTENSIONS.get(lang, [])
             for ext in extensions:
                 for fpath in sorted(glob.glob(os.path.join(path, "**", f"*{ext}"), recursive=True)):
+                    candidates_found += 1
                     if cap_active and existing + len(snippets) >= cap:
-                        break
+                        # Already have enough to reach the cap: count the
+                        # file as found but do not read it.
+                        continue
+                    candidates_attempted += 1
                     text = self._read_file(fpath)
                     if text:
                         snippets.append(text)
-                if cap_active and existing + len(snippets) >= cap:
-                    break
 
-        # Apply cap: only keep enough snippets to reach the limit
+        # Apply the file-count cap: only keep enough to reach the limit.
+        # candidates_found > candidates_attempted already accounts for files
+        # skipped mid-walk in the directory case above; this trim covers the
+        # parquet/single-file case, where every row is read in one pass with
+        # no early stop, so any excess only shows up here.
+        dropped_files = candidates_found - candidates_attempted
         if cap_active and existing + len(snippets) > cap:
-            snippets = snippets[: cap - existing]
+            keep = max(cap - existing, 0)
+            dropped_files += len(snippets) - keep
+            snippets = snippets[:keep]
 
-        # Truncate oversized snippets
-        size_cap = self.MAX_SNIPPET_SIZE_CHARS
-        snippets = [s[:size_cap] for s in snippets]
+        # Truncate oversized snippets and total the characters that costs.
+        truncated_chars = 0
+        if char_cap_active:
+            capped_snippets: List[str] = []
+            for s in snippets:
+                if len(s) > char_cap:
+                    truncated_chars += len(s) - char_cap
+                    capped_snippets.append(s[:char_cap])
+                else:
+                    capped_snippets.append(s)
+            snippets = capped_snippets
+
+        if dropped_files > 0:
+            self.dropped_file_counts[lang] = (
+                self.dropped_file_counts.get(lang, 0) + dropped_files
+            )
+            logger.warning(
+                "%s: max_snippets_per_lang=%d dropped %d file(s) found under "
+                "%s (kept %d of %d found).",
+                lang, cap, dropped_files, path,
+                existing + len(snippets), candidates_found,
+            )
+        if truncated_chars > 0:
+            self.truncated_char_counts[lang] = (
+                self.truncated_char_counts.get(lang, 0) + truncated_chars
+            )
+            logger.warning(
+                "%s: max_snippet_chars=%d truncated content under %s, "
+                "discarding %d character(s) total across %d snippet(s).",
+                lang, char_cap, path, truncated_chars, len(snippets),
+            )
 
         if snippets:
             self.code_snippets.setdefault(lang, []).extend(snippets)
@@ -247,15 +326,25 @@ class CodeDataLoader:
 
         Lines that fail strict UTF-8 decoding are skipped individually
         rather than silently replacing invalid bytes.
+
+        *max_chars* stops reading once that many characters have been read,
+        bounding I/O on a large file instead of reading it fully and
+        discarding most of it. ``None`` resolves to
+        :attr:`MAX_SNIPPET_SIZE_CHARS`; either that or an explicit ``0``
+        means no cap (the file is read to the end). ``_load_language`` does
+        not use this early stop: it reads every file in full and applies
+        ``max_snippet_chars`` itself afterward, so it can report exactly how
+        many characters a cap discarded.
         """
         if max_chars is None:
             max_chars = cls.MAX_SNIPPET_SIZE_CHARS
+        cap_active = max_chars > 0
         try:
             lines: List[str] = []
             chars_read = 0
             with open(path, "rb") as f:
                 for raw_line in f:
-                    if chars_read >= max_chars:
+                    if cap_active and chars_read >= max_chars:
                         break
                     try:
                         line = raw_line.decode("utf-8")
@@ -294,6 +383,13 @@ class CodeDataLoader:
         Expects a ``content`` column containing source code strings.
         StarCoder-style metadata prefixes (``<reponame>``, ``<filename>``,
         ``<gh_stars>``) are stripped automatically.
+
+        *max_chars* truncates each row's content to that many characters.
+        ``None`` resolves to :attr:`MAX_SNIPPET_SIZE_CHARS`; either that or
+        an explicit ``0`` means no truncation. ``_load_language`` does not
+        use this: it reads every row in full and applies
+        ``max_snippet_chars`` itself afterward, so it can report exactly how
+        many characters a cap discarded.
         """
         try:
             import pandas as pd
@@ -303,6 +399,7 @@ class CodeDataLoader:
 
         if max_chars is None:
             max_chars = cls.MAX_SNIPPET_SIZE_CHARS
+        cap_active = max_chars > 0
 
         try:
             df = pd.read_parquet(path)
@@ -323,7 +420,9 @@ class CodeDataLoader:
             if not isinstance(raw, str) or not raw.strip():
                 continue
             text = cls._normalize_source(cls._strip_starcoder_metadata(raw))
-            text = text[:max_chars].rstrip()
+            if cap_active:
+                text = text[:max_chars]
+            text = text.rstrip()
             if not text.strip():
                 continue
             snippets.append(text)

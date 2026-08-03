@@ -369,6 +369,13 @@ section records the vetting that followed it. Set the date at tag time.
   pre-tokenizer and the merges, not on byte-level encoding as such.
 
 ### Added
+- `--max-code-files-per-lang` and `--max-code-file-chars`, both defaulting to 0,
+  which means no cap. They were previously always on at 100 files per language
+  and 15000 characters per file, on no flag and recorded nowhere: on the
+  benchmark's own corpus that discarded 6537749 of 12753776 characters, 51.3%,
+  while the run reported measuring 1500 files. The effective values are written
+  to `run_metadata.code_corpus_caps`, and a cap that drops or truncates anything
+  logs a warning naming the language and the counts.
 - `scripts/fetch_flores.py`, which downloads the FLORES+ corpus the configs
   name. Needs the `flores` extra (`uv sync --extra flores`) and a Hugging Face
   login, since the dataset is gated.

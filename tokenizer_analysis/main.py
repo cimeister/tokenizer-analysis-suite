@@ -49,6 +49,8 @@ class UnifiedTokenizerAnalyzer:
                  per_language_plots: bool = False,
                  faceted_plots: bool = False,
                  code_ast_config: Optional[Dict[str, str]] = None,
+                 code_max_snippets_per_lang: Optional[int] = None,
+                 code_max_snippet_chars: Optional[int] = None,
                  math_data_path: Optional[str] = None,
                  use_builtin_math_data: bool = False):
         """
@@ -64,6 +66,15 @@ class UnifiedTokenizerAnalyzer:
             plot_tokenizers: Optional list of tokenizer names to include in plots
             per_language_plots: Whether to generate per-language plots
             faceted_plots: Whether to generate faceted plots (one subplot per tokenizer)
+            code_max_snippets_per_lang: Cap on code files loaded per language
+                for the code corpus (feeds both AST metrics and the code
+                domain of operator isolation). ``None`` uses
+                ``CodeDataLoader.DEFAULT_MAX_SNIPPETS_PER_LANG`` (0, no cap,
+                since 1.0.0).
+            code_max_snippet_chars: Cap on characters kept per loaded code
+                file; longer files are truncated. ``None`` uses
+                ``CodeDataLoader.MAX_SNIPPET_SIZE_CHARS`` (0, no cap, since
+                1.0.0).
             math_data_path: Optional path to math-rich text file for digit boundary metrics
         """
         # Validate input provider
@@ -99,7 +110,11 @@ class UnifiedTokenizerAnalyzer:
         code_texts: Dict[str, List[str]] = {}
         if code_ast_config:
             from .loaders.code_data import CodeDataLoader
-            _loader = CodeDataLoader(code_ast_config)
+            _loader = CodeDataLoader(
+                code_ast_config,
+                max_snippets_per_lang=code_max_snippets_per_lang,
+                max_snippet_chars=code_max_snippet_chars,
+            )
             _loader.load_all()
             code_texts = _loader.code_snippets
 
@@ -149,7 +164,9 @@ class UnifiedTokenizerAnalyzer:
         if code_ast_config is not None:
             try:
                 self.ast_boundary_metrics = ASTBoundaryMetrics(
-                    input_provider, code_config=code_ast_config
+                    input_provider, code_config=code_ast_config,
+                    max_snippets_per_lang=code_max_snippets_per_lang,
+                    max_snippet_chars=code_max_snippet_chars,
                 )
             except ImportError as e:
                 # tree-sitter missing is the one condition that disables these

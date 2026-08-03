@@ -432,6 +432,53 @@ class TestCodeDataLoader:
         loader.load_all()
         assert len(loader.get_code_snippets("python")) == 3
 
+    def test_defaults_load_every_file_and_no_truncation(self, tmp_path):
+        """Both caps are off by default: no file is dropped, no content is cut.
+
+        Before 1.0.0, CodeDataLoader() silently kept only the first 100 files
+        per language and truncated each to 15000 characters. This constructs
+        a loader the same way a caller with no explicit cap does (no
+        max_snippets_per_lang, no max_snippet_chars) and checks a directory
+        with more files than the old file cap, and one file longer than the
+        old character cap, comes back whole.
+        """
+        lang_dir = tmp_path / "python"
+        lang_dir.mkdir()
+        for i in range(150):
+            (lang_dir / f"f{i}.py").write_text(f"x = {i}\n")
+        long_line = "y = 1  # " + ("z" * 20_000) + "\n"
+        (lang_dir / "long.py").write_text(long_line)
+
+        loader = CodeDataLoader({"python": str(lang_dir)})
+        assert loader.max_snippets_per_lang == 0
+        assert loader.max_snippet_chars == 0
+
+        loader.load_all()
+        snippets = loader.get_code_snippets("python")
+        assert len(snippets) == 151
+        assert max(len(s) for s in snippets) > 15_000
+        assert loader.dropped_file_counts == {}
+        assert loader.truncated_char_counts == {}
+
+    def test_max_snippet_chars_cap_truncates_and_is_reported(self, tmp_path):
+        """max_snippet_chars truncates content and totals what it discarded.
+
+        Also guards the 0-as-sentinel convention shared with
+        max_snippets_per_lang: an earlier version of the truncation code
+        applied a cap of 0 as ``text[:0]``, which would silently reduce
+        every snippet to the empty string instead of leaving it uncapped.
+        """
+        lang_dir = tmp_path / "python"
+        lang_dir.mkdir()
+        (lang_dir / "a.py").write_text("a" * 100)
+        (lang_dir / "b.py").write_text("b" * 40)
+
+        loader = CodeDataLoader({"python": str(lang_dir)}, max_snippet_chars=50)
+        loader.load_all()
+        snippets = sorted(loader.get_code_snippets("python"))
+        assert snippets == ["a" * 50, "b" * 40]
+        assert loader.truncated_char_counts == {"python": 50}
+
     @requires_parquet
     def test_cap_limits_parquet_snippets(self, tmp_path):
         """Parquet loading also respects the cap."""

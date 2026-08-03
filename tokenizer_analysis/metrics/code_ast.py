@@ -284,6 +284,7 @@ class ASTBoundaryMetrics(BaseMetrics):
         input_provider: InputProvider,
         code_config: Optional[Dict[str, str]] = None,
         max_snippets_per_lang: Optional[int] = None,
+        max_snippet_chars: Optional[int] = None,
     ):
         super().__init__(input_provider)
 
@@ -299,9 +300,12 @@ class ASTBoundaryMetrics(BaseMetrics):
         from ..loaders.code_data import CodeDataLoader
 
         self.code_loader = CodeDataLoader(
-            code_config, max_snippets_per_lang=max_snippets_per_lang
+            code_config,
+            max_snippets_per_lang=max_snippets_per_lang,
+            max_snippet_chars=max_snippet_chars,
         )
         self.max_snippets_per_lang = self.code_loader.max_snippets_per_lang
+        self.max_snippet_chars = self.code_loader.max_snippet_chars
 
         if code_config:
             self.code_loader.load_all()

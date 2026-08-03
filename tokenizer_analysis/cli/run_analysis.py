@@ -957,6 +957,31 @@ Examples:
         action="store_true",
         help="Skip AST boundary alignment analysis"
     )
+    from tokenizer_analysis.loaders.code_data import CodeDataLoader
+    parser.add_argument(
+        "--max-code-files-per-lang",
+        type=int,
+        default=CodeDataLoader.DEFAULT_MAX_SNIPPETS_PER_LANG,
+        metavar="N",
+        help="Cap on code files loaded per language from --code-ast-config "
+             "paths, feeding the AST boundary alignment, identifier "
+             "fragmentation and indentation consistency metrics, and the "
+             "code domain of operator isolation. "
+             f"0 means no cap: every matching file is loaded (default: "
+             f"{CodeDataLoader.DEFAULT_MAX_SNIPPETS_PER_LANG}, no cap)."
+    )
+    parser.add_argument(
+        "--max-code-file-chars",
+        type=int,
+        default=CodeDataLoader.MAX_SNIPPET_SIZE_CHARS,
+        metavar="N",
+        help="Truncate each loaded code file to this many characters "
+             "before it reaches the code metrics. "
+             f"0 means no cap: every file is kept in full (default: "
+             f"{CodeDataLoader.MAX_SNIPPET_SIZE_CHARS}, no cap). Loading a "
+             "large corpus with no cap is slower: every file is parsed and "
+             "encoded in full."
+    )
     parser.add_argument(
         "--no-utf8-integrity",
         action="store_true",
@@ -1097,6 +1122,18 @@ def _build_run_metadata(args: argparse.Namespace, tokenizer_configs: Dict) -> Di
             "tokenized_data_file": args.tokenized_data_file,
             "samples_per_lang": args.samples_per_lang,
         },
+        # Effective caps applied by CodeDataLoader when --code-ast-config
+        # names real code files (max_code_files_per_lang feeds the AST
+        # metrics and the code domain of operator isolation; both were
+        # silent caps of 100 files / 15000 chars before 1.0.0 and now
+        # default to 0, no cap). These are the resolved values actually
+        # passed to the loader, not just whether the flags were typed, so a
+        # reader can tell what was measured without re-deriving argparse
+        # defaults.
+        "code_corpus_caps": {
+            "max_files_per_lang": args.max_code_files_per_lang,
+            "max_file_chars": args.max_code_file_chars,
+        },
         "metrics_disabled": sorted(
             flag for flag, off in (
                 ("code_ast", args.no_code_ast),
@@ -1195,10 +1232,29 @@ def _validate_corpus_source(args: argparse.Namespace) -> None:
         )
 
 
+def _validate_code_corpus_caps(args: argparse.Namespace) -> None:
+    """Reject a negative --max-code-files-per-lang or --max-code-file-chars.
+
+    0 is the documented "no cap" value; a negative number is neither a cap
+    nor "no cap" and would otherwise be treated the same as 0 by the loader
+    (see CodeDataLoader._load_language's ``cap > 0`` check), silently
+    discarding what the flag's value was actually supposed to mean.
+    """
+    for flag, value in (
+        ("--max-code-files-per-lang", args.max_code_files_per_lang),
+        ("--max-code-file-chars", args.max_code_file_chars),
+    ):
+        if value < 0:
+            raise ConfigurationError(
+                f"{flag} must be 0 (no cap) or a positive integer, got {value}."
+            )
+
+
 def run_from_args(args: argparse.Namespace):
     """Run tokenizer analysis from a parsed CLI namespace."""
 
     _validate_corpus_source(args)
+    _validate_code_corpus_caps(args)
 
     # Create output directory if it doesn't exist
     output_dir = Path(args.output_dir)
@@ -1336,6 +1392,8 @@ def run_from_args(args: argparse.Namespace):
             plot_save_dir=args.output_dir,
             morphscore_config=morphscore_config,
             code_ast_config=code_ast_config,
+            code_max_snippets_per_lang=args.max_code_files_per_lang,
+            code_max_snippet_chars=args.max_code_file_chars,
             show_global_lines=not args.no_global_lines,
             per_language_plots=args.per_language_plots,
             faceted_plots=args.faceted_plots,
@@ -1396,6 +1454,8 @@ def run_from_args(args: argparse.Namespace):
             plot_save_dir=args.output_dir,
             morphscore_config=morphscore_config,
             code_ast_config=code_ast_config,
+            code_max_snippets_per_lang=args.max_code_files_per_lang,
+            code_max_snippet_chars=args.max_code_file_chars,
             show_global_lines=not args.no_global_lines,
             per_language_plots=args.per_language_plots,
             faceted_plots=args.faceted_plots,
