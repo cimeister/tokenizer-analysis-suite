@@ -1,7 +1,18 @@
 """Tests for LaTeX table generation, focused on the metric registry that reads
 the per-tokenizer ``summary`` aggregates (math, code-AST, UTF-8, reconstruction,
 entropy). The key_paths here are the canonical ones, so a drift between the
-registry and a metric's actual output shape shows up as a missing table cell."""
+registry and a metric's actual output shape shows up in the generated tables.
+
+Since 1.0 that drift surfaces in one of two ways, and both are covered below. A
+key_path rooted at one of the six metrics ``merge_redundant_metrics`` deletes
+can never resolve on any results file, so ``LaTeXTableGenerator.__init__``
+raises; ``test_registry_rejects_a_path_into_a_merged_away_metric`` asserts that.
+Any other unresolvable key_path still renders '---' in every row and logs a
+warning, because a metric that published nulls for every tokenizer is a
+legitimate run outcome and must not abort the run;
+``test_every_registered_key_path_resolves_on_merged_results`` is what catches
+that case, by running the real merge over each metric's own output shape and
+requiring every registry entry to find a value."""
 import pytest
 
 from tokenizer_analysis.metrics.redundancy import MERGES, merge_redundant_metrics

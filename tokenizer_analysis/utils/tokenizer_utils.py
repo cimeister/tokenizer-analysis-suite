@@ -1,6 +1,11 @@
 """
-Utility functions for tokenizer analysis.
-Attempts to import from parent codebase first, falls back to standalone versions.
+Utility functions for tokenizer analysis: loading a raw ``tokenizers`` or
+``transformers`` tokenizer from a config dict, building a BPE tokenizer from a
+vocab.json plus merges.txt pair, and the logging configuration
+``setup_environment`` applies.
+
+Everything here imports ``tokenizers`` and ``transformers`` directly at module
+level. There is no parent codebase to import from and no import fallback.
 """
 
 import math
@@ -44,9 +49,30 @@ def load_tokenizer_from_config(config, name: str = "tokenizer"):
 def _load_huggingface_tokenizer(config):
     """
     Internal function to load raw HuggingFace tokenizer from configuration.
-    
+
     This function is used by the HuggingFaceTokenizer wrapper.
-    Tries to use original implementation first, falls back to simplified version.
+
+    Three strategies are tried in order, and what ``config['path']`` looks like
+    decides which of them run:
+
+    1. ``Tokenizer.from_file``, when the path ends in ``.json`` or names an
+       existing file.
+    2. ``PreTrainedTokenizerFast.from_pretrained`` and then
+       ``AutoTokenizer.from_pretrained``, unconditionally, since a Hub model id
+       is neither a file nor a directory. PreTrainedTokenizerFast is tried
+       first because it reads tokenizer.json directly: some repos ship a
+       complete tokenizer.json next to a SentencePiece model that AutoTokenizer
+       would resolve to and that is missing vocabulary (DeepSeek's is missing
+       CJK characters).
+    3. tokenizer.json, then vocab.json plus merges.txt, when the path is a
+       directory.
+
+    A strategy that raises logs a warning and the next one runs. When none
+    returns a tokenizer, this raises ValueError naming the path.
+
+    Strategy 3 reads a directory: ``tokenizer.json`` if present, otherwise
+    ``vocab.json`` plus ``merges.txt`` through
+    ``_load_custom_bpe_from_directory``.
     """
  
     path = config['path']
@@ -92,7 +118,15 @@ def _load_huggingface_tokenizer(config):
                     elif filename == 'vocab.json' and os.path.exists(os.path.join(path, 'merges.txt')):
                         # Load as BPE tokenizer
                         logger.info(f"Loading BPE tokenizer from directory: {path}")
-                        return _load_bpe_from_directory(path)
+                        # _load_custom_bpe_from_directory takes the config
+                        # dict, not the path. It was called here as
+                        # _load_bpe_from_directory(path), a name this module
+                        # never defined, and the NameError was caught by the
+                        # except Exception below, logged as a failure to read
+                        # that one file, and the load fell through to the final
+                        # ValueError. A directory holding vocab.json and
+                        # merges.txt could therefore never load by this route.
+                        return _load_custom_bpe_from_directory({'path': path})
                 except Exception as e:
                     logger.warning(f"Failed to load tokenizer from {file_path}: {e}")
                     continue

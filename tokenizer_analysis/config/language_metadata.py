@@ -248,7 +248,13 @@ def load_language_metadata(config_path: str) -> LanguageMetadata:
     return LanguageMetadata(config_path)
 
 
-# Default configuration for backward compatibility
+# Nothing in the package reads this. LanguageMetadata requires a config file
+# path and raises FileNotFoundError when the file is absent; it never falls
+# back to this dict or to any other default. It is kept as a written record of
+# the two top-level keys a language metadata config has. Note that the group
+# names below are the plural forms, which _SCRIPT_GROUP_KEYS and
+# _RESOURCE_GROUP_KEYS accept but do not prefer; the configs in configs/ use
+# the singular script_family and resource_level.
 DEFAULT_LANGUAGE_METADATA = {
     "languages": {},
     "analysis_groups": {

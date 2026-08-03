@@ -194,13 +194,25 @@ class CodeDataLoader:
 
         Respects :attr:`max_snippets_per_lang` (0 disables the cap: every
         matching file is kept) and :attr:`max_snippet_chars` (0 disables
-        truncation: each file is kept in full). Both are read here without a
-        cap and truncated/trimmed afterward, so the amount an active cap
-        actually discards can be measured exactly rather than approximated
-        from file sizes; when a cap discards anything, a warning names the
-        language and the amount, and the totals are added to
-        :attr:`dropped_file_counts` / :attr:`truncated_char_counts`. A run
-        with no active cap logs nothing extra.
+        truncation: each file is kept in full). When a cap discards anything, a
+        warning names the language and the amount, and the totals are added to
+        :attr:`dropped_file_counts` / :attr:`truncated_char_counts`. A run with
+        no active cap logs nothing extra.
+
+        The two caps are not accounted for the same way. Every file that is
+        read is read in full, and :attr:`max_snippet_chars` is applied to the
+        text afterward, so ``truncated_char_counts`` is the exact number of
+        characters truncation discarded. :attr:`max_snippets_per_lang` is not
+        applied only afterward: the directory branch below ``continue``s
+        mid-walk once the cap is reached, counting the remaining files as found
+        without reading them. ``dropped_file_counts`` therefore counts
+        candidate paths that were never opened, not snippets that were built
+        and thrown away. A path that would have read as empty, or whose every
+        line fails strict UTF-8 decoding, contributes nothing to
+        ``code_snippets`` when it is read, but is still counted as dropped when
+        the cap skips it. The two counts agree only when no cap is set, and the
+        parquet and single-file branches, which have no early stop and are
+        trimmed after the fact, are exact either way.
         """
         existing = len(self.code_snippets.get(lang, []))
         cap = self.max_snippets_per_lang
@@ -299,15 +311,37 @@ class CodeDataLoader:
         a BOM in place. Both then reach the metrics as if they were part of the
         code's layout.
 
-        The BOM is the more damaging of the two. A byte-level tokenizer
-        re-encodes U+FEFF as three visible characters, so the reconstructed text
-        starts with characters the source does not contain. The greedy scan in
-        ``BaseMetrics._build_source_to_recon_map`` stalls at index 0 and maps the
-        whole snippet to None, and every AST span in it is then charged to the
-        tokenizer as misaligned. Two of the three bundled C# samples carry a BOM,
-        which is why C# scored 0.13 to 0.19 against a 0.51 to 0.70 median for
-        every tokenizer alike, and why identifier_fragmentation reported a
-        negative tokens-per-identifier for C#.
+        The BOM used to be the more damaging of the two, for a reason that no
+        longer applies. A byte-level tokenizer re-encodes U+FEFF as three
+        visible characters, so the reconstructed text started with characters
+        the source does not contain; the greedy scan in
+        ``BaseMetrics._build_source_to_recon_map`` stalled at index 0 and mapped
+        the whole snippet to None, and every AST span in it was then charged to
+        the tokenizer as misaligned. Two of the three bundled C# samples carry a
+        BOM, which is why C# scored 0.13 to 0.19 against a 0.51 to 0.70 median
+        for every tokenizer alike, and why identifier_fragmentation reported a
+        negative tokens-per-identifier for C#. Both of those are gone
+        independently of this strip: no metric builds a reconstruction any more,
+        they all read the encoder's character offsets, and
+        ``_identifier_stats`` keeps an unmapped identifier out of the rates
+        rather than scoring it as -1 tokens.
+
+        The offsets reason that remains is conditional. The offsets map U+FEFF
+        to whichever token covers it, and when that is a token of its own, every
+        AST span scores exactly as it would without the BOM. Measured on a C#
+        snippet, full_alignment_rate is 0.9130 with and without the BOM under
+        tokenizers/bpe.json and 1.0000 under tokenizers/unigramlm.json, with 0
+        of 38 source characters unmapped in each of the four runs. When a
+        vocabulary has a merge joining U+FEFF to the character after it, one
+        token covers both the BOM and the first code character, and the first
+        AST span's start boundary then scores as misaligned. Neither bundled
+        tokenizer has such a merge.
+
+        The strip also matters to the indentation metrics, which is not an
+        offsets question: ``str.lstrip`` does not treat U+FEFF as whitespace,
+        so ``_extract_line_indentation`` reads a BOM followed by four spaces
+        and ``x = 1`` as indent width 0, against 4 for the same line without
+        the BOM.
 
         CRLF matters for the indentation metrics, which measure leading
         whitespace per line; a trailing ``\\r`` is not indentation.

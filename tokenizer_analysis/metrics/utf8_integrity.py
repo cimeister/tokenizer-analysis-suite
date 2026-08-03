@@ -4,9 +4,9 @@ UTF-8 character boundary integrity metrics.
 Two complementary metrics detect when byte-level tokenizers split
 multi-byte UTF-8 characters across token boundaries:
 
-1. **Token Boundary Integrity Rate** (token-centric) -- fraction of
+1. **Token Boundary Integrity Rate** (token-centric): fraction of
    content tokens whose bytes form valid, complete UTF-8.
-2. **Character Boundary Split Count** (text-centric) -- how many
+2. **Character Boundary Split Count** (text-centric): how many
    multi-byte characters in the source text have their bytes spread
    across multiple tokens.
 """
@@ -231,7 +231,7 @@ class UTF8IntegrityMetrics(BaseMetrics):
                 if ch in unicode_to_byte:
                     raw.append(unicode_to_byte[ch])
                 else:
-                    # Character not in GPT-2 table — encode as UTF-8
+                    # Character not in GPT-2 table, so encode as UTF-8
                     # (shouldn't happen for well-formed GPT-2 vocab)
                     raw.extend(ch.encode('utf-8'))
             return bytes(raw)
@@ -277,7 +277,7 @@ class UTF8IntegrityMetrics(BaseMetrics):
 
         A boundary-crossing token is the product of a BPE merge that fused
         bytes across a character boundary.  For example, ``b'\\xa9\\xe4'``
-        contains the tail of one character and the lead of another —
+        contains the tail of one character and the lead of another, and
         neither is complete.
 
         Single-byte tokens and tokens that decode cleanly as one or more
@@ -295,7 +295,7 @@ class UTF8IntegrityMetrics(BaseMetrics):
         while i < n:
             b = data[i]
             if b < 0x80:
-                # ASCII — always complete
+                # ASCII: always complete
                 char_count += 1
                 i += 1
             elif 0x80 <= b <= 0xBF:
@@ -368,13 +368,16 @@ class UTF8IntegrityMetrics(BaseMetrics):
         """Classify the type of UTF-8 malformation in *data*.
 
         Returns:
-            ``'trailing_incomplete'`` — ends with a leading byte lacking
+            ``'trailing_incomplete'``: ends with a leading byte lacking
             enough continuation bytes (the data simply runs out).
-            ``'orphan_continuation'`` — contains a continuation byte (0x80-0xBF)
+            ``'orphan_continuation'``: contains a continuation byte (0x80-0xBF)
             not preceded by a valid leading byte, **or** a leading byte is
             followed by a non-continuation byte (the follower byte is
-            effectively orphaned from any valid sequence).
-            ``None`` — data is valid UTF-8.
+            effectively orphaned from any valid sequence), **or** a byte that
+            can never lead a UTF-8 sequence at all (0xF8 and above). The third
+            case is not an orphaned follower, but it is reported under the same
+            name, so a caller counting orphan_continuation is counting both.
+            ``None``: data is valid UTF-8.
         """
         try:
             data.decode('utf-8')
@@ -390,7 +393,7 @@ class UTF8IntegrityMetrics(BaseMetrics):
         while i < n:
             b = data[i]
             if b < 0x80:
-                # ASCII — valid, advance
+                # ASCII: valid, advance
                 i += 1
             elif 0x80 <= b <= 0xBF:
                 # Continuation byte without preceding leader
@@ -484,11 +487,11 @@ class UTF8IntegrityMetrics(BaseMetrics):
                         found = True
                         break
                 if not found:
-                    # Reverse case: source has extra bytes — skip this
+                    # Reverse case: source has extra bytes, so skip this
                     # source byte and try matching the next source byte
                     # against the same reconstructed position.
                     mismatches += 1
-                    # Do NOT advance j — the current reconstructed byte
+                    # Do NOT advance j: the current reconstructed byte
                     # may match a later source byte.
 
         return mapping, mismatches
@@ -532,7 +535,7 @@ class UTF8IntegrityMetrics(BaseMetrics):
             if b < 0x80:
                 char_len = 1
             elif b < 0xC0:
-                # Orphan continuation byte — skip
+                # Orphan continuation byte: skip
                 i += 1
                 continue
             elif b < 0xE0:

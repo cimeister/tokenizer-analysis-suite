@@ -1,5 +1,20 @@
 """
-Base metrics class for unified TokenizedData interface - skeleton only.
+Shared base for the metric classes that read the unified TokenizedData
+interface.
+
+``BaseMetrics`` is the abstract class every metric subclasses. It defines the
+per-tokenizer context the metrics resolve once and read per token (declared
+special tokens, detected subword markers, probed character decode table), the
+token-id to token-string conversion with its fallbacks, the statistics helpers
+(``compute_basic_stats``, ``safe_divide``, ``compute_pairwise_comparisons``)
+and the input validators. ``TokenizedDataProcessor`` below it groups and
+flattens TokenizedData lists. ``format_optional`` prints a None as 'n/a'.
+
+The token-string reconstruction helpers here (``_process_token``,
+``_clean_token``, ``_build_char_to_token_map``,
+``_build_source_to_recon_map``) have no production caller. Each has its own
+note recording what the reconstruction got wrong and why the metrics read the
+encoder's character offsets instead.
 """
 
 from abc import ABC, abstractmethod
@@ -58,8 +73,6 @@ _SUBWORD_NMT_CONTINUATION_SUFFIX = '@@'  # subword-nmt continuation suffix
 class BaseMetrics(ABC):
     """Base class for tokenizer metrics using TokenizedData interface."""
 
-    # Pre-compiled regex patterns for subword marker handling.
-    # Shared by DigitBoundaryMetrics, ASTBoundaryMetrics and MorphScoreMetrics.
     # Bounded re-sync for _build_source_to_recon_map. The window caps how long
     # a divergence can be and still be recovered; the anchor is how many
     # characters must agree before the scan trusts the new alignment. A
@@ -67,6 +80,12 @@ class BaseMetrics(ABC):
     _RESYNC_WINDOW = 32
     _RESYNC_ANCHOR = 3
 
+    # Pre-compiled regex patterns for subword marker handling. _CONTINUATION,
+    # _END_WORD and _CONTINUATION_END are read in one place, _process_token,
+    # and nowhere else; MorphScoreMetrics reads none of them. _SPACE_PREFIX has
+    # no reference anywhere in the package. _process_token tests the decoded
+    # first character against ' ' directly, because _DEFAULT_CHAR_DECODE has
+    # already rewritten Ġ and ▁ to a space by the time that check runs.
     _SPACE_PREFIX = re.compile(r'^[Ġ▁ ]')
     _CONTINUATION = re.compile(r'^##')
     _END_WORD = re.compile(r'</w>$')

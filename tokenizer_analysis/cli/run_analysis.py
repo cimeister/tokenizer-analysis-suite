@@ -3,11 +3,11 @@ Unified tokenizer analysis script supporting both raw tokenizers and pre-tokeniz
 
 Raw tokenizer examples:
 tokenizer-analysis --use-sample-data
-tokenizer-analysis --tokenizer-config configs/tokenizer_config.json --language-config configs/language_config.json --measurement-config configs/text_measurement_config_bytes.json --samples-per-lang 3000 --output-dir analysis_results --verbose --run-grouped-analysis
+tokenizer-analysis --tokenizer-config configs/sample_tokenizers.json --language-config configs/core_lang_config.json --measurement-config configs/text_measurement_config_bytes.json --samples-per-lang 3000 --output-dir analysis_results --verbose --run-grouped-analysis
 
 Pre-tokenized data examples:
-tokenizer-analysis --tokenized-data-file tokenized_data.json --language-config configs/language_config.json
-tokenizer-analysis --tokenized-data-file tokenized_data.pkl --tokenized-data-config tokenized_config.json --language-config configs/language_config.json --run-grouped-analysis
+tokenizer-analysis --tokenized-data-file tokenized_data.json --language-config configs/core_lang_config.json
+tokenizer-analysis --tokenized-data-file tokenized_data.pkl --tokenized-data-config tokenized_config.json --language-config configs/core_lang_config.json --run-grouped-analysis
 """
 import argparse
 import logging
@@ -320,6 +320,24 @@ def _slim_tokenizer_entry(
     reach outside this tokenizer's ``per_tokenizer`` entry (e.g. operator
     isolation's pooled ``summary``, which lives as a sibling of
     ``per_tokenizer`` rather than inside it). Every other branch ignores them.
+
+    Six branches below name a metric no CLI run reaches: avg_tokens_per_line,
+    type_token_ratio, unigram_distribution_metrics, lorenz_curve_data,
+    utf8_char_split and digit_split_variability. Each is marked
+    "unreachable from a CLI run" at its branch.
+    ``merge_redundant_metrics`` runs inside
+    ``UnifiedTokenizerAnalyzer.run_analysis``, on the whole-corpus results and
+    again on every grouped block, and deletes all six from the top level before
+    ``slim_results_for_json`` is called.
+
+    They are kept rather than deleted for two reasons. ``slim_results_for_json``
+    is importable and is called directly on hand-built results dicts, including
+    in tests/test_cli_and_config.py. And ``merge_redundant_metrics`` skips a
+    merge when either member of a pair is absent, so a caller assembling
+    results from part of the pipeline can still have a top-level secondary
+    metric in its dict. Deleting a name here would not raise for such a caller:
+    the entry would fall through to the generic branch at the end of this
+    function and be published in a different shape, with no error.
     """
     if not isinstance(tok_data, dict):
         return tok_data
@@ -335,6 +353,8 @@ def _slim_tokenizer_entry(
             out[_field] = tok_data[_field]
 
     # --- Metrics with a standard 'global' stats dict ---
+    # avg_tokens_per_line: unreachable from a CLI run (merged into
+    # compression_rate). See the docstring.
     if metric_name in ('fertility', 'avg_tokens_per_line'):
         if 'global' in tok_data:
             out['global'] = _strip_stats(tok_data['global'])
@@ -368,7 +388,8 @@ def _slim_tokenizer_entry(
         if 'per_language' in tok_data:
             out['per_language'] = tok_data['per_language']
 
-    # --- Type-token ratio ---
+    # --- Type-token ratio: unreachable from a CLI run (merged into
+    # vocabulary_utilization). See the docstring. ---
     elif metric_name == 'type_token_ratio':
         out['global'] = {
             'ttr': tok_data.get('global_ttr'),
@@ -376,7 +397,8 @@ def _slim_tokenizer_entry(
             'tokens': tok_data.get('global_tokens'),
         }
 
-    # --- Unigram distribution metrics ---
+    # --- Unigram distribution metrics: unreachable from a CLI run (merged
+    # into renyi_efficiency). See the docstring. ---
     elif metric_name == 'unigram_distribution_metrics':
         out['global'] = {
             'unigram_entropy': tok_data.get('global_unigram_entropy'),
@@ -444,7 +466,8 @@ def _slim_tokenizer_entry(
         if 'language_costs' in tok_data:
             out['per_language'] = tok_data['language_costs']
 
-    # --- Lorenz curve data: keep as-is but sample large arrays ---
+    # --- Lorenz curve data: keep as-is but sample large arrays. Unreachable
+    # from a CLI run (merged into tokenizer_fairness_gini). See the docstring. ---
     elif metric_name == 'lorenz_curve_data':
         for key, value in tok_data.items():
             out[key] = _sample_array(value)
@@ -459,6 +482,8 @@ def _slim_tokenizer_entry(
                 out[key] = _strip_stats(tok_data[key])
 
     # --- UTF-8 metrics ---
+    # utf8_char_split: unreachable from a CLI run (merged into
+    # utf8_token_integrity). See the docstring.
     elif metric_name in ('utf8_token_integrity', 'utf8_char_split'):
         if 'global' in tok_data:
             out['global'] = tok_data['global']
@@ -483,6 +508,8 @@ def _slim_tokenizer_entry(
         # by_category dropped (full results only)
 
     # --- Digit boundary metrics: overall is per-language, keep by_digit_length and by_bucket ---
+    # digit_split_variability: unreachable from a CLI run (merged into
+    # three_digit_boundary_alignment). See the docstring.
     elif metric_name in ('three_digit_boundary_alignment', 'digit_split_variability'):
         if 'overall' in tok_data:
             out['per_language'] = tok_data['overall']

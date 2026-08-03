@@ -380,10 +380,6 @@ class ASTBoundaryMetrics(BaseMetrics):
         return result
 
     # ------------------------------------------------------------------
-    # Source → reconstructed-text coordinate mapping
-    # ------------------------------------------------------------------
-
-    # ------------------------------------------------------------------
     # Identifier token counting
     # ------------------------------------------------------------------
 
@@ -396,8 +392,18 @@ class ASTBoundaryMetrics(BaseMetrics):
     ) -> Optional[int]:
         """Count the number of distinct token indices spanning a source character range.
 
-        Uses the existing ``source_to_recon`` + ``char_to_token`` coordinate
-        chain.  Returns ``None`` if the span cannot be mapped.
+        Uses the ``source_to_recon`` + ``char_to_token`` coordinate chain.
+        Returns ``None`` if the span cannot be mapped.
+
+        No metric calls this any more. The identifier counts come from
+        ``_count_identifier_tokens_offsets``, which reads the encoder's
+        character offsets. The chain this walks ends in text rebuilt by
+        concatenating cleaned token strings, and that reconstruction is not the
+        source: see ``BaseMetrics._process_token`` and
+        ``_build_source_char_to_token_map`` for what it got wrong and by how
+        much. Kept because it is unit-tested, and because
+        ``_count_identifier_tokens_fast`` is checked against it; do not wire it
+        back into a metric.
         """
         recon_positions = []
         for pos in range(char_start, min(char_end, len(source_to_recon))):
@@ -452,8 +458,10 @@ class ASTBoundaryMetrics(BaseMetrics):
         """Build a source-char → token-index map from encoding offsets.
 
         Each entry in *offsets* is ``(start_char, end_char)`` in the
-        original source text for the corresponding token.  Special tokens
-        with ``(0, 0)`` are skipped.
+        original source text for the corresponding token.  Any zero-width
+        span (``start == end``) is skipped: a special token reported as
+        ``(0, 0)`` is the usual case, and a zero-width span reported at any
+        other position is skipped on the same test.
 
         Returns a list of length *source_len* where entry *i* is the
         token index covering that position, or ``None``.
@@ -461,7 +469,8 @@ class ASTBoundaryMetrics(BaseMetrics):
         result: List[Optional[int]] = [None] * source_len
         for tok_idx, (start, end) in enumerate(offsets):
             if start == end:
-                # Special token (e.g. <s>, </s>): no source coverage
+                # Zero-width span: no source coverage. A special token
+                # (<s>, </s>) reported as (0, 0) is the usual case.
                 continue
             for pos in range(start, min(end, source_len)):
                 result[pos] = tok_idx
@@ -536,7 +545,10 @@ class ASTBoundaryMetrics(BaseMetrics):
 
         Requires *offsets* from ``encode_with_offsets``, which is exact.
         *tokenizer_name* only names the tokenizer in the error raised when the
-        offsets are missing.
+        offsets are missing. *token_strings* is read nowhere in this method: it
+        was the input the removed reconstruction fallback rebuilt its text from,
+        and the parameter is kept so the existing call sites and tests do not
+        have to change.
 
         There used to be a fallback that rebuilt the text by concatenating token
         strings and walked the two in step. It advanced only on an exact
@@ -638,6 +650,16 @@ class ASTBoundaryMetrics(BaseMetrics):
         via *source_to_recon* before checking against *char_to_token*.
 
         Returns ``None`` if the span cannot be mapped.
+
+        No metric calls this any more. The alignment comes from
+        ``_check_boundary_alignment_offsets``, which reads the encoder's
+        character offsets. The reconstructed-text coordinate space this
+        translates into is built by concatenating cleaned token strings and is
+        not the source: see ``BaseMetrics._process_token`` and
+        ``_build_source_char_to_token_map`` for what it got wrong and by how
+        much. Kept because it is unit-tested, and because
+        ``_check_boundary_alignment_fast`` is checked against it; do not wire it
+        back into a metric.
         """
         # Map start position
         recon_start = None
@@ -712,6 +734,11 @@ class ASTBoundaryMetrics(BaseMetrics):
         Same semantics as :meth:`_check_boundary_alignment` but operates
         on numpy ``int64`` arrays (``-1`` for unmapped positions) to avoid
         repeated Python list-indexing overhead.
+
+        No metric calls this any more; its only callers are the tests that
+        check it against :meth:`_check_boundary_alignment`. See the block
+        comment above for the measured reason the reconstructed-text
+        coordinates both of them read were abandoned.
         """
         s2r_len = len(s2r_arr)
 
@@ -761,6 +788,11 @@ class ASTBoundaryMetrics(BaseMetrics):
         """Fast identifier token counting using pre-built numpy arrays.
 
         Same semantics as :meth:`_count_identifier_tokens`.
+
+        No metric calls this any more; its only callers are the tests that
+        check it against :meth:`_count_identifier_tokens`. See the block
+        comment above for the measured reason the reconstructed-text
+        coordinates both of them read were abandoned.
         """
         s2r_len = len(s2r_arr)
         hi = min(char_end, s2r_len)
@@ -1056,14 +1088,21 @@ class ASTBoundaryMetrics(BaseMetrics):
 
         # Pre-build character decode tables for byte-level BPE / SP tokenizers.
         decode_tables = {n: self._build_char_decode_table(t) for n, t in active_tokenizers}
-        # Pre-resolve each tokenizer's declared special tokens. _process_token
-        # deletes these from the reconstruction, so they have to be the ones this
-        # tokenizer declares rather than anything matched on surface form.
+        # Pre-resolve each tokenizer's declared special tokens. They have to be
+        # the ones this tokenizer declares rather than anything matched on
+        # surface form; BaseMetrics._process_token records what a surface
+        # pattern deleted instead.
         special_tokens = {n: self._resolve_special_tokens(t) for n, t in active_tokenizers}
-        # Pre-resolve each tokenizer's subword-marker set. _process_token strips
-        # a marker (WordPiece '##', CLIP-BPE '</w>', subword-nmt '@@') only when
-        # this tokenizer is shown to use it; see _detect_subword_markers.
+        # Pre-resolve each tokenizer's subword-marker set. A marker (WordPiece
+        # '##', CLIP-BPE '</w>', subword-nmt '@@') is stripped only when this
+        # tokenizer is shown to use it; see _detect_subword_markers.
         subword_markers = {n: self._resolve_subword_markers(t) for n, t in active_tokenizers}
+        # _process_token is the only reader of the three values installed by
+        # _set_tokenizer_context below, and nothing on this path calls it any
+        # more: the alignment, identifier and indentation paths all read the
+        # encoder's character offsets. The context is still installed per
+        # snippet per tokenizer, so the three attributes are never left set to
+        # another tokenizer's values.
 
         for code_lang, spans_list in parsed_spans.items():
             snippets = code_snippets[code_lang]
@@ -1588,7 +1627,7 @@ class ASTBoundaryMetrics(BaseMetrics):
     ) -> Dict[str, Any]:
         """Build indentation consistency results from accumulated data.
 
-        Computes two metrics per language per tokenizer:
+        Computes one metric per language per tokenizer:
 
         - ``depth_proportionality_correlation``: Spearman rho between
           indentation depth and the number of whitespace tokens. Spearman is

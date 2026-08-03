@@ -1,5 +1,7 @@
 """
-Information-theoretic metrics including entropy, compression, and vocabulary utilization.
+Information-theoretic metrics. ``compute()`` publishes compression_rate,
+renyi_efficiency, unigram_distribution_metrics, bigram_entropy and
+trigram_entropy. Vocabulary utilization is not here; it is in metrics/basic.py.
 """
 
 from typing import Dict, List, Any, Optional
@@ -39,7 +41,8 @@ class InformationTheoreticMetrics(BaseMetrics):
 
         Args:
             input_provider: InputProvider instance
-            renyi_alphas: List of alpha values for Rényi entropy (default: [1.0, 2.0, 3.0])
+            renyi_alphas: List of alpha values for Rényi entropy. ``None`` uses
+                ``constants.DEFAULT_RENYI_ALPHAS``, currently [1.0, 2.0, 2.5, 3.0].
             measurement_config: Configuration for text measurement method
             language_metadata: Optional language metadata for grouping
             min_bigram_occurrences: Minimum number of bigram occurrences for a
@@ -49,10 +52,10 @@ class InformationTheoreticMetrics(BaseMetrics):
         """
         super().__init__(input_provider)
         self.renyi_alphas = renyi_alphas or DEFAULT_RENYI_ALPHAS
-        # Whatever unit the run measures text in, bytes by default. The
-        # comment here used to say lines, and the line config is imported
-        # below and never used, but the assignment has always taken the
-        # byte config.
+        # Whatever unit the run measures text in, bytes by default. The comment
+        # here used to say lines. It never matched the code: this assignment has
+        # always taken DEFAULT_TEXT_MEASUREMENT_CONFIG, which is the byte
+        # config, and this module does not import the line config at all.
         self.measurement_config = measurement_config or DEFAULT_TEXT_MEASUREMENT_CONFIG
         self.text_measurer = TextMeasurer(self.measurement_config)
         self.language_metadata = language_metadata
@@ -563,7 +566,7 @@ class InformationTheoreticMetrics(BaseMetrics):
             'per_language': {},
             'pairwise_comparisons': {},
             'metadata': {
-                'description': 'Bigram Entropy — frequency-weighted normalized Shannon entropy of right-accessor distributions',
+                'description': 'Bigram Entropy: frequency-weighted normalized Shannon entropy of right-accessor distributions',
                 'reference': 'Poelman et al. 2025, EMNLP (Shannon efficiency η)',
                 'metric_range': '[0.0, 1.0]',
                 'interpretation': 'Higher = more uniform successor distributions',
@@ -591,8 +594,9 @@ class InformationTheoreticMetrics(BaseMetrics):
                     'windows, so this value rises as the corpus shrinks.',
                 ],
                 'reference_variant': (
-                    'bigram_entropy_poelman carries the reference normalizer and '
-                    'unweighted aggregation for comparison.'
+                    "The sibling 'reference_definition' block of this metric "
+                    'reports the same corpus under the reference normalizer '
+                    'and an unweighted aggregation, for comparison.'
                 ),
             }
         }
@@ -721,7 +725,7 @@ class InformationTheoreticMetrics(BaseMetrics):
             'per_language': {},
             'pairwise_comparisons': {},
             'metadata': {
-                'description': 'Trigram Entropy — frequency-weighted normalized Shannon entropy of right-accessor distributions conditioned on bigram context',
+                'description': 'Trigram Entropy: frequency-weighted normalized Shannon entropy of right-accessor distributions conditioned on bigram context',
                 'reference': 'Extension of Poelman et al. 2025 (Shannon efficiency η) to trigram contexts',
                 'metric_range': '[0.0, 1.0]',
                 'interpretation': 'Higher = more uniform successor distributions given bigram context',

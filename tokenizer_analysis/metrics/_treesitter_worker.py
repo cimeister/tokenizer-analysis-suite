@@ -30,7 +30,8 @@ CATEGORIES = ("identifier", "keyword", "operator", "literal", "delimiter")
 # Consumers iterate this dict, they do not index it by the five category names,
 # so the extra key is not inert: every consumer has to skip it by name.
 # ASTBoundaryMetrics does that in compute() and compute_per_text(), counts the
-# spans, and publishes the count under parse_error_spans. Until 1.0 it did not,
+# spans, and publishes the count under parse_error_spans in compute() and
+# n_parse_error_spans in compute_per_text(). Until 1.0 it did not,
 # and unparsed source was scored as a sixth AST category: 4645 of gpt2's 1594200
 # spans on the benchmark corpus, 0.2914% of every published full_alignment_rate.
 ERROR_SPANS_KEY = "_error_spans"
@@ -128,7 +129,7 @@ def classify_node(node) -> Optional[str]:
     if text in DELIMITER_CHARS and len(text) == 1:
         return "delimiter"
 
-    # Identifiers — checked before keywords intentionally: if the grammar
+    # Identifiers, checked before keywords intentionally: if the grammar
     # assigns an identifier type, we trust that classification even when
     # the text appears in KNOWN_KEYWORDS (e.g. ``self`` in Python is
     # a conventional identifier, not a reserved keyword).
@@ -216,7 +217,7 @@ def _parse_one_snippet(parser, snippet, timeout):
     t.join(timeout=timeout)
 
     if t.is_alive():
-        return None  # timed out — thread will die with the process
+        return None  # timed out; the thread dies with the process
     if error[0] is not None:
         return None
     return result[0]
@@ -229,8 +230,11 @@ def parse_snippets(
 ) -> Dict[str, List[Dict[str, List[Tuple[int, int]]]]]:
     """Parse all code snippets with tree-sitter.
 
-    This is the main entry point for both in-process and subprocess usage.
-    All inputs and outputs are pure-Python primitives (picklable).
+    This is the entry point the subprocess runs, called from the
+    ``__main__`` block below. No metric calls it in-process: a grammar can
+    abort the calling process, so ``code_ast.parse_snippets_fenced`` spawns one
+    subprocess per language instead. All inputs and outputs are pure-Python
+    primitives (picklable).
 
     Parameters
     ----------
@@ -314,7 +318,7 @@ if __name__ == "__main__":
             file=sys.stderr,
         )
 
-    # Protocol: two CLI arguments — input pickle path, output pickle path.
+    # Protocol: two CLI arguments, an input pickle path and an output pickle path.
     # The input file contains (code_snippets, lang_to_treesitter).
     # The output file receives the parsed result dict.
     if len(sys.argv) != 3:

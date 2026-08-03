@@ -2,8 +2,8 @@
 
 The aggregate pipeline (BasicTokenizationMetrics, UTF8IntegrityMetrics) computes
 metrics over language groups and corpora. This module exposes the same underlying
-computations at single-document granularity — designed for joining with LM
-eval `_samples.json` files where each entry has a `doc_id` and a single prompt.
+computations at single-document granularity, for joining with LM eval
+`_samples.json` files where each entry has a `doc_id` and a single prompt.
 
 All UTF-8 byte-conversion / validity / boundary-crossing logic is delegated to
 the static methods on `UTF8IntegrityMetrics`. We do not duplicate that logic
@@ -62,8 +62,17 @@ def maybe_detect_gpt2(tokenizer) -> Optional[Dict[str, int]]:
     """Heuristic detection of GPT-2-style byte encoding. Returns the unicode_to_byte
     table if detected (so per-example callers can pass it through), else None.
 
-    Mirrors the cached detection in UTF8IntegrityMetrics._detect_gpt2_encoding
-    but without requiring an instance.
+    This is the marker-count heuristic alone, and it is weaker than
+    ``UTF8IntegrityMetrics._detect_gpt2_encoding``, which introspects the
+    tokenizer's ByteLevel component first and falls back to the marker count
+    only when that is inconclusive. The marker count is unsound in one
+    direction: a byte-level tokenizer trained on a corpus that never exercises
+    the control bytes contains fewer than ``_GPT2_DETECTION_THRESHOLD`` marker
+    characters, is read here as not byte-level, and then has every token string
+    interpreted as literal text, which always encodes to valid UTF-8. Measured
+    on gpt4o-english-bpe: 37 of the 68 GPT-2 marker characters present, below
+    the threshold of 50, detection missed, completeness reported as 1.0000
+    against a true 0.6688.
     """
     try:
         vocab = None
@@ -216,8 +225,8 @@ def per_example_all(
     """Convenience wrapper: returns the union of `per_example_basic` and
     `per_example_utf8_integrity` for one (tokenizer, text) pair.
 
-    GPT-2 detection is cached in the optional `gpt2_unicode_to_byte` argument —
-    callers iterating many texts for the same tokenizer should detect once and
+    GPT-2 detection is cached in the optional `gpt2_unicode_to_byte` argument.
+    Callers iterating many texts for the same tokenizer should detect once and
     pass it in to avoid re-scanning the vocab per call. `special_tokens` works
     the same way; see `per_example_utf8_integrity`.
     """
@@ -235,7 +244,7 @@ def per_example_all(
 # A trivial InputProvider stub for instantiating metric classes that
 # normally require one. The metric classes we use here (DigitBoundaryMetrics,
 # ASTBoundaryMetrics) only consult ``self.input_provider`` inside their
-# aggregator ``compute()`` paths — the per-text methods don't touch it.
+# aggregator ``compute()`` paths; the per-text methods do not touch it.
 class _StubInputProvider:
     """Minimal InputProvider stub used solely to satisfy BaseMetrics.__init__.
     Not used by compute_per_text; provided so the metric classes can be
@@ -259,11 +268,11 @@ class _StubInputProvider:
 # use on the per-text path, which is also cheap).
 #
 # NOT THREAD-SAFE: ``compute_per_text`` snapshots and restores
-# ``self._char_decode_table`` and ``self._special_tokens`` (shared mutable
-# attributes) around its body.
+# ``self._char_decode_table``, ``self._special_tokens`` and
+# ``self._subword_markers`` (shared mutable attributes) around its body.
 # Two threads calling ``per_example_*_alignment`` concurrently on the same
-# singleton can race and observe each other's char-decode table or
-# special-token set during the critical section. For multi-threaded use,
+# singleton can race and observe each other's char-decode table, special-token
+# set or subword-marker set during the critical section. For multi-threaded use,
 # either (a) instantiate a fresh
 # ``DigitBoundaryMetrics`` / ``ASTBoundaryMetrics`` per thread (cheap), or
 # (b) guard the call site with a ``threading.Lock``. Single-threaded use
@@ -295,7 +304,7 @@ def per_example_digit_alignment(
 ) -> Dict[str, Any]:
     """Per-doc digit boundary + operator isolation metrics for math prompts.
 
-    Delegates to ``DigitBoundaryMetrics.compute_per_text`` — uses the EXACT
+    Delegates to ``DigitBoundaryMetrics.compute_per_text``, which uses the EXACT
     canonical alignment scoring (``_score_boundaries``,
     ``_get_digit_span_boundaries``, ``_find_number_spans``).
     """
@@ -312,10 +321,12 @@ def per_example_ast_alignment(
 ) -> Dict[str, Any]:
     """Per-doc AST boundary alignment metrics for code prompts.
 
-    Delegates to ``ASTBoundaryMetrics.compute_per_text`` — uses the EXACT
+    Delegates to ``ASTBoundaryMetrics.compute_per_text``, which uses the EXACT
     canonical alignment scoring (``_check_boundary_alignment_offsets``,
-    ``_count_identifier_tokens_offsets``) plus in-process tree-sitter parsing
-    (``parse_snippets``).
+    ``_count_identifier_tokens_offsets``) and parses through
+    ``parse_snippets_fenced``, one subprocess per language. There is no
+    in-process parsing path: a grammar can abort the calling process, so
+    parsing is fenced here exactly as it is in ``compute()``.
 
     ``tokenizer`` has to report character offsets; one that does not raises
     ``ValueError`` naming it rather than returning a row.

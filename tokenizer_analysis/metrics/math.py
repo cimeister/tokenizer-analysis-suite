@@ -1811,9 +1811,18 @@ class DigitBoundaryMetrics(BaseMetrics):
         ``uniform_chunk_rate``, ``n_operators``, ``operator_isolation_rate``,
         ``n_compound_operators``, ``compound_operator_preserved_rate``,
         ``n_tokens`` (the token count produced for the whole text, useful
-        as a regression covariate).
+        as a regression covariate), and ``parse_status``.
         NaN is returned for ratios with empty denominators (e.g. no digit
         spans in the text).
+
+        ``parse_status`` says which of four paths produced the row, so a
+        caller joining many rows can tell an unmeasured text from a measured
+        one: ``"ok"``, ``"empty"`` for an empty text, ``"no_digits_or_operators"``
+        when the text contains neither, and ``"encode_error:<ExceptionName>"``
+        when the tokenizer raised. Every status other than ``"ok"`` comes with
+        zero span and operator counts and NaN rates;
+        ``"no_digits_or_operators"`` still reports the text's real
+        ``n_tokens``, the other two report 0.
         """
         empty = {
             "n_digit_spans": 0,

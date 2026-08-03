@@ -34,6 +34,28 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   published `0.0` for an isolation or compound-preservation rate with no
   operators of that kind in the group, where the top level publishes `null`.
 
+- A directory holding `vocab.json` and `merges.txt` loads. Strategy 3 of the
+  HuggingFace loader called `_load_bpe_from_directory`, a name the module never
+  defined; the `NameError` was caught by the handler around it, logged as a
+  failure to read one file, and the load fell through to the final error naming
+  the path, so a defect read as a bad directory. That route could never load a
+  tokenizer.
+- `tokenizer_fairness_gini` is deterministic. The same commit on the same inputs
+  produced `mean_cost` 0.19080542854735213 and 0.1908054285473521 under two
+  values of `PYTHONHASHSEED`: the per-language costs were identical and only the
+  order they were summed in varied, and floating point addition is not
+  associative. The cost vector is now summed in sorted language order.
+
+### Changed
+- Roughly 30 docstrings and comments that no longer described the code. The
+  largest group described the reconstruction path, abandoned earlier in this
+  release, as how a metric works. Also corrected: a documented `renyi_alphas`
+  default of three alphas against an actual four, a module docstring claiming to
+  compute a metric that lives elsewhere, `metrics/base.py` calling itself
+  "skeleton only" at 854 lines, four `Args:` blocks missing parameters, and a
+  metadata string shipped inside `analysis_results.json` naming a key that
+  exists nowhere.
+
 ### Added
 - `MISSING_VALUE_DISPLAY = "n/a"`, the console rendering for a value that could
   not be computed. Two sites that spelled it `N/A` now match.

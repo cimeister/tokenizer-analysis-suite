@@ -33,7 +33,8 @@ def _plottable(value: Any) -> float:
     """Map a metric value to something matplotlib can draw, without inventing one.
 
     Missing data is ``None`` throughout the metrics (see
-    ``BaseMetrics.safe_divide`` and ``UTF8IntegrityMetrics._ratio``). Passing
+    ``BaseMetrics.safe_divide``, and the local ``_ratio`` inside
+    ``UTF8IntegrityMetrics._build_split_results``). Passing
     that to matplotlib raises, and substituting 0.0 draws a zero-height bar that
     a reader cannot tell from a measured zero. NaN is the one value matplotlib
     renders as absent, so that is what missing data becomes here.
@@ -499,6 +500,15 @@ def plot_grouped_analysis(grouped_results: Dict[str, Dict[str, Any]], save_dir: 
     """Plot grouped analysis results.
 
     Args:
+        grouped_results: ``{group_type: {group_name: {metric: block}}}``, as
+            produced by the grouped analysis. Returns without plotting when
+            *group_type* is not one of its keys.
+        save_dir: Directory the figure is written to.
+        metric_name: Key of the metric block to read inside each group's
+            results, and the key *value_extractor* defaults to in
+            ``GROUPED_VALUE_EXTRACTORS``.
+        group_type: Which grouping of *grouped_results* to plot, for example
+            script family or resource level.
         value_extractor: Callable ``(tok_data_dict) -> float`` returning the
             per-group scalar for a tokenizer. Defaults to the entry in
             ``GROUPED_VALUE_EXTRACTORS`` for ``metric_name``.

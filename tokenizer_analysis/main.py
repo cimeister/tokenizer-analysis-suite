@@ -66,6 +66,13 @@ class UnifiedTokenizerAnalyzer:
             plot_tokenizers: Optional list of tokenizer names to include in plots
             per_language_plots: Whether to generate per-language plots
             faceted_plots: Whether to generate faceted plots (one subplot per tokenizer)
+            code_ast_config: Mapping of language name to the file, directory or
+                parquet path for that language's code. With ``None`` no code
+                is loaded: the AST boundary metrics are not constructed, and
+                the code domain of operator isolation and of reconstruction
+                fidelity is empty. Construction aborts here when a configured
+                path does not load, rather than continuing with an empty code
+                corpus.
             code_max_snippets_per_lang: Cap on code files loaded per language
                 for the code corpus (feeds both AST metrics and the code
                 domain of operator isolation). ``None`` uses
@@ -76,6 +83,11 @@ class UnifiedTokenizerAnalyzer:
                 ``CodeDataLoader.MAX_SNIPPET_SIZE_CHARS`` (0, no cap, since
                 1.0.0).
             math_data_path: Optional path to math-rich text file for digit boundary metrics
+            use_builtin_math_data: Whether to use the math samples bundled in
+                sample_data/math_samples.json as the math corpus for the digit
+                boundary and reconstruction fidelity metrics. Ignored when
+                *math_data_path* is set: the caller's path is used and the
+                bundled samples are not added to it.
         """
         # Validate input provider
         validation_report = InputValidator.validate_input_provider(input_provider)
@@ -147,7 +159,7 @@ class UnifiedTokenizerAnalyzer:
             except (ImportError, ValueError) as e:
                 logger.warning(f"MorphScore metrics disabled: {e}")
 
-        # Initialize digit boundary metrics (always available -- no external data).
+        # Initialize digit boundary metrics (always available: no external data).
         # code_texts feeds the code domain of the operator-isolation split.
         self.digit_boundary_metrics = DigitBoundaryMetrics(
             input_provider,
@@ -156,7 +168,7 @@ class UnifiedTokenizerAnalyzer:
             code_texts=code_texts,
         )
 
-        # Initialize UTF-8 integrity metrics (always available -- no external data)
+        # Initialize UTF-8 integrity metrics (always available: no external data)
         self.utf8_integrity_metrics = UTF8IntegrityMetrics(input_provider)
 
         # Initialize AST boundary metrics if config provided
@@ -202,6 +214,14 @@ class UnifiedTokenizerAnalyzer:
         Args:
             save_plots: Whether to generate and save plots
             include_morphscore: Whether to include MorphScore analysis (requires access to tokenizers)
+            include_digit_boundary: Whether to include the digit boundary and
+                operator isolation metrics
+            include_code_ast: Whether to include the code AST boundary metrics.
+                Has no effect when the analyzer was constructed without a
+                ``code_ast_config``, or when tree-sitter was unavailable, since
+                in either case there is no ASTBoundaryMetrics instance to run.
+            include_utf8_integrity: Whether to include the UTF-8 token integrity
+                and character split metrics
             include_reconstruction: Whether to include reconstruction fidelity analysis
             verbose: Whether to print detailed results
             save_tokenized_data: Whether to save tokenized data to file

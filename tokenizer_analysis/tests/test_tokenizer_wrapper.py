@@ -658,3 +658,31 @@ class TestScriptTokEdgeCases:
             create_tokenizer_wrapper("x", {"class": "mingram", "path": bpe_file})
         with pytest.raises(Exception):
             create_tokenizer_wrapper("x", {"class": "script_bpe", "path": mingram_file})
+
+
+def test_a_directory_of_vocab_and_merges_loads(tmp_path):
+    """The vocab.json plus merges.txt route could never load a tokenizer.
+
+    Strategy 3 of `_load_huggingface_tokenizer` called
+    `_load_bpe_from_directory`, a name the module never defined. The resulting
+    NameError was caught by the `except Exception` around it, logged as a
+    failure to read that one file, and the load fell through to the final
+    ValueError naming the path, so the failure read as a bad directory rather
+    than as a defect.
+    """
+    from tokenizers import Tokenizer, models, trainers, pre_tokenizers
+
+    from tokenizer_analysis.utils.tokenizer_utils import _load_huggingface_tokenizer
+
+    trained = Tokenizer(models.BPE(unk_token="<unk>"))
+    trained.pre_tokenizer = pre_tokenizers.Whitespace()
+    trained.train_from_iterator(
+        ["hello world " * 50, "the quick brown fox " * 50],
+        trainers.BpeTrainer(vocab_size=100, special_tokens=["<unk>"]),
+    )
+    trained.model.save(str(tmp_path))
+    assert (tmp_path / "vocab.json").exists() and (tmp_path / "merges.txt").exists()
+
+    loaded = _load_huggingface_tokenizer({"path": str(tmp_path)})
+    assert loaded.get_vocab_size() > 0
+    assert "hello" in loaded.encode("hello world").tokens

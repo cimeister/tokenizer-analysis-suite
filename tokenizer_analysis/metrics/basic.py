@@ -47,7 +47,16 @@ _CER_WARMUP = 50
 
 
 class BasicTokenizationMetrics(BaseMetrics):
-    """Basic tokenization metrics: fertility, token_length, type_token_ratio, vocabulary_utilization, avg_tokens_per_line, reconstruction_fidelity."""
+    """Basic tokenization metrics: fertility, token_length,
+    vocabulary_utilization, reconstruction_fidelity.
+
+    ``compute()`` also returns ``type_token_ratio`` and
+    ``avg_tokens_per_line``, but neither is a top-level key in a published
+    results file. ``merge_redundant_metrics`` files ``type_token_ratio`` under
+    ``vocabulary_utilization`` and ``avg_tokens_per_line`` under
+    ``compression_rate``, which ``InformationTheoreticMetrics`` computes. See
+    metrics/redundancy.py for the identity behind each merge.
+    """
 
     def __init__(self,
                  input_provider: InputProvider,
@@ -614,10 +623,14 @@ class BasicTokenizationMetrics(BaseMetrics):
         Args:
             tokenized_data: Dict mapping tokenizer names to TokenizedData lists
             cer_time_budget_s: Max seconds to spend on CER per tokenizer.
-                After ``_CER_WARMUP`` non-exact texts, the total CER time is
-                extrapolated.  If the projection exceeds this budget the CER
-                and whitespace-fidelity computations are skipped for the rest
-                of the tokenizer and reported as ``None``.
+                The total CER time is extrapolated on two triggers: after
+                ``_CER_WARMUP`` non-exact texts, and on every non-exact text
+                once the CER time already spent exceeds this budget, whichever
+                comes first. The second trigger exists for a tokenizer whose
+                individual CER calls are slow enough that the warmup itself
+                overruns the budget. If the projection exceeds this
+                budget the CER and whitespace-fidelity computations are skipped
+                for the rest of the tokenizer and reported as ``None``.
                 Set to ``0`` to disable the budget (always compute).
         """
         results: Dict[str, Any] = {

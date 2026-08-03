@@ -460,7 +460,13 @@ class LaTeXTableGenerator:
             error: Optional error value
             format_str: Format string for the value
             is_best: Whether this is the best value (for bolding)
-            
+            multiplier: Optional factor applied to *value* before formatting,
+                for a column published as a fraction and printed as a
+                percentage. It is not applied to *error*, which is formatted
+                with the same *format_str* but in the value's own units. The one
+                registry entry that sets it, vocabulary_utilization, has
+                ``err_key: None``, so the two do not currently occur together.
+
         Returns:
             Formatted LaTeX string
         """

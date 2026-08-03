@@ -12,9 +12,13 @@ from .conftest import SimpleProvider as _SimpleProvider
 def _make_td(tok, lang, n_tokens):
     """Create a TokenizedData with n_tokens tokens and 1 normalization unit.
 
-    Gini uses DEFAULT_LINE_MEASUREMENT_CONFIG (LineCountingMethod.SINGLE),
-    so each TokenizedData counts as 1 line regardless of text content.
-    This means cost_per_lang = total_tokens / num_data_entries.
+    TokenizerGiniMetrics measures text in DEFAULT_TEXT_MEASUREMENT_CONFIG,
+    which counts bytes. The one normalization unit per entry comes from
+    ``text="x"`` being one byte, not from any line-based counting, so the
+    ``text`` argument matters: any longer string changes the denominator and
+    the expected costs below with it. With one byte per entry,
+    cost_per_lang = total_tokens / num_data_entries, and the cost vectors the
+    tests below assert on are the n_tokens values passed in.
     """
     return TokenizedData(
         tokenizer_name=tok, language=lang,
