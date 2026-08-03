@@ -428,6 +428,13 @@ class ASTBoundaryMetrics(BaseMetrics):
         Delegates to :meth:`BaseMetrics._process_token` with
         ``preserve_space=True`` so that the branch logic stays in sync
         with ``_clean_token``.
+
+        No metric calls this any more. It decoded the tokens of the
+        reconstructed text the AST alignment used to be measured against, and
+        the alignment now reads the encoder's offsets (see
+        ``_build_source_char_to_token_map``). See ``_process_token`` for what the
+        reconstruction got wrong. Kept because it is unit-tested; do not wire it
+        back into a metric.
         """
         return self._process_token(raw_token, preserve_space=True)
 

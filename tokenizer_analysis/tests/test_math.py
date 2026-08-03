@@ -1816,3 +1816,104 @@ class TestOperatorIsolationDomains:
         assert after_first > 0, "the code/math corpora should have been encoded once"
         metrics.compute(prose)
         assert calls["n"] == after_first, "derived corpora were re-encoded on the second call"
+
+
+class TestOperatorOverlapKeepsLaterToken:
+    """A character two tokens claim belongs to the later of the two.
+
+    A SentencePiece vocabulary emits the word-start marker as its own token, and
+    HuggingFace reports a range for it that covers the first character of the
+    following word: xlm-roberta-base encodes '1234567' as '▁', '1234', '567'
+    with offsets (0,1), (0,4) and (4,7), so two tokens claim character 0. The
+    marker produces no source character, so the character belongs to the content
+    token, which is the rule ``ASTBoundaryMetrics._map_from_offsets`` and the
+    digit metrics both apply.
+
+    The fixture below has the same shape: the marker's range (0,1) and the token
+    'x=' range (0,2) both claim the 'x'. Reading that character as the marker's
+    leaves the token covering the operator looking as though it covers nothing
+    else, and the text is scored 1.0 isolated instead of 0.0.
+    """
+
+    TOK = "marker_tok"
+    TEXT = "x=y"
+    TOKENS = ["▁", "x=", "y"]
+    OFFSETS = [(0, 1), (0, 2), (2, 3)]
+
+    def test_operator_glued_to_its_operand_is_not_isolated(self):
+        id_to_token = dict(enumerate(self.TOKENS))
+        metrics = DigitBoundaryMetrics(
+            _MockProvider(self.TOK, _MockTokenizer(id_to_token))
+        )
+        results = metrics.compute({
+            self.TOK: [
+                TokenizedData(
+                    tokenizer_name=self.TOK,
+                    language="eng_Latn",
+                    tokens=list(id_to_token),
+                    text=self.TEXT,
+                    offsets=list(self.OFFSETS),
+                )
+            ]
+        })
+
+        prose = results["operator_isolation_rate"]["by_domain"]["prose"][
+            "summary"][self.TOK]
+        assert prose["total_operators"] == 1
+        assert prose["overall_isolation_rate"] == pytest.approx(0.0), (
+            "the token covering '=' also covers the operand 'x', which is only "
+            "visible if the overlapping character is read as the content "
+            "token's rather than the word-start marker's"
+        )
+
+
+class TestPerTextOperatorsMatchComputeOperators:
+    """``compute_per_text`` and ``compute()`` score one text's operators alike.
+
+    ``compute_per_text`` used to run the operator regex over a text rebuilt by
+    concatenating cleaned token strings, while ``compute()`` reads the encoder's
+    character offsets, so the two disagreed on the same text. The reconstruction
+    drops the space in '! =', and the regex then reads a '!=' there that the
+    source does not contain: with tokenizers/bpe.json the per-document path
+    reported 3 compound operators against the 1 the corpus path reports, and a
+    compound preservation rate over that wrong denominator.
+    """
+
+    TOK = "bundled-bpe"
+    TEXT = "0! = 1, 5! = 120, and 20 >= 3."
+
+    def test_both_paths_report_the_same_operator_numbers(self):
+        from tokenizer_analysis.core.tokenizer_wrapper import create_tokenizer_wrapper
+
+        tokenizer = create_tokenizer_wrapper(
+            self.TOK, {"class": "huggingface", "path": "tokenizers/bpe.json"}
+        )
+        token_ids, offsets = tokenizer.encode_with_offsets(self.TEXT)
+        assert offsets is not None, "the bundled BPE reports offsets"
+
+        metrics = DigitBoundaryMetrics(_MockProvider(self.TOK, tokenizer))
+        per_text = metrics.compute_per_text(tokenizer, self.TEXT)
+        corpus = metrics.compute({
+            self.TOK: [
+                TokenizedData(
+                    tokenizer_name=self.TOK,
+                    language="eng_Latn",
+                    tokens=list(token_ids),
+                    text=self.TEXT,
+                    offsets=offsets,
+                )
+            ]
+        })["operator_isolation_rate"]["by_domain"]["prose"]["summary"][self.TOK]
+
+        assert per_text["n_operators"] == corpus["total_operators"]
+        assert per_text["operator_isolation_rate"] == pytest.approx(
+            corpus["overall_isolation_rate"]
+        )
+        assert per_text["n_compound_operators"] == corpus["total_compound_operators"]
+        assert per_text["compound_operator_preserved_rate"] == pytest.approx(
+            corpus["overall_compound_preservation_rate"]
+        )
+        # The text carries the one compound operator it is written to carry,
+        # '>=', so a change that made both paths count the '! =' as a compound
+        # operator would not pass by agreeing with itself.
+        assert per_text["n_compound_operators"] == 1

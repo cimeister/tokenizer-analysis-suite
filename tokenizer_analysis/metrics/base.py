@@ -440,6 +440,18 @@ class BaseMetrics(ABC):
                 If ``True``, space-prefix markers are replaced with a literal
                 space: the ``_decode_raw_token`` path used for
                 whitespace-preserving alignment.
+
+        No metric calls this any more, through either wrapper. Both wrappers
+        were used only by paths that measured positions in text rebuilt by
+        concatenating cleaned token strings, and the rebuilt text is not the
+        source: this method removes one leading space from a token
+        rather than all of them, so a token whose surface is several spaces
+        leaves residual spaces the source has no counterpart for, and the walk
+        that mapped source positions into the reconstruction resynchronized on
+        one of them and stayed wrong from there. The code metrics and the digit
+        and operator metrics all read source character positions through the
+        encoder's own offsets instead. Kept because it is unit-tested and
+        because both wrappers delegate to it; do not wire it back into a metric.
         """
         # Membership in the tokenizer's declared set, not a surface pattern. The
         # pattern this replaced, ^(<\||\[).*(\|>|\])$, matched ordinary content
@@ -503,7 +515,14 @@ class BaseMetrics(ABC):
         return decoded
 
     def _clean_token(self, token: str) -> Optional[str]:
-        """Strip subword markers from *token*, returning ``None`` for special tokens."""
+        """Strip subword markers from *token*, returning ``None`` for special tokens.
+
+        No metric calls this any more: its only caller was
+        ``_build_char_to_token_map``. See ``_process_token`` for why the
+        reconstruction the two of them build is not what the metrics measure
+        against. Kept because it is unit-tested; do not wire it back into a
+        metric.
+        """
         return self._process_token(token, preserve_space=False)
 
     def _build_char_to_token_map(
@@ -514,6 +533,17 @@ class BaseMetrics(ABC):
         Returns ``(reconstructed_text, char_to_token)`` where
         ``char_to_token[i]`` is the token index that produced character *i*
         in the reconstructed text.
+
+        No metric calls this any more. Operator isolation in
+        ``DigitBoundaryMetrics.compute_per_text`` was the last caller, and it now
+        resolves operators to tokens through the encoder's character offsets,
+        which ``compute()`` already did. The reconstruction returned here is not
+        the source text: concatenating cleaned token strings drops the space in
+        ``"! ="``, so the operator regex reads a ``"!="`` there that the source
+        does not contain. On ``"0! = 1, 5! = 120, and 20 >= 3."`` with
+        tokenizers/bpe.json that reported 3 compound operators against the 1 the
+        source has. Kept because it is unit-tested; do not wire it back into a
+        metric.
         """
         reconstructed: List[str] = []
         char_to_token: List[int] = []

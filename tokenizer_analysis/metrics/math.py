@@ -834,13 +834,25 @@ class DigitBoundaryMetrics(BaseMetrics):
         reports. It is also the rule ``ASTBoundaryMetrics._map_from_offsets``
         applies.
 
-        The default keeps the earlier token, which operator isolation has used
-        since it moved onto offsets and which its published figures were
-        computed with. Switching that call site changes them: measured on the
-        code corpus with xlm-roberta, ``overall_isolation_rate`` 0.6923 against
-        0.6807 and ``overall_compound_preservation_rate`` 0.6748 against 0.7295,
-        with the other eight benchmark tokenizers unchanged. The change is left
-        to a separate decision rather than made as a side effect here.
+        Every call site passes True: the digit metrics in ``compute()`` and in
+        ``compute_per_text()``, and operator isolation in
+        ``_accumulate_operators``. The parameter is kept and its default left at
+        False, so a new caller that omits it gets the earlier token rather than
+        the rule the three existing call sites use. Operator isolation kept the
+        earlier token until that call site was switched. Switching it moved
+        xlm-roberta's code domain, ``overall_isolation_rate`` 0.6947 to 0.6769 and
+        ``overall_compound_preservation_rate`` 0.7223 to 0.8445 over 454693
+        operators, and its math domain, 0.8788 to 0.8754 and 0.5167 to 0.6167
+        over 297. The other eight benchmark tokenizers are unchanged to every
+        digit.
+
+        Those eight do report overlapping ranges, on a different character: when
+        a byte-level vocabulary splits one multi-byte character across two
+        tokens, both tokens report that character's range. Over 30 snippets of
+        the benchmark code corpus, every character two of their tokens claimed
+        was non-ASCII, against 241 of xlm-roberta's 244, 58 of which matched
+        ``_OPERATOR_SPAN``. An operator is ASCII, so the rule only changes an
+        operator's attribution in the marker case.
         """
         if not offsets:
             return None
@@ -905,8 +917,15 @@ class DigitBoundaryMetrics(BaseMetrics):
                     # 'G=G' reconstructs with a trailing space, which defeated
                     # the isolation subset test even though the token covers only
                     # '=' in the source.
+                    #
+                    # The SentencePiece word-start marker reports a range that
+                    # covers the first character of the following word, so two
+                    # tokens claim that character. See
+                    # _char_to_token_from_offsets for why the later token is the
+                    # right reading of it.
                     char_to_token = self._char_to_token_from_offsets(
-                        len(item.text), item.offsets
+                        len(item.text), item.offsets,
+                        keep_later_token_on_overlap=True,
                     )
                     if char_to_token is None:
                         skipped_no_offsets += 1
@@ -1734,8 +1753,9 @@ class DigitBoundaryMetrics(BaseMetrics):
         text the caller would pass, so it is not a per-row condition.
 
         ``operator_isolation_rate`` and ``compound_operator_preserved_rate``
-        are still measured on the text rebuilt from token surfaces, which
-        ``compute()`` no longer does; see the comment at that block.
+        are measured on the same character offsets as the digit metrics, with
+        the body ``_accumulate_operators`` uses, so this method and
+        ``compute()`` score a given text identically.
 
         Returns a dict with keys: ``n_digit_spans``, ``mean_digit_f1``,
         ``mean_fertility_per_digit``, ``single_token_number_rate``,
@@ -1888,22 +1908,27 @@ class DigitBoundaryMetrics(BaseMetrics):
             compound_ok = 0
 
             if has_operators:
-                # Operator isolation here still reads positions in the text
-                # rebuilt from token surfaces, which is what ``compute()`` did
-                # before ``_accumulate_operators`` was moved onto the offsets.
-                # The two therefore disagree: on the reconstruction a special
-                # token the surface pattern does not recognise is spliced in as
-                # literal text, so a Mistral-form '<s>' contributes a '<' and a
-                # '>' that are counted as two operators. Only the digit metrics
-                # were migrated here; moving operator isolation as well changes
-                # per-document operator numbers and was left for a separate
-                # change.
+                # Operators are located in the SOURCE and resolved to tokens
+                # through the same offsets the digit scoring above used. The
+                # body below is ``_accumulate_operators``'s per-text body, so
+                # this method and ``compute()`` score a given text identically.
+                #
+                # This used to run the operator regex over a reconstruction
+                # built by concatenating cleaned token strings, which
+                # ``compute()`` stopped doing when ``_accumulate_operators``
+                # moved onto the offsets, so the two disagreed. Two ways the
+                # reconstruction gave wrong answers. A special token the surface
+                # pattern does not recognise was spliced in as literal text, so
+                # a Mistral-form BOS token '<s>' contributed a '<' and a '>'
+                # that were counted as two operators. And a superword token such
+                # as 'G=G' reconstructs with a trailing space, which defeated the
+                # isolation test even though the token covers only '=' in the
+                # source.
                 token_to_chars: Dict[int, Set[int]] = defaultdict(set)
-                token_strings = self._convert_ids_to_tokens(tokenizer_obj, token_ids)
-                recon_text, char_to_token = self._build_char_to_token_map(token_strings)
-                for ci, ti in enumerate(char_to_token):
-                    token_to_chars[ti].add(ci)
-                for m in self._OPERATOR_SPAN.finditer(recon_text):
+                for ci, ti in enumerate(source_char_to_token):
+                    if ti is not None:
+                        token_to_chars[ti].add(ci)
+                for m in self._OPERATOR_SPAN.finditer(text):
                     op_str = m.group()
                     op_start = m.start()
                     op_end = m.end()
@@ -1912,17 +1937,34 @@ class DigitBoundaryMetrics(BaseMetrics):
                         continue
                     op_token_indices: Set[int] = set()
                     for i in range(op_start, op_end):
-                        if i < len(char_to_token):
-                            op_token_indices.add(char_to_token[i])
+                        if (
+                            i < len(source_char_to_token)
+                            and source_char_to_token[i] is not None
+                        ):
+                            op_token_indices.add(source_char_to_token[i])
                     if not op_token_indices:
                         continue
+
+                    # Isolated = the covering tokens carry no non-whitespace
+                    # character from outside the operator span, i.e. the
+                    # operator is not glued to an operand. Whitespace is
+                    # excluded because these are source coordinates: a token
+                    # such as 'G=' covers the space before the operator as well
+                    # as the operator, and that token is still an isolated
+                    # operator.
                     op_char_set = set(range(op_start, op_end))
-                    all_token_chars: Set[int] = set()
+                    outside_non_ws = False
                     for ti in op_token_indices:
-                        all_token_chars |= token_to_chars[ti]
-                    isolated_flags.append(
-                        1.0 if all_token_chars.issubset(op_char_set) else 0.0
-                    )
+                        for ci in token_to_chars[ti]:
+                            if ci in op_char_set:
+                                continue
+                            if not text[ci].isspace():
+                                outside_non_ws = True
+                                break
+                        if outside_non_ws:
+                            break
+                    isolated_flags.append(0.0 if outside_non_ws else 1.0)
+
                     if len(op_str) > 1:
                         compound_total += 1
                         if len(op_token_indices) == 1:

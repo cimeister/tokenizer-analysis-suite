@@ -94,6 +94,23 @@ section records the vetting that followed it. Set the date at tag time.
   named the dataset. Verified end to end: 5 languages, 63803 samples.
 
 ### Fixed (metric correctness)
+- Operator isolation resolves overlapping token ranges to the later token, the
+  rule the digit and AST paths already used, and `compute_per_text` scores
+  operators on offsets rather than on a reconstruction. These were the last two
+  sites still inferring which token covers which source character by rebuilding
+  text from token strings.
+
+  XLM-RoBERTa is the only one of the nine benchmark tokenizers that moves,
+  because its word-start marker reports a range overlapping the first content
+  character: pooled isolation 0.6948 to 0.6770 and compound preservation 0.7222
+  to 0.8443. The other eight also report overlapping ranges, but only on
+  multi-byte characters split across byte tokens, which no operator regex
+  matches.
+
+  `compute_per_text` disagreed with `compute()` because the reconstruction drops
+  the space in `"! ="`, so the regex read one `"!="` where the source has two
+  separate operators. Over the bundled math and synthetic code samples with nine
+  tokenizers, 3078 rows, 66 changed.
 - The three digit metrics map a source span to tokens through the tokenizer's
   own offsets, the same way the code metrics do since earlier in this release.
   They used the reconstruction path, which resynchronizes onto a residual space
