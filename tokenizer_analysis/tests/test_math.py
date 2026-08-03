@@ -1552,6 +1552,74 @@ class TestAdjacentNumbersNotMerged:
         assert "4" in by_dl
 
 
+class TestNumberAfterMultiSpaceToken:
+    """A number on an indented line is measured, with the boundaries the offsets report.
+
+    The digit metrics used to map source positions into a text rebuilt from
+    cleaned token strings. ``BaseMetrics._process_token`` removes one leading
+    space from a token, not all of them, so a token whose surface is three
+    spaces (``ĠĠĠ``, which Llama 3, OLMo 2, Qwen 2.5, Mistral NeMo and the
+    bundled tokenizers/bpe.json all have) left two spaces in the reconstruction
+    that the source has no counterpart for, and
+    ``_build_source_to_recon_map`` resynchronized onto one of them.
+
+    On the snippet below the bundled BPE splits ``1234567`` into ``Ġ123``,
+    ``45`` and ``67``, whose offsets are (28,32), (32,34) and (34,36), so the
+    boundaries are at digit 3 and digit 5. Under the reconstruction path not one
+    of the seven digits mapped, so the number was dropped and the snippet's only
+    number was reported as zero numbers analyzed.
+
+    Measured on a four-snippet indented corpus, the reconstruction path measured
+    1 of 14 numbers for meta-llama/Meta-Llama-3-8B and 1 of 14 for
+    Qwen/Qwen2.5-7B, and got both of those wrong: for ``12345678`` it returned
+    boundaries [1, 3, 4, 7] under Llama 3 where the offsets give [3, 6], and
+    under Qwen 2.5 it returned a boundary at digit 8 of an 8-digit number, which
+    only a 9-character span can produce.
+    """
+
+    SOURCE = "def totals():\n    subtotal = 1234567\n    return subtotal\n"
+
+    def test_indented_number_measured_with_offset_boundaries(self):
+        from tokenizer_analysis.core.tokenizer_wrapper import create_tokenizer_wrapper
+
+        tokenizer = create_tokenizer_wrapper(
+            "bundled-bpe", {"class": "huggingface", "path": "tokenizers/bpe.json"}
+        )
+        token_ids, offsets = tokenizer.encode_with_offsets(self.SOURCE)
+        assert offsets is not None, "the bundled BPE reports offsets"
+        token_strings = tokenizer.convert_ids_to_tokens(token_ids)
+        assert "ĠĠĠ" in token_strings, (
+            "this test needs a tokenizer that emits a multi-space token; "
+            f"tokenizers/bpe.json produced {token_strings}"
+        )
+
+        metrics = DigitBoundaryMetrics(_MockProvider("bundled-bpe", tokenizer))
+        results = metrics.compute({
+            "bundled-bpe": [
+                TokenizedData(
+                    tokenizer_name="bundled-bpe",
+                    language="code",
+                    tokens=list(token_ids),
+                    text=self.SOURCE,
+                    offsets=offsets,
+                )
+            ]
+        })
+
+        alignment = results["three_digit_boundary_alignment"][
+            "per_tokenizer"]["bundled-bpe"]["by_digit_length"]
+        assert alignment["7"]["code"]["count"] == 1, (
+            "the seven-digit number sits after a multi-space token and has to "
+            "be measured, not dropped"
+        )
+        variability = results["digit_split_variability"][
+            "per_tokenizer"]["bundled-bpe"]["by_digit_length"]
+        assert variability["7"]["code"]["dominant_pattern"] == (3, 5), (
+            "the boundaries are the ones the encoding offsets report for "
+            "'Ġ123' + '45' + '67'"
+        )
+
+
 class _CharTokenizer:
     """Char-level tokenizer: every character is its own token.
 

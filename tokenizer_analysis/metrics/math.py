@@ -194,16 +194,22 @@ class DigitBoundaryMetrics(BaseMetrics):
 
     @staticmethod
     def _get_digit_span_boundaries(
-        char_to_token: List[int],
+        char_to_token: List[Optional[int]],
         span_start: int,
         span_end: int,
     ) -> Optional[List[int]]:
         """Return internal boundary positions *within* a digit span.
 
-        *span_start* and *span_end* are character offsets **in the
-        reconstructed text** (the same text that *char_to_token* was built
-        from).  A boundary at position *k* means there is a token change
-        between the (k-1)-th and k-th digit of the span.
+        *span_start* and *span_end* are character offsets in whatever text
+        *char_to_token* is indexed by. ``compute()`` and ``compute_per_text()``
+        pass source-text positions and a map built from the encoder's offsets.
+        A boundary at position *k* means there is a token change between the
+        (k-1)-th and k-th digit of the span.
+
+        Every position in ``[span_start, span_end)`` has to be covered by a
+        token. The callers check that first and skip the number otherwise,
+        because an uncovered position holds ``None``, which compares unequal to
+        any token index and would be counted as a boundary.
 
         Returns ``None`` when the span exceeds the mapped region.
         """
@@ -446,14 +452,11 @@ class DigitBoundaryMetrics(BaseMetrics):
                 continue
 
             tokenizer_obj = self.input_provider.get_tokenizer(tok_name)
-            self._set_tokenizer_context(
-                self._decode_table_for(tok_name, tokenizer_obj),
-                self._resolve_special_tokens(tokenizer_obj),
-                self._resolve_subword_markers(tokenizer_obj),
-            )
             lang_groups = TokenizedDataProcessor.group_by_language(
                 tokenized_data[tok_name]
             )
+            docs_without_offsets = 0
+            spans_not_covered = 0
 
             for lang, data_list in lang_groups.items():
                 for item in data_list:
@@ -466,19 +469,70 @@ class DigitBoundaryMetrics(BaseMetrics):
                     if not has_digits:
                         continue
 
-                    token_strings = self._convert_ids_to_tokens(
-                        tokenizer_obj, item.tokens
+                    # Digits are located in the SOURCE and resolved to tokens
+                    # through the encoder's own offsets, which is what operator
+                    # isolation and the code metrics already do.
+                    #
+                    # This used to map source positions into a reconstruction
+                    # built by concatenating cleaned token strings.
+                    # ``_process_token`` removes one leading space per token
+                    # rather than all of them, so a token whose surface is
+                    # several spaces (``ĠĠĠ`` in Llama 3, OLMo 2, Qwen 2.5 and
+                    # Mistral NeMo) left residual spaces in the reconstruction
+                    # that no source character corresponds to.
+                    # ``_build_source_to_recon_map`` then resynchronized on one
+                    # of those residual spaces and every position after it was
+                    # off by however many spaces had accumulated, so digits were
+                    # read against the wrong tokens. The same defect measured on
+                    # ``ast_boundary_alignment`` published a
+                    # ``full_alignment_rate`` of 0.127 for Llama 3 where the
+                    # offsets give 0.519.
+                    #
+                    # The offsets are used untrimmed here, unlike
+                    # ``ASTBoundaryMetrics._trim_word_start_space_offsets``. That
+                    # trim exists because the ByteLevel ``trim_offsets`` flag
+                    # decides whether a word-initial token such as ``Ġfoo``
+                    # reports the space in its range, which changes whether an
+                    # AST node beginning at ``foo`` looks token-initial. Nothing
+                    # here reads a token's claimed start: the boundaries are
+                    # token changes between consecutive digits, and a digit is
+                    # never the word-start space, so the flag does not affect the
+                    # digit metrics. Measured over the 633 numbers of the
+                    # bundled math corpus plus two indented code snippets, the
+                    # boundaries are the same with and without the trim for all
+                    # nine benchmark tokenizers, including gpt2
+                    # (``trim_offsets`` false) and gpt-neox-20b (true).
+                    #
+                    # The SentencePiece word-start marker does affect them: its
+                    # reported range covers the first character of the following
+                    # word. See _char_to_token_from_offsets for why
+                    # keep_later_token_on_overlap is the correct reading of it.
+                    char_to_token = self._char_to_token_from_offsets(
+                        len(item.text), item.offsets,
+                        keep_later_token_on_overlap=True,
                     )
-                    recon_text, char_to_token = self._build_char_to_token_map(
-                        token_strings
-                    )
-
-                    # Map original source positions → reconstructed-text positions
-                    # so we can find spans on the original (whitespace-preserving)
-                    # text and still look up token indices via char_to_token.
-                    source_to_recon = self._build_source_to_recon_map(
-                        item.text, recon_text
-                    )
+                    if char_to_token is None:
+                        if self._can_encode_raw_text(tokenizer_obj):
+                            raise ValueError(
+                                "The digit metrics need character offsets, and "
+                                f"tokenizer {tok_name!r} encodes text but "
+                                "reported none. Offsets are the only exact way "
+                                "to say which token covers which digit. The "
+                                "mapping this replaced rebuilt the text from "
+                                "token surfaces and mismapped every position "
+                                "after a run of whitespace, without reporting "
+                                "anything. Use a tokenizer whose "
+                                "encode_with_offsets() returns offsets, or "
+                                "disable these metrics with "
+                                "--no-digit-boundary."
+                            )
+                        # Pre-tokenized input carries ids and text but no
+                        # offsets, so the correspondence cannot be established
+                        # at all. The tokenizer is left out of the digit results
+                        # entirely rather than scored, which is what operator
+                        # isolation already does for the same input.
+                        docs_without_offsets += 1
+                        continue
 
                     # Find digit spans on the *original* text to avoid
                     # merging adjacent numbers separated by whitespace.
@@ -489,22 +543,20 @@ class DigitBoundaryMetrics(BaseMetrics):
                         if num_digits == 0:
                             continue
 
-                        # Map source span to reconstructed-text positions
-                        recon_positions = [
-                            source_to_recon[i]
+                        if any(
+                            char_to_token[i] is None
                             for i in range(src_start, src_end)
-                            if source_to_recon[i] is not None
-                        ]
-                        if len(recon_positions) != num_digits:
-                            # Not all digits mapped: skip this span
+                        ):
+                            # Some digit of this number is covered by no token,
+                            # so the number was not measured. It is skipped
+                            # rather than scored.
+                            spans_not_covered += 1
                             continue
-                        span_start = recon_positions[0]
-                        span_end = recon_positions[-1] + 1
 
                         bucket = self._digit_length_bucket(num_digits)
 
                         boundaries = self._get_digit_span_boundaries(
-                            char_to_token, span_start, span_end,
+                            char_to_token, src_start, src_end,
                         )
                         if boundaries is None:
                             continue
@@ -547,7 +599,22 @@ class DigitBoundaryMetrics(BaseMetrics):
                         pattern = tuple(sorted(boundaries))
                         entropy_acc[tok_name][lang][bucket].append(pattern)
 
-        self._clear_tokenizer_context()
+            if docs_without_offsets:
+                logger.warning(
+                    "%s: %d document(s) with digits reported no character "
+                    "offsets, so %s has no three_digit_boundary_alignment, "
+                    "digit_split_variability or numeric_magnitude_consistency "
+                    "entry. Absent, not zero: a zero would read as a tokenizer "
+                    "that splits every number wrongly.",
+                    tok_name, docs_without_offsets, tok_name,
+                )
+            if spans_not_covered:
+                logger.warning(
+                    "%s: %d number(s) had a digit that no token covered and "
+                    "were left out of the digit metrics. The encoding offsets "
+                    "did not cover part of the source.",
+                    tok_name, spans_not_covered,
+                )
 
         # ---- operator isolation: prose / code / math, reported separately ----
         domain_accs = {
@@ -663,6 +730,24 @@ class DigitBoundaryMetrics(BaseMetrics):
             self._encoded_corpus_cache[key] = self._tokenize_texts(texts_by_lang)
         return self._encoded_corpus_cache[key]
 
+    @staticmethod
+    def _can_encode_raw_text(tokenizer_obj: Any) -> bool:
+        """Whether *tokenizer_obj* can encode raw text.
+
+        ``can_encode()`` is the predicate, not ``hasattr(tok, "encode")``:
+        ``PreTokenizedDataTokenizer`` *defines* ``encode`` and raises from it.
+
+        Used to tell two situations apart when no character offsets are
+        available: a tokenizer that encodes text and reported none is a defect
+        the caller has to know about, while a provider that only supplies
+        pre-tokenized ids never had offsets to give.
+        """
+        can_encode = getattr(tokenizer_obj, "can_encode", None)
+        encode = getattr(tokenizer_obj, "encode", None)
+        if callable(can_encode) and not can_encode():
+            return False
+        return callable(encode)
+
     def _tokenize_texts(
         self, texts_by_lang: Dict[str, List[str]]
     ) -> Dict[str, List[TokenizedData]]:
@@ -673,9 +758,6 @@ class DigitBoundaryMetrics(BaseMetrics):
         only supplies pre-tokenized data) is omitted from the returned corpus
         and logged; it then simply has no code/math domain rather than crashing
         the whole metric.
-
-        ``can_encode()`` is the predicate, not ``hasattr(tok, "encode")``:
-        ``PreTokenizedDataTokenizer`` *defines* ``encode`` and raises from it.
         """
         out: Dict[str, List[TokenizedData]] = {}
         for tok_name in self.tokenizer_names:
@@ -687,9 +769,8 @@ class DigitBoundaryMetrics(BaseMetrics):
                     "operator-isolation domain (prose only).", tok_name, exc,
                 )
                 continue
-            can_encode = getattr(tokenizer_obj, "can_encode", None)
             encode = getattr(tokenizer_obj, "encode", None)
-            if (callable(can_encode) and not can_encode()) or not callable(encode):
+            if not self._can_encode_raw_text(tokenizer_obj):
                 logger.warning(
                     "Tokenizer %r cannot encode raw text; it gets no code/math "
                     "operator-isolation domain (prose only).", tok_name,
@@ -731,7 +812,9 @@ class DigitBoundaryMetrics(BaseMetrics):
 
     @staticmethod
     def _char_to_token_from_offsets(
-        n_chars: int, offsets: Optional[List[Tuple[int, int]]]
+        n_chars: int,
+        offsets: Optional[List[Tuple[int, int]]],
+        keep_later_token_on_overlap: bool = False,
     ) -> Optional[List[Optional[int]]]:
         """Map each source character index to the token covering it.
 
@@ -739,6 +822,25 @@ class DigitBoundaryMetrics(BaseMetrics):
         skip rather than guess. Offsets are exact; inferring the same
         correspondence from token surfaces is not, because a byte-level
         vocabulary does not store the source characters.
+
+        *keep_later_token_on_overlap* decides which token keeps a character
+        that two tokens claim. Ranges do overlap: a SentencePiece vocabulary
+        emits the word-start marker as its own token, and HuggingFace reports a
+        range for it that covers the first character of the following word.
+        xlm-roberta-base encodes ``1234567`` as ``▁``, ``1234``, ``567`` with
+        offsets (0,1), (0,4) and (4,7), so character 0 is claimed by both the
+        marker and ``1234``. The marker produces no source character, so it
+        belongs to ``1234``, which ``keep_later_token_on_overlap=True``
+        reports. It is also the rule ``ASTBoundaryMetrics._map_from_offsets``
+        applies.
+
+        The default keeps the earlier token, which operator isolation has used
+        since it moved onto offsets and which its published figures were
+        computed with. Switching that call site changes them: measured on the
+        code corpus with xlm-roberta, ``overall_isolation_rate`` 0.6923 against
+        0.6807 and ``overall_compound_preservation_rate`` 0.6748 against 0.7295,
+        with the other eight benchmark tokenizers unchanged. The change is left
+        to a separate decision rather than made as a side effect here.
         """
         if not offsets:
             return None
@@ -748,7 +850,7 @@ class DigitBoundaryMetrics(BaseMetrics):
                 continue
             start, end = span
             for ci in range(max(0, start), min(end, n_chars)):
-                if mapping[ci] is None:
+                if keep_later_token_on_overlap or mapping[ci] is None:
                     mapping[ci] = tok_idx
         return mapping
 
@@ -1618,12 +1720,22 @@ class DigitBoundaryMetrics(BaseMetrics):
         """Compute digit boundary alignment metrics for ONE text under ONE
         tokenizer, returning a per-document summary.
 
-        Mirrors the per-text body inside ``compute()`` but does not pool across
-        a corpus. Used by per-example correlation analysis. The standard
-        ``compute()`` workflow is unaffected; this method snapshots and
-        restores ``self._char_decode_table``, ``self._special_tokens`` and
+        Mirrors the per-text body inside ``compute()`` for the digit metrics but
+        does not pool across a corpus. Used by per-example correlation analysis.
+        The standard ``compute()`` workflow is unaffected; this method snapshots
+        and restores ``self._char_decode_table``, ``self._special_tokens`` and
         ``self._subword_markers`` so calling it does not mutate aggregator
         state.
+
+        *tokenizer_obj* has to report character offsets, either through a
+        wrapper's ``encode_with_offsets`` or through a ``tokenizers.Encoding``
+        with an ``offsets`` attribute. One that does not raises ``ValueError``
+        naming it, rather than returning a row: the shortfall applies to every
+        text the caller would pass, so it is not a per-row condition.
+
+        ``operator_isolation_rate`` and ``compound_operator_preserved_rate``
+        are still measured on the text rebuilt from token surfaces, which
+        ``compute()`` no longer does; see the comment at that block.
 
         Returns a dict with keys: ``n_digit_spans``, ``mean_digit_f1``,
         ``mean_fertility_per_digit``, ``single_token_number_rate``,
@@ -1665,24 +1777,55 @@ class DigitBoundaryMetrics(BaseMetrics):
             )
 
             # ---- Encode and build char→token map (mirrors compute() body) ----
+            # The digit metrics are measured against the encoder's own
+            # character offsets, so they are required rather than optional.
             try:
-                try:
-                    token_ids_raw = tokenizer_obj.encode(text, add_special_tokens=False)
-                except TypeError:
-                    token_ids_raw = tokenizer_obj.encode(text)
+                enc_offsets: Optional[List[Tuple[int, int]]]
+                if hasattr(tokenizer_obj, "encode_with_offsets"):
+                    ids_raw, enc_offsets = tokenizer_obj.encode_with_offsets(text)
+                    token_ids = list(ids_raw)
+                else:
+                    try:
+                        token_ids_raw = tokenizer_obj.encode(text, add_special_tokens=False)
+                    except TypeError:
+                        token_ids_raw = tokenizer_obj.encode(text)
+                    token_ids = (
+                        list(token_ids_raw.ids)
+                        if hasattr(token_ids_raw, "ids")
+                        else list(token_ids_raw)
+                    )
+                    enc_offsets = (
+                        [tuple(pair) for pair in token_ids_raw.offsets]
+                        if hasattr(token_ids_raw, "offsets")
+                        else None
+                    )
             except Exception as e:
                 out = dict(empty)
                 out["parse_status"] = f"encode_error:{type(e).__name__}"
                 return out
-            token_ids = (
-                list(token_ids_raw.ids)
-                if hasattr(token_ids_raw, "ids")
-                else list(token_ids_raw)
-            )
 
-            token_strings = self._convert_ids_to_tokens(tokenizer_obj, token_ids)
-            recon_text, char_to_token = self._build_char_to_token_map(token_strings)
-            source_to_recon = self._build_source_to_recon_map(text, recon_text)
+            # Source character → token index. See the comment in compute() for
+            # why the reconstruction this replaced was wrong and why the
+            # word-start-space trim the code metrics apply is not needed here.
+            source_char_to_token = self._char_to_token_from_offsets(
+                len(text), enc_offsets, keep_later_token_on_overlap=True
+            )
+            if source_char_to_token is None:
+                named = (
+                    tokenizer_obj.get_name()
+                    if hasattr(tokenizer_obj, "get_name")
+                    else getattr(tokenizer_obj, "name_or_path", None)
+                    or type(tokenizer_obj).__name__
+                )
+                raise ValueError(
+                    "The digit metrics need character offsets, and tokenizer "
+                    f"{named!r} reported none. Offsets are the only exact way "
+                    "to say which token covers which digit. The shortfall "
+                    "applies to every text the caller would pass, so it is "
+                    "raised rather than returned as a row: pass a tokenizer "
+                    "whose encode_with_offsets() returns offsets, or one whose "
+                    "encode() returns a tokenizers.Encoding."
+                )
 
             # Match compute() early-exit semantics: both checks on the original text.
             has_digits = bool(self._DIGIT_SPAN.search(text))
@@ -1705,18 +1848,15 @@ class DigitBoundaryMetrics(BaseMetrics):
                     num_digits = len(digit_str)
                     if num_digits == 0:
                         continue
-                    recon_positions = [
-                        source_to_recon[i]
+                    if any(
+                        source_char_to_token[i] is None
                         for i in range(src_start, src_end)
-                        if source_to_recon[i] is not None
-                    ]
-                    if len(recon_positions) != num_digits:
+                    ):
+                        # A digit no token covers: the number was not measured.
                         continue
-                    span_start = recon_positions[0]
-                    span_end = recon_positions[-1] + 1
 
                     boundaries = self._get_digit_span_boundaries(
-                        char_to_token, span_start, span_end,
+                        source_char_to_token, src_start, src_end,
                     )
                     if boundaries is None:
                         continue
@@ -1748,7 +1888,19 @@ class DigitBoundaryMetrics(BaseMetrics):
             compound_ok = 0
 
             if has_operators:
+                # Operator isolation here still reads positions in the text
+                # rebuilt from token surfaces, which is what ``compute()`` did
+                # before ``_accumulate_operators`` was moved onto the offsets.
+                # The two therefore disagree: on the reconstruction a special
+                # token the surface pattern does not recognise is spliced in as
+                # literal text, so a Mistral-form '<s>' contributes a '<' and a
+                # '>' that are counted as two operators. Only the digit metrics
+                # were migrated here; moving operator isolation as well changes
+                # per-document operator numbers and was left for a separate
+                # change.
                 token_to_chars: Dict[int, Set[int]] = defaultdict(set)
+                token_strings = self._convert_ids_to_tokens(tokenizer_obj, token_ids)
+                recon_text, char_to_token = self._build_char_to_token_map(token_strings)
                 for ci, ti in enumerate(char_to_token):
                     token_to_chars[ti].add(ci)
                 for m in self._OPERATOR_SPAN.finditer(recon_text):

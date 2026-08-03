@@ -561,6 +561,18 @@ class BaseMetrics(ABC):
         ``_RESYNC_WINDOW`` characters is not re-synchronized, and those source
         characters stay ``None``, which callers must treat as unmeasured rather
         than as misaligned.
+
+        No metric calls this any more. The code metrics and the digit metrics
+        both map source characters to tokens through the encoder's own offsets
+        instead. The reason is that the reconstruction this maps into is built
+        by concatenating cleaned token strings, and ``_process_token`` removes
+        one leading space from a token rather than all of them, so a token whose
+        surface is several spaces leaves residual spaces the source has no
+        counterpart for. The re-synchronization above then matches one of
+        them and every later position is off. On a four-snippet indented corpus
+        that path measured 1 of 14 numbers for meta-llama/Meta-Llama-3-8B and 1
+        of 14 for Qwen/Qwen2.5-7B, against 14 of 14 from the offsets. It is kept
+        because it is unit-tested; do not wire it back into a metric.
         """
         source_to_recon: List[Optional[int]] = [None] * len(source_text)
         src_len, recon_len = len(source_text), len(recon_text)

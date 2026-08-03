@@ -94,6 +94,27 @@ section records the vetting that followed it. Set the date at tag time.
   named the dataset. Verified end to end: 5 languages, 63803 samples.
 
 ### Fixed (metric correctness)
+- The three digit metrics map a source span to tokens through the tokenizer's
+  own offsets, the same way the code metrics do since earlier in this release.
+  They used the reconstruction path, which resynchronizes onto a residual space
+  left by a multi-space token and stays wrong from there. The bundled math
+  corpus and FLORES prose contain no runs of whitespace, so the published
+  figures were not affected, but a corpus with indentation was: on four indented
+  Python snippets holding 14 numbers, Llama 3 measured 1 of 14 and got that one
+  wrong, returning boundaries [1, 3, 4, 7] for `12345678` where the tokens
+  `123`, `456`, `78` put them at [3, 6]. After the change all 14 are measured and
+  every boundary matches a direct read of the offsets.
+
+  Eight of the nine benchmark tokenizers are byte-identical. `bert-base-uncased`
+  moves, because it lowercases: three numbers whose digits never mapped are now
+  measured, so `numbers_analyzed` goes from 624 to 627 and `avg_f1` from 0.6269
+  to 0.6255.
+
+  Where two token ranges overlap the digit path takes the later token. XLM-R
+  encodes `1234567` as the word-start marker plus `1234` and `567`, with ranges
+  (0,1), (0,4) and (4,7), so the marker claims the first digit and the
+  earlier-token rule invented a boundary the tokenizer did not make, on 26 of
+  627 numbers.
 - A `.txt` or `.json` corpus is segmented one way, not several ways at once.
   `extract_texts_with_fallback_strategies` ran its strategies additively despite
   the name, so the same content came back twice under two segmentations and
