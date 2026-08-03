@@ -10,7 +10,7 @@ import logging
 from .base import BaseMetrics, TokenizedDataProcessor
 from ..core.input_types import TokenizedData
 from ..core.input_providers import InputProvider
-from ..config import TextMeasurementConfig, TextMeasurer, DEFAULT_LINE_MEASUREMENT_CONFIG, DEFAULT_TEXT_MEASUREMENT_CONFIG
+from ..config import TextMeasurementConfig, TextMeasurer, DEFAULT_TEXT_MEASUREMENT_CONFIG
 from ..config.language_metadata import LanguageMetadata
 from ..constants import DEFAULT_RENYI_ALPHAS, SHANNON_ENTROPY_ALPHA
 
@@ -44,7 +44,10 @@ class InformationTheoreticMetrics(BaseMetrics):
         """
         super().__init__(input_provider)
         self.renyi_alphas = renyi_alphas or DEFAULT_RENYI_ALPHAS
-        # Default to lines for information-theoretic analysis (as was hardcoded before)
+        # Whatever unit the run measures text in, bytes by default. The
+        # comment here used to say lines, and the line config is imported
+        # below and never used, but the assignment has always taken the
+        # byte config.
         self.measurement_config = measurement_config or DEFAULT_TEXT_MEASUREMENT_CONFIG
         self.text_measurer = TextMeasurer(self.measurement_config)
         self.language_metadata = language_metadata

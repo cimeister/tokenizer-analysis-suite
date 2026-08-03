@@ -12,7 +12,7 @@ import logging
 from .base import BaseMetrics, TokenizedDataProcessor
 from ..core.input_types import TokenizedData
 from ..core.input_providers import InputProvider
-from ..config import TextMeasurementConfig, TextMeasurer, DEFAULT_LINE_MEASUREMENT_CONFIG, DEFAULT_TEXT_MEASUREMENT_CONFIG
+from ..config import TextMeasurementConfig, TextMeasurer, DEFAULT_TEXT_MEASUREMENT_CONFIG
 from ..config.language_metadata import LanguageMetadata
 from ..constants import MIN_LANGUAGES_FOR_GINI
 
@@ -31,7 +31,11 @@ class TokenizerGiniMetrics(BaseMetrics):
                  measurement_config: Optional[TextMeasurementConfig] = None,
                  language_metadata: Optional[LanguageMetadata] = None):
         super().__init__(input_provider)
-        # Default to lines for fairness analysis (as was hardcoded before)
+        # Whatever unit the run measures text in, bytes by default. The
+        # comment here used to say lines, and the line config is imported
+        # below and never used, but the assignment has always taken the
+        # byte config. Cost per byte is the intended quantity: it is the
+        # one unit that means the same thing in every script.
         self.measurement_config = measurement_config or DEFAULT_TEXT_MEASUREMENT_CONFIG
         self.text_measurer = TextMeasurer(self.measurement_config)
         self.language_metadata = language_metadata

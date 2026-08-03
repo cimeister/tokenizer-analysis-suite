@@ -48,10 +48,22 @@ run after `uv pip install -e ./morphscore` uninstalls MorphScore, and
 pyarrow. Each step undoes the one before it. Pass `uv sync --inexact` if you
 need a different order.
 
-**MorphScore note**: only `<ISO 639-3>_<script>` language codes are mapped
-automatically. Data files are downloaded separately (see the
-[MorphScore repository](https://github.com/cimeister/morphscore)) and placed in
-`morphscore_data/`.
+**MorphScore note**: the data is a separate download. The files are on the Hub
+in the layout the code reads, one CSV per language named for the language in
+English:
+
+```bash
+uv run python -c "
+from huggingface_hub import snapshot_download
+snapshot_download('catherinearnett/morphscore', repo_type='dataset',
+                  local_dir='morphscore_data', allow_patterns=['*.csv'])
+"
+```
+
+Point `--morphscore-data-dir` elsewhere if you keep them somewhere else. Only
+`<ISO 639-3>_<Script>` language codes are mapped to those files automatically;
+see [the MorphScore repository](https://github.com/cimeister/morphscore) for the
+code that produces them.
 
 ### The evaluation corpus
 
@@ -367,10 +379,27 @@ four formats, chosen by extension:
 
 | Extension | Shape |
 |---|---|
-| `.txt` | Plain text. One sentence or document per line is recommended for parallel corpora |
+| `.txt` | Plain text. One document per line, or one document per blank-line-separated paragraph; see below |
 | `.json` | Either a JSON array of objects each with a `text` key, or one such object on its own |
 | `.jsonl` | JSON Lines: one object per line, each with a `text` key |
 | `.parquet` | A DataFrame with a text column; see below |
+
+#### What counts as one document in a `.txt` file
+
+A blank line means the file is paragraph-separated, and each paragraph is one
+document. With no blank line anywhere, each line is one document. That rule is
+decided per file, and it is the unit every per-document metric divides by, so it
+is worth being deliberate about: a file of prose paragraphs and a file of one
+sentence per line are read differently on purpose.
+
+Two filters apply either way. A document shorter than 5 characters is dropped,
+and runs of whitespace inside a document are collapsed to single spaces, which
+means a `.txt` corpus is not the right input for measuring indentation. Use
+`--code-ast-config` for source code, which preserves it.
+
+`--samples-per-lang` caps the number of documents kept per corpus, so on a
+line-per-document file it is a line count and on a paragraph file it is a
+paragraph count.
 
 A `.json` file shaped `{"texts": [...]}` is **not** a corpus file and loads as
 zero texts. That shape belongs to `--math-data` only, which accepts either
@@ -435,10 +464,15 @@ Control how text "length" is measured for metric normalization via
 
 | Method | `method` value | Counting key and options | Default for |
 |--------|----------------|--------------------------|-------------|
-| Bytes | `"bytes"` | `byte_counting`: `"utf8"`, `"hf_bytelevel"` | Compression metrics |
+| Bytes | `"bytes"` | `byte_counting`: `"utf8"`, `"hf_bytelevel"` | Compression, Gini, the information-theoretic metrics |
 | Characters | `"characters"` | (none) | (none) |
-| Lines | `"lines"` | `line_counting`: `"single"`, `"newline_split"`, `"custom_regex"` | Gini metrics |
+| Lines | `"lines"` | `line_counting`: `"single"`, `"newline_split"`, `"custom_regex"` | (none) |
 | Words | `"words"` | `word_counting`: `"python_split"`, `"hf_whitespace"`, `"regex_whitespace"`, `"custom_regex"` | Fertility |
+
+Every metric that normalizes by text length uses the unit set here, so
+`--measurement-config` changes compression, Gini and the information-theoretic
+metrics together. Fertility is the exception: it always counts words, because a
+tokens-per-word figure is what the name means.
 
 `include_empty_splits` (bool, default `false`) affects word and line counting.
 `custom_regex` (string) is required when a counting method is set to

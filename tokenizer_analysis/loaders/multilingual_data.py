@@ -370,14 +370,19 @@ def load_from_parquet(parquet_file: str, max_texts: int) -> List[str]:
 
 def load_single_file(file_path: str, max_texts: int) -> List[str]:
     """
-    Load texts from a single file, auto-detecting the format.
-    
+    Load documents from a single file, auto-detecting the format.
+
+    For a .txt file, a blank line anywhere means the file is paragraph
+    separated and each paragraph is one document; with no blank line, each line
+    is one document. The rule is decided per file. `max_texts` therefore caps
+    lines for a line-per-document file and paragraphs for a paragraph file.
+
     Args:
         file_path: Path to the file
-        max_texts: Maximum number of texts to load
-        
+        max_texts: Maximum number of documents to load
+
     Returns:
-        List of text samples
+        List of documents
     """
     file_ext = os.path.splitext(file_path)[1].lower()
     

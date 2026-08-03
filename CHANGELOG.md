@@ -75,6 +75,24 @@ section records the vetting that followed it. Set the date at tag time.
   successor count never exceeds its occurrence count, the current definition is
   systematically the higher of the two.
 
+### Fixed (documentation of behaviour)
+- The comment on the Gini and information-theoretic metrics said they default
+  to lines, and both modules imported the line config and never used it. Both
+  have always taken the byte config, which is the intended quantity: cost per
+  byte is the one unit that means the same thing in every script. The comment,
+  the unused import and the README's measurement table now say bytes, and the
+  table says that `--measurement-config` moves compression, Gini and the
+  information-theoretic metrics together while fertility always counts words.
+- The README says what one document is in a `.txt` corpus: a blank line
+  anywhere means the file is paragraph separated and each paragraph is a
+  document, otherwise each line is. It also says that documents under 5
+  characters are dropped and that whitespace runs are collapsed, so a `.txt`
+  corpus is the wrong input for measuring indentation.
+- The MorphScore data is one `snapshot_download` from
+  `catherinearnett/morphscore`, which ships the per-language CSVs in the layout
+  the code reads. The README pointed at the code repository instead and never
+  named the dataset. Verified end to end: 5 languages, 63803 samples.
+
 ### Fixed (metric correctness)
 - A `.txt` or `.json` corpus is segmented one way, not several ways at once.
   `extract_texts_with_fallback_strategies` ran its strategies additively despite
