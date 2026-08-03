@@ -117,8 +117,9 @@ def section_what_was_measured(results, rows):
         "Corpus: FLORES+ `dev`, "
         f"{len(languages)} languages ({', '.join(languages)}), "
         f"{corpus.get('samples_per_lang')} sentences per language at most. "
-        "Code: 100 files per language across 15 languages from "
-        "`bigcode/the-stack-smol-xs`. Math: the 285 bundled expressions."
+        "Code: 1500 files across 15 languages from "
+        "`bigcode/the-stack-smol-xs`, read whole. Math: the 285 bundled "
+        "expressions."
     )
     lines.append("")
     lines.append(
