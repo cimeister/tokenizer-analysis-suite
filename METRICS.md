@@ -551,11 +551,12 @@ Equitability of encoding cost across languages.
 ```math
   c_\ell \;=\;
   \frac{\text{number of tokens produced by the tokenizer on language }\ell}
-       {\text{number of raw bytes (or lines for a parallel corpus) in the same text}}
+       {\text{number of measurement units in the same text}}
 ```
 
   A lower $`c_\ell`$ means the language is encoded in fewer tokens per unit of
-  text.
+  text. The unit is whatever `--measurement-config` sets, UTF-8 bytes by
+  default.
 
 * Let the mean cost be
 
@@ -573,7 +574,24 @@ Then the **Tokenizer Fairness Gini** with equal weights is
 
 * **Range:** $`0 \le \mathrm{TFG} \le 1`$
   * $`0`$: every language has the same token cost per unit of text.
-  * $`1`$: maximal inequality.
+  * $`1`$: maximal inequality. The attainable maximum is $`1 - 1/n`$, so on 13
+    languages no tokenizer can exceed 0.923.
+
+**This is a fair comparison only on a parallel corpus.** The cost is tokens per
+unit of text, so if the texts in two languages say different things, the ratio
+between their costs is partly the ratio of what they say. FLORES+ is parallel,
+which is why the shipped configs use it.
+
+**Even on a parallel corpus, the byte unit is not neutral across scripts.** UTF-8
+spends one byte per Latin character, two for Cyrillic and Greek, three for most
+CJK and Devanagari. A tokenizer can therefore look cheaper on Chinese than on
+English purely because the denominator is larger, with no difference in how well
+it segments either. Two ways to read around it: compare the same tokenizer
+across languages only when you have accounted for that, or set
+`--measurement-config` to a lines config, where a parallel corpus gives every
+language the same denominator, one line per sentence, and the cost becomes
+tokens per sentence. The number under a lines config is not comparable with the
+number under the byte default.
 
 The underlying Lorenz curve is written under
 `tokenizer_fairness_gini.per_tokenizer.<tok>.lorenz_curve`, from which

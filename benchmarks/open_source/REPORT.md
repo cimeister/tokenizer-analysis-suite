@@ -76,6 +76,8 @@ CER is `n/a` for BERT base uncased, XLM-RoBERTa base. The character error rate i
 
 ## How to read this
 
+**The Gini column is tokens per UTF-8 byte, and the byte is not neutral across scripts.** UTF-8 spends one byte per Latin character, two for Cyrillic, three for most CJK and Devanagari, so a tokenizer can score cheaper on Chinese than on English because the denominator is larger rather than because it segments Chinese better. The corpus here is parallel, which is what makes the comparison meaningful at all; the unit is what stops it from being a clean one. Read the per-language costs in the results file beside the coefficient.
+
 **Vocabulary size is not held constant.** The tokenizers here span 9 models and a wide vocabulary range, and a larger vocabulary buys compression almost mechanically. A comparison between two tokenizers of different size measures the size as much as the algorithm.
 
 **Training data is not held constant and is mostly undisclosed.** These tokenizers were trained on different corpora with different language mixes. A tokenizer that compresses Hindi well may have seen more Hindi, not tokenized it better.
