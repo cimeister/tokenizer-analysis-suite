@@ -723,9 +723,13 @@ Consumers doing arithmetic on these fields need a `None` check.
 
 Every results file holds a top-level `run_metadata` block: package version,
 git commit, the config files read and their hashes, the tokenizer files measured
-and their hashes, corpus and sample count, and which metric families were
-disabled. Two files with different numbers can be attributed to a change in the
-tokenizer, the corpus, or the toolkit.
+and their hashes, corpus and sample count, the code-corpus caps in force, which
+metric families were disabled, and under `arguments` every command-line
+argument the caller changed from its default. Arguments that only decide where
+output goes are left out, so two runs writing to different directories do not
+look like different measurements. When two results files disagree,
+`run_metadata` identifies whether the tokenizer, the corpus, the settings or the
+toolkit version changed.
 
 `git_tree_modified` sits beside `git_commit`. It is `true` when the working tree
 had uncommitted changes at run time, in which case the commit hash does not

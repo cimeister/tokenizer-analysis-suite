@@ -369,6 +369,15 @@ section records the vetting that followed it. Set the date at tag time.
   pre-tokenizer and the merges, not on byte-level encoding as such.
 
 ### Added
+- `run_metadata.arguments` records every command-line argument the caller
+  changed from its default, except the ones that only decide where output goes.
+  The block named a hand-maintained list before, and `--filter-script-family`,
+  `--filter-resource-level` and `--use-builtin-math-data` were not on it: all
+  three change the published values and all three left `run_metadata`
+  byte-identical. Two runs on a 3-language config differing only by
+  `--filter-script-family Latin` gave Gini 0.005152 and 0.005774 with the same
+  provenance block. Diffing the parsed namespace against the parser's defaults
+  covers any flag added later without anyone remembering to add it.
 - `--max-code-files-per-lang` and `--max-code-file-chars`, both defaulting to 0,
   which means no cap. They were previously always on at 100 files per language
   and 15000 characters per file, on no flag and recorded nowhere: on the

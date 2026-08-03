@@ -254,3 +254,36 @@ def test_tokenized_data_cache_can_be_replayed(tmp_path):
     assert (first["fertility"]["per_tokenizer"]["bpe"]["global"]["mean"]
             == again["fertility"]["per_tokenizer"]["bpe"]["global"]["mean"])
     assert "run_metadata" in again
+
+
+def test_run_metadata_records_the_flags_that_change_the_numbers():
+    """A flag that narrows what is measured must be on the record.
+
+    --filter-script-family, --filter-resource-level and --use-builtin-math-data
+    all change the published values and all left run_metadata byte-identical,
+    because the block named a hand-maintained list of interesting flags and
+    those three were not on it. The block now diffs the parsed namespace against
+    the parser's own defaults, so a flag added later is covered without anyone
+    remembering to add it.
+    """
+    from tokenizer_analysis.cli.run_analysis import build_parser, _non_default_arguments
+
+    base = build_parser().parse_args(["--use-sample-data"])
+    assert _non_default_arguments(base) == {"use_sample_data": True}
+
+    for flag, value in (
+        ("--filter-script-family", "Latin"),
+        ("--filter-resource-level", "high"),
+    ):
+        args = build_parser().parse_args(["--use-sample-data", flag, value])
+        recorded = _non_default_arguments(args)
+        assert value in recorded.values(), f"{flag} is absent from {recorded}"
+
+    args = build_parser().parse_args(["--use-sample-data", "--use-builtin-math-data"])
+    assert _non_default_arguments(args).get("use_builtin_math_data") is True
+
+    # Where the output goes is not what was measured, so two runs differing only
+    # in that must not look like different measurements.
+    args = build_parser().parse_args(["--use-sample-data", "--output-dir", "/tmp/x",
+                                      "--no-plots", "--save-full-results"])
+    assert _non_default_arguments(args) == {"use_sample_data": True}

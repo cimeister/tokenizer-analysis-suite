@@ -1064,6 +1064,36 @@ def _git_state() -> Dict[str, Any]:
     return state
 
 
+# Arguments that decide where output goes rather than what is measured. Two
+# runs differing only in these produce the same numbers, so recording them
+# would make identical measurements look different.
+_OUTPUT_ONLY_ARGS = frozenset({
+    "output_dir", "latex_output_dir", "tokenized_data_output_path",
+    "save_full_results", "save_tokenized_data", "no_plots", "per_language_plots",
+    "faceted_plots", "no_global_lines", "generate_latex_tables",
+    "latex_table_types", "custom_latex_config", "verbose",
+})
+
+
+def _non_default_arguments(args: argparse.Namespace) -> Dict[str, Any]:
+    """Every argument the caller changed from its default, except output paths.
+
+    Recording a hand-maintained list of interesting flags is what left
+    --filter-script-family, --filter-resource-level and --use-builtin-math-data
+    out: all three change the numbers and left run_metadata byte-identical.
+    Diffing the parsed namespace against the parser's own defaults covers any
+    flag added later without anyone remembering to add it here.
+    """
+    defaults = vars(build_parser().parse_args([]))
+    changed = {}
+    for name, value in sorted(vars(args).items()):
+        if name in _OUTPUT_ONLY_ARGS:
+            continue
+        if defaults.get(name) != value:
+            changed[name] = value
+    return changed
+
+
 def _build_run_metadata(args: argparse.Namespace, tokenizer_configs: Dict) -> Dict:
     """Describe the run, so a results file can be traced back to what made it.
 
@@ -1115,6 +1145,10 @@ def _build_run_metadata(args: argparse.Namespace, tokenizer_configs: Dict) -> Di
         "git_tree_modified": git["dirty"],
         "configs": configs,
         "tokenizers": tokenizers,
+        # Everything the caller changed from the defaults, so a flag that
+        # narrows or redirects what is measured is on the record even if no
+        # named field below happens to cover it.
+        "arguments": _non_default_arguments(args),
         "corpus": {
             "input": args.input,
             "input_label": args.input_label,
