@@ -12,7 +12,12 @@ from ..core.input_types import TokenizedData
 from ..core.input_providers import InputProvider
 from ..config import TextMeasurementConfig, TextMeasurer, DEFAULT_TEXT_MEASUREMENT_CONFIG
 from ..config.language_metadata import LanguageMetadata
-from ..constants import DEFAULT_RENYI_ALPHAS, SHANNON_ENTROPY_ALPHA
+from ..constants import (
+    AGGREGATION_MICRO_POOLED,
+    AGGREGATION_RATIO_OF_SUMS,
+    DEFAULT_RENYI_ALPHAS,
+    SHANNON_ENTROPY_ALPHA,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +120,8 @@ class InformationTheoreticMetrics(BaseMetrics):
                     'Tokenization and the Noiseless Channel, ACL'
                 ),
                 'alphas': list(self.renyi_alphas),
-                'aggregation': 'micro_pooled',
+                'aggregation': AGGREGATION_MICRO_POOLED,
+                'count_unit': 'tokens',
                 'observed_normalization': (
                     'Same entropies divided by log2(observed token types) '
                     'instead, the pre-1.0 behaviour. Corpus-dependent, and its '
@@ -196,6 +202,17 @@ class InformationTheoreticMetrics(BaseMetrics):
                         lang_entropy / np.log2(lang_observed) if lang_observed > 1 else None
                     )
             
+            # How many tokens each language's entropy was computed over, so the
+            # published per-language values carry the count the schema asks for
+            # once run_analysis pivots them into per_language. The overall entry
+            # is the pooled corpus the global entropies were computed over.
+            token_counts = {
+                lang: sum(counts.values())
+                for lang, counts in per_lang_token_counts.items()
+            }
+            token_counts['overall'] = sum(global_token_counts.values())
+            tok_results['token_counts'] = token_counts
+
             results['per_tokenizer'][tok_name] = tok_results
             results['observed_normalization']['per_tokenizer'][tok_name] = observed_results
 
@@ -273,7 +290,15 @@ class InformationTheoreticMetrics(BaseMetrics):
                             num_texts += 1
 
                 if lang_tokens > 0:
-                    per_lang_ratios[lang] = lang_units / lang_tokens
+                    # count is the number of measurement units this language's
+                    # ratio was computed over, so a reader can re-derive the
+                    # pooled rate from the per-language block. It used to be a
+                    # bare float here, which left the pooled rate underivable.
+                    per_lang_ratios[lang] = {
+                        'compression_rate': lang_units / lang_tokens,
+                        'count': lang_units,
+                        'total_tokens': lang_tokens,
+                    }
                     total_units += lang_units
                     total_tokens += lang_tokens
 
@@ -295,7 +320,9 @@ class InformationTheoreticMetrics(BaseMetrics):
 
         # Add metadata
         results['metadata'] = {
-            'normalization_method': self.measurement_config.method.value
+            'normalization_method': self.measurement_config.method.value,
+            'aggregation': AGGREGATION_RATIO_OF_SUMS,
+            'count_unit': 'measurement units',
         }
 
         # Compute pairwise comparisons
@@ -542,7 +569,15 @@ class InformationTheoreticMetrics(BaseMetrics):
                 'interpretation': 'Higher = more uniform successor distributions',
                 'min_bigram_occurrences': min_occ,
                 'normalizer': 'log2(distinct successors of this context)',
-                'aggregation': 'frequency-weighted mean over contexts',
+                # aggregation names which average the global block reports,
+                # from the four labels in constants.AGGREGATION_LABELS. The
+                # global entropy is computed over the bigrams of every language
+                # pooled together, so a language contributing more bigrams
+                # counts for more. How contexts are weighted within that pool is
+                # a separate question, answered by context_weighting below.
+                'aggregation': AGGREGATION_MICRO_POOLED,
+                'context_weighting': 'frequency-weighted mean over contexts',
+                'count_unit': 'bigrams',
                 'deviations_from_reference': [
                     "Normalizer is this context's own successor count, not the "
                     "corpus-wide accessor-domain size the reference uses, so eta "
@@ -588,6 +623,10 @@ class InformationTheoreticMetrics(BaseMetrics):
                     'total_bigrams': lang_stats['total_ngrams'],
                     'types_evaluated': lang_stats['types_evaluated'],
                     'types_excluded': lang_stats['types_excluded'],
+                    # count is the schema-wide name for the number of items of
+                    # the metric's count_unit behind this entry, so it repeats
+                    # total_bigrams rather than measuring something else.
+                    'count': lang_stats['total_ngrams'],
                 }
 
             global_stats = self._compute_weighted_entropy(global_right_accessors, min_occ)
@@ -688,7 +727,14 @@ class InformationTheoreticMetrics(BaseMetrics):
                 'interpretation': 'Higher = more uniform successor distributions given bigram context',
                 'min_trigram_occurrences': min_occ,
                 'normalizer': 'log2(distinct successors of this bigram context)',
-                'aggregation': 'frequency-weighted mean over contexts',
+                # Same split as bigram_entropy: aggregation is one of the four
+                # labels in constants.AGGREGATION_LABELS and describes the
+                # global block, which pools the trigrams of every language;
+                # context_weighting describes how contexts are weighted inside
+                # that pool.
+                'aggregation': AGGREGATION_MICRO_POOLED,
+                'context_weighting': 'frequency-weighted mean over contexts',
+                'count_unit': 'trigrams',
                 'deviations_from_reference': [
                     'Poelman et al. define bigram successor entropy; the trigram '
                     'form is this library extending it, so there is no published '
@@ -736,6 +782,9 @@ class InformationTheoreticMetrics(BaseMetrics):
                     'total_trigrams': lang_stats['total_ngrams'],
                     'types_evaluated': lang_stats['types_evaluated'],
                     'types_excluded': lang_stats['types_excluded'],
+                    # As in bigram_entropy: the schema-wide count, in the unit
+                    # named by count_unit, repeating total_trigrams.
+                    'count': lang_stats['total_ngrams'],
                 }
 
             global_stats = self._compute_weighted_entropy(global_right_accessors, min_occ)

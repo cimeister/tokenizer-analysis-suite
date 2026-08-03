@@ -81,7 +81,7 @@ class TestCompressionRateRatioOfMeans:
         assert g["total_tokens"] == 3
 
     def test_per_language(self):
-        """Per-language rates should also be ratio-of-means."""
+        """Per-language rates should also be ratio-of-means, with their count."""
         tok = "tok"
         m = self._make_metrics(tok)
         td = {tok: [
@@ -89,9 +89,13 @@ class TestCompressionRateRatioOfMeans:
             _make_td(tok, "world!", 3, lang="en"),       # 6 bytes / 3 tokens
         ]}
         results = m.compute_compression_rate(td)
-        en_rate = results["per_tokenizer"][tok]["per_language"]["en"]
+        en = results["per_tokenizer"][tok]["per_language"]["en"]
         # (5 + 6) / (2 + 3) = 11 / 5 = 2.2
-        assert en_rate == pytest.approx(11.0 / 5.0)
+        assert en["compression_rate"] == pytest.approx(11.0 / 5.0)
+        # count is the measurement units the rate was computed over, so the
+        # pooled rate stays derivable from the per-language block alone.
+        assert en["count"] == 11
+        assert en["total_tokens"] == 5
 
 
 # ======================================================================

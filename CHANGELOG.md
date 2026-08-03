@@ -13,6 +13,30 @@ section records the vetting that followed it. Set the date at tag time.
 
 
 ### Changed (output format, breaking)
+- Every metric publishes a per-tokenizer `global`. Five had none:
+  `trigram_entropy` published the same four values as flat `global_*` siblings,
+  so a parser written against `bigram_entropy` found nothing;
+  `three_digit_boundary_alignment` and `numeric_magnitude_consistency` had no
+  headline block at all; `token_length` and `encoding_speed` now carry one that
+  duplicates an existing block, deliberately, because an exception in the schema
+  costs a reader more than a duplicated number.
+- Every metric's `metadata` carries `aggregation`, one of `micro_pooled`,
+  `macro_languages`, `ratio_of_sums` or `set_union`, saying which average
+  `global` reports. `global` meant a ratio of sums in one metric, a mean of
+  per-document ratios in another, an unweighted mean across languages in a third
+  and a set union in a fourth, with nothing recording which. On the bundled
+  parallel corpus micro and macro agree, so the difference was invisible until
+  an unequal corpus. `bigram_entropy` and `trigram_entropy` held free text
+  there; that prose moved to `context_weighting` and the field now takes the
+  label.
+- Every `per_language` entry carries a `count`, and every metric's `metadata`
+  names the unit it is in. `compression_rate.per_language.<lang>` therefore
+  changes from a bare number to `{compression_rate, count, total_tokens}`; the
+  rate is unchanged. `tokenizer_fairness_gini` and `morphscore` publish no
+  per-language count, because their unit is languages and the count would be 1
+  for every entry, and say so in `metadata.per_language_count` rather than being
+  silent.
+
 - A value that could not be measured is now `null`, not `0.0`. This affects
   every rate the pipeline publishes, via `BaseMetrics.safe_divide` and
   `BaseMetrics.empty_stats()`. A tokenizer that never emitted an UNK and one

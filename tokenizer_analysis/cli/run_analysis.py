@@ -257,6 +257,48 @@ def _strip_per_language(per_lang):
             for lang, v in per_lang.items()}
 
 
+def _pool_per_language(per_language: dict, fields) -> dict:
+    """Count-weighted pool of per-language means, plus the summed count.
+
+    Used by the metrics whose per-language entries are a mean over items and a
+    ``count`` of those items. Pooling ``sum(mean_l * count_l) / sum(count_l)``
+    recovers the mean over every item in every language, which is what
+    ``micro_pooled`` names. It is derived from the per-language block rather
+    than read from the metric's ``summary``, because ``summary`` is computed
+    over the whole corpus and is copied unchanged into each language group, so
+    a grouped result would otherwise publish a global belonging to the full
+    language set. Reordering the same additions leaves a relative difference
+    around 1e-16 against the value ``summary`` reports.
+
+    Every field is null and ``count`` is 0 when no language contributed an
+    item, so an empty measurement is not published as a measured zero.
+    """
+    totals = {field: 0.0 for field in fields}
+    weights = {field: 0 for field in fields}
+    total_count = 0
+
+    for entry in (per_language or {}).values():
+        if not isinstance(entry, dict):
+            continue
+        count = entry.get('count')
+        if not count:
+            continue
+        total_count += count
+        for field in fields:
+            value = entry.get(field)
+            if value is None:
+                continue
+            totals[field] += value * count
+            weights[field] += count
+
+    pooled = {
+        field: (totals[field] / weights[field] if weights[field] else None)
+        for field in fields
+    }
+    pooled['count'] = total_count
+    return pooled
+
+
 def _sample_array(value):
     """Downsample large arrays for JSON export."""
     if isinstance(value, list) and len(value) > LARGE_ARRAY_THRESHOLD:
@@ -353,6 +395,17 @@ def _slim_tokenizer_entry(
         if 'per_language' in tok_data:
             out['per_language'] = tok_data['per_language']
 
+    # --- Trigram entropy: the same pivot as bigram, one n-gram order up ---
+    elif metric_name == 'trigram_entropy':
+        out['global'] = {
+            'trigram_entropy': tok_data.get('global_trigram_entropy'),
+            'total_trigrams': tok_data.get('global_total_trigrams'),
+            'types_evaluated': tok_data.get('global_types_evaluated'),
+            'types_excluded': tok_data.get('global_types_excluded'),
+        }
+        if 'per_language' in tok_data:
+            out['per_language'] = tok_data['per_language']
+
     # --- Rényi efficiency: pivot from {renyi_X: {overall, lang...}} to {global: {renyi_X: v}, per_language: {lang: {renyi_X: v}}} ---
     elif metric_name == 'renyi_efficiency':
         global_vals = {}
@@ -364,8 +417,16 @@ def _slim_tokenizer_entry(
                 for lang, score in value.items():
                     if lang != 'overall':
                         lang_vals.setdefault(lang, {})[key] = score
+        # The number of tokens each entropy was computed over travels in its
+        # own dict on the source block, because the pivot above turns one dict
+        # per alpha into one dict per language and there is nowhere else to put
+        # a per-language count.
+        token_counts = tok_data.get('token_counts') or {}
         out['global'] = global_vals
         if lang_vals:
+            for lang, entry in lang_vals.items():
+                if lang in token_counts:
+                    entry['count'] = token_counts[lang]
             out['per_language'] = lang_vals
 
     # --- Tokenizer fairness (Gini) ---
@@ -388,8 +449,11 @@ def _slim_tokenizer_entry(
             out[key] = _sample_array(value)
 
     # --- Token length: keep character_length and byte_length sub-dicts stripped ---
+    # 'global' repeats 'primary_length'. Every metric publishes a global block,
+    # with no exceptions, so this one does too even though the same numbers sit
+    # beside it under the name that says which of the two lengths it is.
     elif metric_name == 'token_length':
-        for key in ('character_length', 'byte_length', 'primary_length'):
+        for key in ('character_length', 'byte_length', 'primary_length', 'global'):
             if key in tok_data:
                 out[key] = _strip_stats(tok_data[key])
 
@@ -425,6 +489,11 @@ def _slim_tokenizer_entry(
             out['by_digit_length'] = tok_data['by_digit_length']
         if 'by_bucket' in tok_data:
             out['by_bucket'] = tok_data['by_bucket']
+        if metric_name == 'three_digit_boundary_alignment':
+            out['global'] = _pool_per_language(
+                out.get('per_language'),
+                ('mean_f1', 'mean_precision', 'mean_recall'),
+            )
 
     # --- Numeric magnitude consistency: same as digit boundary + scaling ---
     elif metric_name == 'numeric_magnitude_consistency':
@@ -434,6 +503,9 @@ def _slim_tokenizer_entry(
             out['by_digit_length'] = tok_data['by_digit_length']
         if 'scaling' in tok_data:
             out['scaling'] = tok_data['scaling']
+        out['global'] = _pool_per_language(
+            out.get('per_language'), ('mean_fertility',)
+        )
 
     # --- Operator isolation rate: rename by_language->per_language, drop all by_category (full results only) ---
     elif metric_name == 'operator_isolation_rate':

@@ -636,11 +636,22 @@ step recognizes only per-metric shapes; the populated version is in
 `--save-full-results` to also write `analysis_results_full.json` with all
 computed data.
 
-The schema is not yet fixed. Two things are still missing from it and will be
-added in a later release: an `aggregation` label on every metric's `metadata`,
-naming which average its `global` reports, and a `count` on every `per_language`
-entry so a consumer can re-derive the other weighting. Five metrics have no
-`global` block yet; they are named in the exceptions table below.
+Three things hold for every metric, and the test suite asserts each of them
+over the whole file rather than a sample:
+
+- `per_tokenizer.<tok>.global` is the headline block. There are no exemptions.
+  `token_length` and `encoding_speed` carry one that duplicates a block they
+  already publish, because an exception in the schema costs a reader more than a
+  duplicated number does.
+- `metadata.aggregation` says which average `global` reports: `micro_pooled`,
+  `macro_languages`, `ratio_of_sums` or `set_union`. This matters because
+  `global` means different things in different metrics, and on a parallel corpus
+  where every language holds the same number of lines micro and macro agree, so
+  the difference only shows on an unequal corpus.
+- Every `per_language` entry carries a `count`, in the unit named by
+  `metadata.count_unit`, so a consumer can re-derive the other weighting.
+  `tokenizer_fairness_gini` and `morphscore` are the exception: their unit is
+  languages, so the count would be 1 for every entry, and `metadata` says so.
 
 Most metrics follow this layout:
 

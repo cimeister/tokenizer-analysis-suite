@@ -32,6 +32,7 @@ from scipy.stats import spearmanr
 import logging
 
 from .base import BaseMetrics, TokenizedDataProcessor
+from ..constants import AGGREGATION_MICRO_POOLED
 from ..core.input_types import TokenizedData
 from ..core.input_providers import InputProvider
 from ..utils.text_utils import load_math_data, BUILTIN_MATH_SAMPLES_PATH
@@ -1036,7 +1037,18 @@ class DigitBoundaryMetrics(BaseMetrics):
     def _build_alignment_results(
         self, acc: Dict[str, Dict[str, Dict[str, list]]]
     ) -> Dict[str, Any]:
-        results: Dict[str, Any] = {"per_tokenizer": {}, "summary": {}}
+        results: Dict[str, Any] = {
+            "per_tokenizer": {},
+            "summary": {},
+            "metadata": {
+                "description": (
+                    "How often the tokenizer's boundaries inside a number fall "
+                    "at the three-digit positions comma grouping would use."
+                ),
+                "aggregation": AGGREGATION_MICRO_POOLED,
+                "count_unit": "digit spans",
+            },
+        }
 
         for tok_name in self.tokenizer_names:
             tok_data: Dict[str, Any] = {
@@ -1363,7 +1375,18 @@ class DigitBoundaryMetrics(BaseMetrics):
         stored in each *alignment_acc* entry, eliminating the need for a
         separate magnitude accumulator.
         """
-        results: Dict[str, Any] = {"per_tokenizer": {}, "summary": {}}
+        results: Dict[str, Any] = {
+            "per_tokenizer": {},
+            "summary": {},
+            "metadata": {
+                "description": (
+                    "Tokens per digit, and how it scales with the number of "
+                    "digits."
+                ),
+                "aggregation": AGGREGATION_MICRO_POOLED,
+                "count_unit": "numbers",
+            },
+        }
 
         for tok_name in self.tokenizer_names:
             tok_data: Dict[str, Any] = {
@@ -1449,7 +1472,19 @@ class DigitBoundaryMetrics(BaseMetrics):
         self, acc: Dict[str, Dict[str, Dict[str, Dict[str, int]]]]
     ) -> Dict[str, Any]:
         """Build the ``operator_isolation_rate`` result dict."""
-        results: Dict[str, Any] = {"per_tokenizer": {}, "summary": {}}
+        results: Dict[str, Any] = {
+            "per_tokenizer": {},
+            "summary": {},
+            "metadata": {
+                "description": (
+                    "How often a mathematical operator is a token of its own, "
+                    "pooled over prose, code and math, with the split kept in "
+                    "by_domain."
+                ),
+                "aggregation": AGGREGATION_MICRO_POOLED,
+                "count_unit": "operator occurrences",
+            },
+        }
 
         for tok_name in self.tokenizer_names:
             tok_data: Dict[str, Any] = {
@@ -1512,6 +1547,10 @@ class DigitBoundaryMetrics(BaseMetrics):
                         if lang_compound_total > 0 else None
                     )
                     lang_data["total"] = lang_total
+                    # count is the schema-wide name for how many items of the
+                    # metric's count_unit this entry covers. The unit here is
+                    # operator occurrences, so it repeats total.
+                    lang_data["count"] = lang_total
                     # raw counts so a filtered subset can be re-aggregated exactly
                     lang_data["isolated"] = lang_isolated
                     lang_data["compound_total"] = lang_compound_total

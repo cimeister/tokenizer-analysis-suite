@@ -28,6 +28,7 @@ import numpy as np
 import logging
 
 from .base import BaseMetrics
+from ..constants import AGGREGATION_MICRO_POOLED
 from ..core.input_providers import InputProvider
 
 # Import constants and helpers from the lightweight worker module.
@@ -1259,7 +1260,18 @@ class ASTBoundaryMetrics(BaseMetrics):
         the normal case.
         """
         unmappable_acc = unmappable_acc or {}
-        results: Dict[str, Any] = {"per_tokenizer": {}, "summary": {}}
+        results: Dict[str, Any] = {
+            "per_tokenizer": {},
+            "summary": {},
+            "metadata": {
+                "description": (
+                    "How often a token boundary coincides with an AST node "
+                    "boundary, over the nodes of every programming language."
+                ),
+                "aggregation": AGGREGATION_MICRO_POOLED,
+                "count_unit": "AST nodes",
+            },
+        }
 
         for tok_name in self.tokenizer_names:
             tok_data: Dict[str, Any] = {
@@ -1389,7 +1401,19 @@ class ASTBoundaryMetrics(BaseMetrics):
         self, ident_acc: Dict[str, Dict[str, List[Dict]]]
     ) -> Dict[str, Any]:
         """Build identifier fragmentation results from accumulated data."""
-        results: Dict[str, Any] = {"per_tokenizer": {}, "summary": {}}
+        results: Dict[str, Any] = {
+            "per_tokenizer": {},
+            "summary": {},
+            "metadata": {
+                "description": (
+                    "How often an identifier is split into more than one "
+                    "token, over the identifier occurrences of every "
+                    "programming language."
+                ),
+                "aggregation": AGGREGATION_MICRO_POOLED,
+                "count_unit": "identifier occurrences",
+            },
+        }
 
         for tok_name in self.tokenizer_names:
             tok_data: Dict[str, Any] = {"by_language": {}, "overall": {}}
@@ -1525,6 +1549,8 @@ class ASTBoundaryMetrics(BaseMetrics):
                 ),
                 "counted_tokens": "whitespace-only tokens",
                 "languages": sorted(_WHITESPACE_SIGNIFICANT_LANGS),
+                "aggregation": AGGREGATION_MICRO_POOLED,
+                "count_unit": "indented lines",
             },
         }
 
@@ -1560,6 +1586,10 @@ class ASTBoundaryMetrics(BaseMetrics):
                     "depth_proportionality_correlation": float(corr) if not math.isnan(corr) else None,
                     "num_depth_levels": distinct_depths,
                     "total_indented_lines": total_indented_lines,
+                    # count is the schema-wide name for how many items of the
+                    # metric's count_unit this entry covers. The unit here is
+                    # indented lines, so it repeats total_indented_lines.
+                    "count": total_indented_lines,
                 }
 
                 if not math.isnan(corr):

@@ -287,3 +287,103 @@ def test_run_metadata_records_the_flags_that_change_the_numbers():
     args = build_parser().parse_args(["--use-sample-data", "--output-dir", "/tmp/x",
                                       "--no-plots", "--save-full-results"])
     assert _non_default_arguments(args) == {"use_sample_data": True}
+
+
+# ----------------------------------------------------------------------
+# The schema contract, asserted over every metric rather than a sample.
+# ----------------------------------------------------------------------
+
+# Imported rather than restated, so the test cannot drift from the constant the
+# metrics assign from.
+from tokenizer_analysis.constants import AGGREGATION_LABELS as _ALLOWED_AGGREGATIONS
+
+
+def _metrics(results):
+    """Every metric block in a results file, by name."""
+    return {
+        name: block for name, block in results.items()
+        if name != "run_metadata" and isinstance(block, dict)
+    }
+
+
+@requires_flores
+def test_every_metric_publishes_a_global(demo_results):
+    """No exemptions. A consumer reads one key for the headline value.
+
+    Five metrics had none before 1.0.0, and one of them, trigram_entropy,
+    published the same four numbers as flat global_* siblings instead, so a
+    parser written against bigram_entropy silently found nothing. token_length
+    and encoding_speed carry a global that duplicates an existing block, which
+    is deliberate: an exception in the schema costs a reader more than a
+    duplicated number does.
+    """
+    missing = []
+    for name, block in _metrics(demo_results).items():
+        for tok, entry in (block.get("per_tokenizer") or {}).items():
+            if isinstance(entry, dict) and "global" not in entry:
+                missing.append(f"{name}.per_tokenizer.{tok}")
+    assert not missing, "no global block on: " + ", ".join(sorted(missing))
+
+
+@requires_flores
+def test_every_metric_declares_its_aggregation(demo_results):
+    """Which average `global` reports, from a fixed set.
+
+    global meant a ratio of sums in one metric, a mean of per-document ratios
+    in another, an unweighted mean across languages in a third and a set union
+    in a fourth, with nothing in the output saying which. On the bundled
+    parallel corpus every language holds the same number of lines, so micro and
+    macro agree and the difference is invisible until someone runs an unequal
+    corpus.
+    """
+    bad = {}
+    for name, block in _metrics(demo_results).items():
+        label = (block.get("metadata") or {}).get("aggregation")
+        if label not in _ALLOWED_AGGREGATIONS:
+            bad[name] = label
+    assert not bad, (
+        "aggregation missing or not one of "
+        f"{sorted(_ALLOWED_AGGREGATIONS)}: {bad}"
+    )
+
+
+@requires_flores
+def test_every_per_language_entry_carries_a_count_or_says_why_not(demo_results):
+    """So a consumer can re-derive the other weighting.
+
+    A metric whose per-language entry is one language, so that the count would
+    be 1 for every entry, says so in metadata.per_language_count instead. That
+    is the only accepted reason to omit it: an entry that is simply silent is
+    the failure this asserts against.
+    """
+    offenders = []
+    for name, block in _metrics(demo_results).items():
+        metadata = block.get("metadata") or {}
+        if metadata.get("per_language_count"):
+            continue
+        for tok, entry in (block.get("per_tokenizer") or {}).items():
+            per_lang = (entry or {}).get("per_language")
+            if not isinstance(per_lang, dict):
+                continue
+            for lang, value in per_lang.items():
+                if isinstance(value, dict) and "count" not in value:
+                    offenders.append(f"{name}.{tok}.{lang}")
+                    break
+    assert not offenders, (
+        "per_language entries with no count and no stated reason: "
+        + ", ".join(sorted(offenders))
+    )
+
+
+@requires_flores
+def test_every_metric_names_the_unit_its_count_is_in(demo_results):
+    """A count is not interpretable without its unit.
+
+    Documents, tokens, digit spans and AST nodes are not interchangeable, and
+    the same field name carries all four across the file.
+    """
+    missing = [
+        name for name, block in _metrics(demo_results).items()
+        if not (block.get("metadata") or {}).get("count_unit")
+    ]
+    assert not missing, "no count_unit in metadata: " + ", ".join(sorted(missing))

@@ -44,6 +44,34 @@ PERCENTAGE_MULTIPLIER = 100
 DEFAULT_PRECISION = 4
 
 
+# --- Results-file schema ---
+# Every metric's ``metadata.aggregation`` in analysis_results.json takes one of
+# these four values. The label says which average the metric's ``global`` block
+# reports. It is published rather than inferred because on a parallel corpus,
+# where every language holds the same number of lines, the micro and macro
+# averages agree, so the difference only shows up on an unequal corpus and a
+# reader cannot tell the two apart from the numbers.
+
+# One ratio computed from summed counts over every item in every language. A
+# language with more items counts for more.
+AGGREGATION_MICRO_POOLED = "micro_pooled"
+# The unweighted mean of the per-language values. Every language counts the
+# same regardless of size.
+AGGREGATION_MACRO_LANGUAGES = "macro_languages"
+# Total units divided by total tokens. Distinct from micro_pooled in that the
+# numerator and denominator are different units, not a count of the same thing.
+AGGREGATION_RATIO_OF_SUMS = "ratio_of_sums"
+# Not an average. The value is a property of the union of the per-language sets.
+AGGREGATION_SET_UNION = "set_union"
+
+AGGREGATION_LABELS = frozenset({
+    AGGREGATION_MICRO_POOLED,
+    AGGREGATION_MACRO_LANGUAGES,
+    AGGREGATION_RATIO_OF_SUMS,
+    AGGREGATION_SET_UNION,
+})
+
+
 # --- Validation ---
 
 MIN_WORD_LENGTH = 2

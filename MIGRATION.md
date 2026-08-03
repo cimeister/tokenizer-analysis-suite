@@ -52,6 +52,26 @@ deliberate: `0.0` made "nothing to measure" indistinguishable from "the measured
 value is zero", which is the difference between a tokenizer that never emitted
 an UNK and one that has no UNK token.
 
+### Every metric now has `global`, `aggregation` and per-language `count`
+
+Three additions, one of them a shape change:
+
+- `<metric>.per_tokenizer.<tok>.global` exists for every metric. Read it instead
+  of a metric-specific key. `trigram_entropy` in particular moves its four
+  values out of flat `global_trigram_entropy`-style siblings into `global`,
+  matching `bigram_entropy`.
+- `<metric>.metadata.aggregation` says which average `global` reports:
+  `micro_pooled`, `macro_languages`, `ratio_of_sums` or `set_union`.
+  `bigram_entropy` and `trigram_entropy` previously held free text in that
+  field; it moved to `context_weighting`.
+- `<metric>.per_tokenizer.<tok>.per_language.<lang>` carries a `count`, in the
+  unit named by `metadata.count_unit`. **`compression_rate` changes shape for
+  this**: the per-language value was the rate as a bare number and is now
+  `{"compression_rate": ..., "count": ..., "total_tokens": ...}`. A parser
+  reading that value directly needs `["compression_rate"]` added.
+  `tokenizer_fairness_gini` and `morphscore` publish no per-language count and
+  state why in `metadata.per_language_count`.
+
 ### Six metrics moved under the metric they restate
 
 These are no longer top-level keys in `analysis_results.json`. Each is reported

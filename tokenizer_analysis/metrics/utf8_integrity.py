@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import logging
 
 from .base import BaseMetrics, TokenizedDataProcessor
-from ..constants import GENERIC_SPECIAL_TOKENS
+from ..constants import AGGREGATION_MICRO_POOLED, GENERIC_SPECIAL_TOKENS
 from ..core.input_types import TokenizedData
 from ..core.input_providers import InputProvider
 
@@ -710,6 +710,8 @@ class UTF8IntegrityMetrics(BaseMetrics):
                     'Fraction of content tokens whose bytes form complete '
                     'UTF-8 characters, plus boundary-crossing token counts.'
                 ),
+                'aggregation': AGGREGATION_MICRO_POOLED,
+                'count_unit': 'content tokens',
             },
         }
 
@@ -730,6 +732,10 @@ class UTF8IntegrityMetrics(BaseMetrics):
                     'completeness_rate': v / t if t > 0 else 1.0,
                     'total_incomplete_tokens': t - v,
                     'total_content_tokens': t,
+                    # count is the schema-wide name for how many items of the
+                    # metric's count_unit this entry covers. The unit here is
+                    # content tokens, so it repeats total_content_tokens.
+                    'count': t,
                     'trailing_incomplete': ti,
                     'orphan_continuation': oc,
                     'boundary_crossings': bc,

@@ -8,7 +8,7 @@ import os
 from typing import Dict, List, Any, Optional, Tuple, Union
 import numpy as np
 
-from .constants import DEFAULT_CER_TIME_BUDGET_S
+from .constants import AGGREGATION_MICRO_POOLED, DEFAULT_CER_TIME_BUDGET_S
 from .core.input_types import TokenizedData, InputSpecification
 from .core.input_providers import InputProvider, create_input_provider
 from .core.input_utils import create_simple_specifications, InputValidator
@@ -228,13 +228,37 @@ class UnifiedTokenizerAnalyzer:
             for tok_name, times in encode_times.items():
                 if times:
                     arr = np.array(times)
-                    per_tok[tok_name] = {
+                    timings = {
                         'mean_ms': float(np.mean(arr) * 1000),
                         'total_s': float(np.sum(arr)),
                         'num_samples': len(times),
                     }
+                    # 'global' is a deliberate duplicate of the three fields
+                    # beside it: the results-file schema gives every metric a
+                    # global block with no exceptions, and this metric has only
+                    # the one whole-corpus figure. The flat fields stay so a
+                    # reader of an older file finds them where they were.
+                    per_tok[tok_name] = dict(timings)
+                    per_tok[tok_name]['global'] = dict(timings)
             if per_tok:
-                results['encoding_speed'] = {'per_tokenizer': per_tok}
+                results['encoding_speed'] = {
+                    'per_tokenizer': per_tok,
+                    'metadata': {
+                        'description': (
+                            'Wall-clock time to encode the corpus: mean '
+                            'milliseconds per text, total seconds, and the '
+                            'number of texts encoded.'
+                        ),
+                        'aggregation': AGGREGATION_MICRO_POOLED,
+                        'count_unit': 'samples',
+                        'per_language': (
+                            'Not published. Encoding time is measured once per '
+                            'text over the whole corpus and is a property of '
+                            'the machine as much as of the tokenizer, so it is '
+                            'not broken down by language.'
+                        ),
+                    },
+                }
         
         # Run basic tokenization metrics
         logger.info("Computing basic tokenization metrics...")
@@ -532,6 +556,12 @@ class UnifiedTokenizerAnalyzer:
         if "summary" in db_results:
             filtered["summary"] = db_results["summary"]
 
+        # Metadata describes the metric, not the language set, so a group block
+        # keeps it. Without this a grouped result published no aggregation
+        # label and no count unit while the whole-corpus block did.
+        if "metadata" in db_results:
+            filtered["metadata"] = db_results["metadata"]
+
         return filtered
 
     def _filter_operator_results(self, op_results: Dict[str, Any], target_languages: List[str]) -> Dict[str, Any]:
@@ -604,6 +634,11 @@ class UnifiedTokenizerAnalyzer:
                     "total_operators": tot_ops,
                     "total_compound_operators": tot_ctot,
                 }
+
+        # Metadata describes the metric, not the language set, so a group block
+        # keeps it.
+        if "metadata" in op_results:
+            filtered["metadata"] = op_results["metadata"]
 
         return filtered
 

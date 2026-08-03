@@ -16,7 +16,11 @@ from ..core.input_types import TokenizedData
 from ..core.input_providers import InputProvider
 from ..config import TextMeasurementConfig, TextMeasurer, DEFAULT_TEXT_MEASUREMENT_CONFIG, DEFAULT_WORD_MEASUREMENT_CONFIG
 from ..config.language_metadata import LanguageMetadata
-from ..constants import DEFAULT_CER_TIME_BUDGET_S
+from ..constants import (
+    AGGREGATION_MICRO_POOLED,
+    AGGREGATION_SET_UNION,
+    DEFAULT_CER_TIME_BUDGET_S,
+)
 from ..utils.text_utils import load_math_data, BUILTIN_MATH_SAMPLES_PATH
 
 logger = logging.getLogger(__name__)
@@ -147,7 +151,9 @@ class BasicTokenizationMetrics(BaseMetrics):
                 'metadata': {
                     'normalization_method': normalization_unit,
                     'description': f'Average number of tokens per {normalization_unit[:-1]}',
-                    'short_description': f'tokens/{normalization_unit[:-1]}'
+                    'short_description': f'tokens/{normalization_unit[:-1]}',
+                    'aggregation': AGGREGATION_MICRO_POOLED,
+                    'count_unit': 'documents',
                 }
             }
         }
@@ -233,7 +239,15 @@ class BasicTokenizationMetrics(BaseMetrics):
                 'per_tokenizer': {},
                 'metadata': {
                     'units': ['characters', 'bytes'],
-                    'description': 'Average character and byte length per token'
+                    'description': 'Average character and byte length per token',
+                    'aggregation': AGGREGATION_MICRO_POOLED,
+                    'count_unit': 'tokens',
+                    'global_duplicates': (
+                        'global repeats primary_length. Every metric in this '
+                        'file publishes a global block, so this one does too '
+                        'even though the same numbers sit under primary_length '
+                        'beside it.'
+                    ),
                 }
             }
         }
@@ -252,20 +266,26 @@ class BasicTokenizationMetrics(BaseMetrics):
                     char_lengths.append(len(data.text) / n_tokens)
                     byte_lengths.append(len(data.text.encode('utf-8')) / n_tokens)
 
+            # 'global' is a deliberate duplicate of 'primary_length': the
+            # results-file schema gives every metric a global block with no
+            # exceptions, and this metric's global quantity is the primary
+            # (character) length it already reports.
             if char_lengths:
                 char_stats = self.compute_basic_stats(char_lengths)
                 byte_stats = self.compute_basic_stats(byte_lengths)
                 results['token_length']['per_tokenizer'][tok_name] = {
                     'character_length': char_stats,
                     'byte_length': byte_stats,
-                    'primary_length': char_stats
+                    'primary_length': char_stats,
+                    'global': char_stats,
                 }
             else:
                 empty_stats = self.empty_stats()
                 results['token_length']['per_tokenizer'][tok_name] = {
                     'character_length': empty_stats,
                     'byte_length': empty_stats,
-                    'primary_length': empty_stats
+                    'primary_length': empty_stats,
+                    'global': empty_stats,
                 }
 
         return results
@@ -300,6 +320,17 @@ class BasicTokenizationMetrics(BaseMetrics):
                     ),
                     'metric_range': '[0.0, 1.0]',
                     'std_ddof': 1,
+                    'aggregation': AGGREGATION_SET_UNION,
+                    'count_unit': 'vocabulary entries',
+                    'per_language_dispersion': (
+                        'aggregation labels the global block only. '
+                        'per_language_mean, per_language_std and '
+                        'per_language_cov sit beside global and are the mean, '
+                        'sample standard deviation and coefficient of '
+                        'variation of the per-language utilization ratio '
+                        'across languages, which is a spread rather than an '
+                        'average of any kind.'
+                    ),
                 }
             }
         }
@@ -330,6 +361,11 @@ class BasicTokenizationMetrics(BaseMetrics):
                     'used_tokens': used,
                     'vocab_size': vocab_size,
                     'unused_tokens': vocab_size - used,
+                    # count is the schema-wide name for how many items of the
+                    # metric's count_unit this language's entry covers. Here
+                    # that unit is vocabulary entries, so it repeats
+                    # used_tokens rather than measuring something else.
+                    'count': used,
                 }
 
             # Cross-language dispersion of the utilization ratio. Computed on
@@ -597,6 +633,15 @@ class BasicTokenizationMetrics(BaseMetrics):
                     # Zs separators (NBSP/thin/ideographic/...).  Pre-change
                     # whitespace_fidelity numbers are NOT comparable.
                     'whitespace_definition': WHITESPACE_DEFINITION,
+                    'aggregation': AGGREGATION_MICRO_POOLED,
+                    'count_unit': 'documents',
+                    'per_domain': (
+                        'This metric breaks down by domain rather than by '
+                        'language: per_domain holds one entry per language of '
+                        'the prose corpus, one per programming language and '
+                        'one for math. Each entry carries count in documents, '
+                        'so it is the per_language block under another name.'
+                    ),
                 },
             }
         }

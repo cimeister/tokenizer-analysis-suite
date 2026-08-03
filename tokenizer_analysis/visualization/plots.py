@@ -704,7 +704,9 @@ def _plot_per_language_combined_subplots(results: Dict[str, Any], save_dir: str,
                             util = (lang_stats.get('utilization')
                                     if isinstance(lang_stats, dict) else None)
                             value = None if util is None else util * 100
-                        elif metric_key in ('compression_rate', 'tokenizer_fairness_gini'):
+                        elif metric_key == 'compression_rate':
+                            value = _compression_rate_per_language(lang_stats)
+                        elif metric_key == 'tokenizer_fairness_gini':
                             value = (lang_stats if isinstance(lang_stats, (int, float))
                                      else lang_stats.get('mean'))
                         elif metric_key == 'bigram_entropy':
@@ -791,7 +793,19 @@ def _plot_per_language_combined_subplots(results: Dict[str, Any], save_dir: str,
     save_plot(fig, os.path.join(save_dir, 'per_language_combined_subplots.svg'))
 
 
-def _plot_per_language_grouped_bars(lang_data: Dict[str, Dict[str, float]], 
+def _compression_rate_per_language(entry) -> Optional[float]:
+    """Read one language's compression rate out of its per-language entry.
+
+    The entry is ``{'compression_rate': rate, 'count': units, ...}``. It was a
+    bare float before the count was added, and a results file written by an
+    earlier version still holds the float, so both are read here.
+    """
+    if isinstance(entry, dict):
+        return entry.get('compression_rate')
+    return entry
+
+
+def _plot_per_language_grouped_bars(lang_data: Dict[str, Dict[str, float]],
                                   save_path: str, tokenizer_names: List[str],
                                   title: str, ylabel: str, show_global_lines: bool):
     """Plot grouped bars for per-language metrics with languages on x-axis."""
@@ -881,7 +895,7 @@ def _plot_per_language_compression_rate(results, save_dir, tokenizer_names, show
     """Plot per-language compression rate comparison with grouped bars."""
     _plot_per_language_metric(
         results, save_dir, tokenizer_names, 'compression_rate',
-        lambda s: s if isinstance(s, (int, float)) else s.get('mean'),
+        _compression_rate_per_language,
         'compression_rate_per_language.svg', show_global_lines,
     )
 
@@ -962,6 +976,9 @@ def _plot_faceted_metric(results: Dict[str, Any], save_dir: str,
                             if isinstance(lang_data, dict) else None)
                     values.append(float('nan') if util is None
                                   else _plottable(util) * 100)
+                elif metric_name == 'compression_rate':
+                    values.append(_plottable(
+                        _compression_rate_per_language(lang_data)))
                 elif isinstance(lang_data, dict) and 'mean' in lang_data:
                     values.append(_plottable(lang_data['mean']))
                 elif isinstance(lang_data, dict) and 'bigram_entropy' in lang_data:

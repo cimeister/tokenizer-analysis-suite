@@ -7,6 +7,7 @@ import numpy as np
 import logging
 
 from .base import BaseMetrics
+from ..constants import AGGREGATION_MACRO_LANGUAGES
 from ..core.input_types import TokenizedData
 from ..core.input_providers import InputProvider, RawTokenizationProvider
 from ..loaders.constants import ISO639_1_to_FLORES
@@ -170,7 +171,16 @@ class MorphScoreMetrics(BaseMetrics):
                 'by_split': self.by_split,
                 'freq_scale': self.freq_scale,
                 'exclude_single_tok': self.exclude_single_tok,
-                'target_languages': self.target_languages
+                'target_languages': self.target_languages,
+                'aggregation': AGGREGATION_MACRO_LANGUAGES,
+                'count_unit': 'languages',
+                'per_language_count': (
+                    'Not published. The count_unit is languages and a '
+                    'per_language entry is one language, so the count would be '
+                    '1 for every entry. The number of languages behind the '
+                    'averages is global.languages_evaluated, and each '
+                    'per_language entry carries its own num_samples.'
+                ),
             }
         }
         

@@ -14,7 +14,7 @@ from ..core.input_types import TokenizedData
 from ..core.input_providers import InputProvider
 from ..config import TextMeasurementConfig, TextMeasurer, DEFAULT_TEXT_MEASUREMENT_CONFIG
 from ..config.language_metadata import LanguageMetadata
-from ..constants import MIN_LANGUAGES_FOR_GINI
+from ..constants import AGGREGATION_MACRO_LANGUAGES, MIN_LANGUAGES_FOR_GINI
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +105,14 @@ class TokenizerGiniMetrics(BaseMetrics):
                 'formula': 'TFG = Σᵢ Σⱼ |c_i - c_j| / (2 * n² * μ)',
                 'interpretation': 'Lower values indicate more equitable treatment (0 = perfect equality)',
                 'max_attainable': '(n-1)/n for n languages, not 1',
-                'aggregation': 'macro_languages',
+                'aggregation': AGGREGATION_MACRO_LANGUAGES,
+                'count_unit': 'languages',
+                'per_language_count': (
+                    'Not published. The count_unit is languages and a '
+                    'per_language entry is one language, so the count would be '
+                    '1 for every entry. The number of languages behind the '
+                    'coefficient is global.num_languages.'
+                ),
                 'std_ddof': 1,
                 'normalization_method': self.measurement_config.method.value,
                 'comparability': (
