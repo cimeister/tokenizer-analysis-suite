@@ -117,6 +117,23 @@ section records the vetting that followed it. Set the date at tag time.
   the code reads. The README pointed at the code repository instead and never
   named the dataset. Verified end to end: 5 languages, 63803 samples.
 
+### Fixed (output format)
+- The results file is strict JSON on every corpus.
+  `numeric_magnitude_consistency.scaling.spearman_p` was written as `NaN`
+  whenever the corpus spanned two digit-length buckets, because
+  `scipy.stats.spearmanr` over two points returns a defined rho and an
+  undefined p: a rank correlation over two points has no significance level.
+  `json.dump` renders that as the bare token `NaN`, which no strict parser
+  accepts, so the whole file became unreadable to any consumer that is not
+  Python. It reports `null` now, and so does `spearman_rho` when scipy cannot
+  compute it either.
+
+  The serializer is a second layer: `_convert_for_json_public` turns any
+  non-finite float into `null` wherever it appears, so no future metric can
+  make the file invalid. The failure is silent at write time and total at read
+  time, which is why it needed both. Caught by the first CI run on GitHub, on
+  all three Python versions.
+
 ### Fixed (metric correctness)
 - Operator isolation resolves overlapping token ranges to the later token, the
   rule the digit and AST paths already used, and `compute_per_text` scores

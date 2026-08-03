@@ -1327,8 +1327,13 @@ class DigitBoundaryMetrics(BaseMetrics):
             result["spearman_p"] = 1.0
         else:
             rho, p_val = spearmanr(dl_arr, mf_arr)
-            result["spearman_rho"] = float(rho)
-            result["spearman_p"] = float(p_val)
+            # None, not NaN, for anything scipy could not compute. Two buckets
+            # give a defined rho and an undefined p, because a rank correlation
+            # over two points has no significance level; a constant x gives
+            # neither. NaN reaching the results file makes it invalid JSON, and
+            # null is what the rest of the pipeline means by not computed.
+            result["spearman_rho"] = float(rho) if np.isfinite(rho) else None
+            result["spearman_p"] = float(p_val) if np.isfinite(p_val) else None
 
         # Coefficient of variation of mean fertility across buckets
         overall_mean = float(np.mean(mf_arr))

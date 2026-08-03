@@ -9,8 +9,9 @@ Pre-tokenized data examples:
 tokenizer-analysis --tokenized-data-file tokenized_data.json --language-config configs/language_config.json
 tokenizer-analysis --tokenized-data-file tokenized_data.pkl --tokenized-data-config tokenized_config.json --language-config configs/language_config.json --run-grouped-analysis
 """
-import logging
 import argparse
+import logging
+import math
 import json
 import os
 from pathlib import Path
@@ -1627,16 +1628,7 @@ def run_from_args(args: argparse.Namespace):
     logger.info(f"Saving slimmed results to {results_file}")
     
     # Create slimmed version and convert numpy arrays to lists for JSON serialization
-    def convert_for_json(obj):
-        if hasattr(obj, 'tolist'):
-            return obj.tolist()
-        elif isinstance(obj, dict):
-            return {k: convert_for_json(v) for k, v in obj.items()}
-        elif isinstance(obj, list):
-            return [convert_for_json(item) for item in obj]
-        else:
-            return obj
-    
+    convert_for_json = _convert_for_json_public
     slimmed_results = slim_results_for_json(results)
     results_json = convert_for_json(slimmed_results)
     
@@ -1757,6 +1749,32 @@ def run_from_args(args: argparse.Namespace):
         )
     if args.save_full_results:
         print(f"Full detailed results: {Path(args.output_dir) / 'analysis_results_full.json'}")
+
+
+def _convert_for_json_public(obj):
+    """Make *obj* serializable, turning any non-finite float into None.
+
+    json.dump writes NaN, Infinity and -Infinity as those bare tokens, which no
+    strict JSON parser accepts, so one of them anywhere makes the whole results
+    file unreadable to a consumer that is not Python. null is also what the rest
+    of this release means by a value that could not be computed.
+
+    This is the backstop. Metrics are expected to publish None themselves, and
+    the CI job asserts the file parses with parse_constant set. It exists
+    because the failure is silent at write time and total at read time:
+    numeric_magnitude_consistency shipped a NaN spearman_p on any corpus whose
+    numbers span two digit-length buckets, and every CI run on Python 3.10, 3.12
+    and 3.13 failed on it.
+    """
+    if isinstance(obj, float) and not math.isfinite(obj):
+        return None
+    if hasattr(obj, 'tolist'):
+        return _convert_for_json_public(obj.tolist())
+    if isinstance(obj, dict):
+        return {k: _convert_for_json_public(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_convert_for_json_public(item) for item in obj]
+    return obj
 
 
 def main(argv: Optional[List[str]] = None):

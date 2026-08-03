@@ -387,3 +387,59 @@ def test_every_metric_names_the_unit_its_count_is_in(demo_results):
         if not (block.get("metadata") or {}).get("count_unit")
     ]
     assert not missing, "no count_unit in metadata: " + ", ".join(sorted(missing))
+
+
+def test_a_two_bucket_corpus_still_writes_strict_json(tmp_path):
+    """The corpus shape that broke CI: `NaN` is not valid JSON.
+
+    `scipy.stats.spearmanr` over two points returns a defined rho and an
+    undefined p, because a rank correlation over two points has no significance
+    level. `numeric_magnitude_consistency` wrote that NaN straight out, and
+    `json.dump` renders it as the bare token `NaN`, which no strict parser
+    accepts. The demo corpus happens to produce three or more digit-length
+    buckets, so the existing strict-JSON test never saw it; a corpus whose
+    numbers span two buckets does.
+
+    Two layers are asserted here: the metric publishes null, and the serializer
+    would have converted any remaining non-finite float anyway.
+    """
+    corpus = tmp_path / "eng_Latn.txt"
+    # Numbers 0 to 199, so digit lengths 1, 2 and 3, which collapse to two
+    # populated buckets after the short/long split.
+    corpus.write_text(
+        "\n".join(f"Item number {i} costs {i * 7} in total." for i in range(200)) + "\n"
+    )
+    languages = tmp_path / "languages.json"
+    languages.write_text(json.dumps({
+        "languages": {"eng_Latn": {"name": "English", "data_path": str(corpus)}},
+    }))
+
+    out = tmp_path / "out"
+    proc = subprocess.run(
+        [sys.executable, "-m", "tokenizer_analysis.cli.run_analysis",
+         "--tokenizer-config", "configs/sample_tokenizers.json",
+         "--language-config", str(languages), "--samples-per-lang", "50",
+         "--no-plots", "--no-code-ast", "--output-dir", str(out)],
+        cwd=REPO_ROOT, capture_output=True, timeout=900,
+    )
+    assert proc.returncode == 0, proc.stderr.decode(errors="replace")[-2000:]
+
+    # parse_constant fires on NaN, Infinity and -Infinity, the three tokens
+    # json.dump will happily write and no other parser will read.
+    json.loads((out / "analysis_results.json").read_text(),
+               parse_constant=_reject_non_standard)
+
+
+def test_the_serializer_converts_any_non_finite_float_to_null():
+    """The backstop, independent of which metric produced the value."""
+    from tokenizer_analysis.cli.run_analysis import _convert_for_json_public as convert
+
+    converted = convert({
+        "a": float("nan"), "b": float("inf"), "c": float("-inf"),
+        "d": [1.0, float("nan")], "e": {"f": float("inf")}, "g": 0.5,
+    })
+    assert converted == {
+        "a": None, "b": None, "c": None,
+        "d": [1.0, None], "e": {"f": None}, "g": 0.5,
+    }
+    json.dumps(converted, allow_nan=False)
