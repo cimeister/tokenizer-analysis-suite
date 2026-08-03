@@ -51,27 +51,6 @@ def fmt(value, places=3):
     return f"{value:,}" if isinstance(value, int) else str(value)
 
 
-def weighted_mean(results, metric, field, tok):
-    """Count-weighted mean of a per-language field, for a metric with no global.
-
-    Five metrics do not publish a `global` block yet. Their `per_language`
-    entries carry `count`, so the micro-average is recoverable, and every column
-    computed this way says so in the report rather than presenting the number as
-    if the results file had published it.
-    """
-    per_lang = get(results, metric, "per_tokenizer", tok, "per_language", default={})
-    total, weight = 0.0, 0
-    for entry in per_lang.values():
-        if not isinstance(entry, dict):
-            continue
-        value, count = entry.get(field), entry.get("count")
-        if value is None or not count:
-            continue
-        total += value * count
-        weight += count
-    return total / weight if weight else None
-
-
 def present(results):
     """Tokenizer keys the results file actually holds, in TOKENIZERS order."""
     have = set(get(results, "fertility", "per_tokenizer", default={}))
@@ -157,19 +136,17 @@ def section_headline(results, rows):
                              "global", "completeness_rate")),
                 ast=fmt(get(results, "ast_boundary_alignment", "per_tokenizer", key,
                             "global", "full_alignment_rate")),
-                digit=fmt(weighted_mean(results, "three_digit_boundary_alignment",
-                                        "mean_f1", key)),
+                digit=fmt(get(results, "three_digit_boundary_alignment",
+                              "per_tokenizer", key, "global", "mean_f1")),
             )
         )
     lines.append("")
     lines.append(
-        "Compression, fertility, UTF-8 completeness and AST alignment are the "
-        "`global` blocks the results file publishes. Gini is computed over the "
-        "per-language costs. Digit F1 has no `global` block yet, so the column "
-        "is the count-weighted mean of its `per_language.mean_f1` values, "
-        "computed by `render_report.py`. With `--use-builtin-math-data` that "
-        "block holds one entry, `math`, so the column is the figure for the "
-        "bundled math corpus rather than for the prose."
+        "Every column is the `global` block the results file publishes for that "
+        "metric, and `metadata.aggregation` there names which average it is. "
+        "Nothing in this table is recomputed here. The run passed "
+        "`--use-builtin-math-data`, so the digit column is measured on the "
+        "bundled math corpus rather than on the prose."
     )
     return lines
 
