@@ -7,6 +7,22 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [1.0.2] - 2026-08-04
 
 ### Removed
+- Dead code, none of it reachable and none affecting a published number:
+  `_set_tokenizer_context`, `_clear_tokenizer_context` and `_decode_table_for`,
+  left orphaned by the removal of their call sites in this release;
+  `visualization/data_extraction.py`, a module with no importer; eight unused
+  helpers in `metrics/base.py`; `load_language_metadata`, `all_byte_strings`,
+  `probes_by_category`, `create_analyzer_from_input_provider`,
+  `get_analysis_summary` and `setup_default_style`; and 18 module constants
+  nothing reads, including the `BYTE_PREFIXES` / `CONTINUATION_PREFIXES` /
+  `SUFFIX_PATTERNS` / `MIN_MORPHEME_LENGTH` / `MAX_MORPHEME_OVERLAP` block left
+  by the standalone morphological metric removed in 1.0.0, which duplicated the
+  private marker constants in `metrics/base.py`.
+
+  `register_tokenizer_class` is kept: the README documents it as the extension
+  point. The `per_example` module is kept. The `LanguageMetadata` accessors are
+  kept, because they are the unused half of a symmetric pair whose
+  `script_family` equivalents are used.
 - `compute_pairwise_comparisons` and the automatic `pairwise_comparisons` block
   every metric computed. It did unguarded arithmetic on values that
   `empty_stats()` sets to `None`: `val1 - val2` and two `safe_divide` calls,
@@ -39,6 +55,19 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   changes.
 
 ### Fixed
+- Seven console printers formatted a value that can now be `null` with a
+  numeric format spec, which raises `TypeError` and takes the run's summary
+  down. Making UTF-8 integrity nullable earlier in this release broke two that
+  had been correct until that moment, and a `cer_skipped` guard in
+  `metrics/basic.py` did not cover a zero denominator. This is the third round
+  of the same defect: the 1.0.1 pass added `format_optional` and missed two
+  sites, and this release fixed those and then created more. A test now checks
+  the invariant over the source rather than by execution, because reaching
+  these branches needs a corpus shaped to make each metric measure nothing, and
+  the sites that break are the ones no ordinary corpus reaches.
+- `SANITY_ROUNDTRIP_BUG_WARN_FRAC` was defined, documented as the C3 warn
+  threshold, and never imported: `check_roundtrip` hardcoded `bug_frac > 0`.
+  It now reads the constant.
 - `tokenizer-sanity-check` reported a passing score for checks it never ran.
   C6 digit handling computes `consistency = 1.0 - normalized_entropy`, and the
   normalized entropy is `0.0` when no digit pattern was collected, so a
