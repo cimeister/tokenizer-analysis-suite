@@ -309,128 +309,132 @@ def _sample_array(value):
     return value
 
 
-def _slim_tokenizer_entry(
+def _rename_by_category(obj):
+    """Recursively rename by_category to per_category in a results dict."""
+    if isinstance(obj, dict):
+        return {
+            ('per_category' if k == 'by_category' else k): _rename_by_category(v)
+            for k, v in obj.items()
+        }
+    if isinstance(obj, list):
+        return [_rename_by_category(item) for item in obj]
+    return obj
+
+
+def _normalize_tokenizer_entry(
     metric_name: str,
     tok_data: dict,
     tok_name: Optional[str] = None,
     metric_data: Optional[dict] = None,
 ) -> dict:
-    """Normalize a single tokenizer's data to consistent {global, per_language, ...} keys.
+    """Rewrite one tokenizer's raw entry to its published key names, dropping nothing.
 
-    ``tok_name`` and ``metric_data`` are only needed by branches that must
-    reach outside this tokenizer's ``per_tokenizer`` entry (e.g. operator
-    isolation's pooled ``summary``, which lives as a sibling of
-    ``per_tokenizer`` rather than inside it). Every other branch ignores them.
+    This is the per-tokenizer half of normalize_results. Every rename or pivot
+    that the old single-pass slimming step used to perform while also deleting
+    fields happens here without deleting anything: a field with a canonical
+    published name (for example overall, which becomes global) is moved to
+    that name, and a field with no canonical published name (for example
+    tokenizer_fairness_gini's most_efficient_language) is left where it was.
+    Nothing computed here is new: every value already existed somewhere in
+    tok_data or, for the operator_isolation_rate branch, in a sibling block of
+    the same metric.
+
+    tok_name and metric_data are only needed by the operator_isolation_rate
+    branch, which copies its pooled per-tokenizer rate out of
+    metric_data['summary'] and its per-domain split out of
+    metric_data['by_domain']. Both stay in place at their own paths too, so
+    the value is reachable from either location in the full file.
 
     Six branches below name a metric no CLI run reaches: avg_tokens_per_line,
     type_token_ratio, unigram_distribution_metrics, lorenz_curve_data,
-    utf8_char_split and digit_split_variability. Each is marked
-    "unreachable from a CLI run" at its branch.
-    ``merge_redundant_metrics`` runs inside
-    ``UnifiedTokenizerAnalyzer.run_analysis``, on the whole-corpus results and
-    again on every grouped block, and deletes all six from the top level before
-    ``slim_results_for_json`` is called.
+    utf8_char_split and digit_split_variability. Each is marked "unreachable
+    from a CLI run" at its branch. merge_redundant_metrics runs inside
+    UnifiedTokenizerAnalyzer.run_analysis, on the whole-corpus results and
+    again on every grouped block, and removes all six from the top level
+    before normalize_results is called.
 
-    They are kept rather than deleted for two reasons. ``slim_results_for_json``
-    is importable and is called directly on hand-built results dicts, including
-    in tests/test_cli_and_config.py. And ``merge_redundant_metrics`` skips a
-    merge when either member of a pair is absent, so a caller assembling
-    results from part of the pipeline can still have a top-level secondary
-    metric in its dict. Deleting a name here would not raise for such a caller:
-    the entry would fall through to the generic branch at the end of this
-    function and be published in a different shape, with no error.
+    They are kept rather than removed for two reasons. normalize_results (and
+    the slim_results_for_json wrapper built on it) is importable and is called
+    directly on hand-built results dicts, including in
+    tests/test_cli_and_config.py. And merge_redundant_metrics skips a merge
+    when either member of a pair is absent, so a caller assembling results
+    from part of the pipeline can still have a top-level secondary metric in
+    its dict. Removing a branch here would not raise for such a caller: the
+    entry would fall through to the generic branch at the end of this function
+    and be published in a different shape, with no error.
     """
     if not isinstance(tok_data, dict):
         return tok_data
 
-    out = {}
+    out = dict(tok_data)
 
-    # Fields folded in from a redundant metric (see metrics/redundancy.py) are
-    # carried through unchanged. Every branch below rebuilds `out` from a
-    # per-metric whitelist, so without this they would be dropped and the merge
-    # would silently delete the secondary metric rather than relocate it.
-    for _sec, _pri, _field, _ in _MERGES:
-        if metric_name == _pri and _field in tok_data:
-            out[_field] = tok_data[_field]
+    def _move(old_key, new_key):
+        if old_key in out:
+            out[new_key] = out.pop(old_key)
 
     # --- Metrics with a standard 'global' stats dict ---
     # avg_tokens_per_line: unreachable from a CLI run (merged into
     # compression_rate). See the docstring.
     if metric_name in ('fertility', 'avg_tokens_per_line'):
-        if 'global' in tok_data:
-            out['global'] = _strip_stats(tok_data['global'])
-        elif 'stats' in tok_data:
-            out['global'] = _strip_stats(tok_data['stats'])
-        if 'per_language' in tok_data:
-            out['per_language'] = _strip_per_language(tok_data['per_language'])
-        # avg_tokens_per_line: keep total_lines if present
-        if metric_name == 'avg_tokens_per_line' and 'total_lines' in tok_data:
+        if 'global' not in out and 'stats' in out:
+            out['global'] = dict(out.pop('stats'))
+        if metric_name == 'avg_tokens_per_line' and 'total_lines' in out:
             out['global'] = out.get('global', {})
-            out['global']['total_lines'] = tok_data['total_lines']
+            out['global']['total_lines'] = out['total_lines']
 
-    # --- Compression rate ---
+    # --- Compression rate: already at its published names ---
     elif metric_name == 'compression_rate':
-        if 'global' in tok_data:
-            out['global'] = tok_data['global']  # {compression_rate, total_units, total_tokens}
-        if 'per_language' in tok_data:
-            out['per_language'] = tok_data['per_language']
+        pass
 
-    # --- Vocabulary utilization ---
+    # --- Vocabulary utilization: the flat global_* siblings pivot into a
+    # nested global block ---
     elif metric_name == 'vocabulary_utilization':
         out['global'] = {
-            'utilization': tok_data.get('global_utilization'),
-            'used_tokens': tok_data.get('global_used_tokens'),
-            'vocab_size': tok_data.get('global_vocab_size'),
+            'utilization': out.pop('global_utilization', None),
+            'used_tokens': out.pop('global_used_tokens', None),
+            'vocab_size': out.pop('global_vocab_size', None),
         }
-        # Cross-language dispersion of the utilization ratio
-        out['per_language_mean'] = tok_data.get('per_language_mean')
-        out['per_language_std'] = tok_data.get('per_language_std')
-        out['per_language_cov'] = tok_data.get('per_language_cov')
-        if 'per_language' in tok_data:
-            out['per_language'] = tok_data['per_language']
 
     # --- Type-token ratio: unreachable from a CLI run (merged into
-    # vocabulary_utilization). See the docstring. ---
+    # vocabulary_utilization). See the docstring. Same flat-to-nested pivot. ---
     elif metric_name == 'type_token_ratio':
         out['global'] = {
-            'ttr': tok_data.get('global_ttr'),
-            'types': tok_data.get('global_types'),
-            'tokens': tok_data.get('global_tokens'),
+            'ttr': out.pop('global_ttr', None),
+            'types': out.pop('global_types', None),
+            'tokens': out.pop('global_tokens', None),
         }
 
     # --- Unigram distribution metrics: unreachable from a CLI run (merged
-    # into renyi_efficiency). See the docstring. ---
+    # into renyi_efficiency). See the docstring. Same flat-to-nested pivot. ---
     elif metric_name == 'unigram_distribution_metrics':
         out['global'] = {
-            'unigram_entropy': tok_data.get('global_unigram_entropy'),
-            'avg_token_rank': tok_data.get('global_avg_token_rank'),
+            'unigram_entropy': out.pop('global_unigram_entropy', None),
+            'avg_token_rank': out.pop('global_avg_token_rank', None),
         }
-        if 'per_language' in tok_data:
-            out['per_language'] = tok_data['per_language']
 
-    # --- Bigram entropy ---
+    # --- Bigram entropy: same flat-to-nested pivot ---
     elif metric_name == 'bigram_entropy':
         out['global'] = {
-            'bigram_entropy': tok_data.get('global_bigram_entropy'),
-            'total_bigrams': tok_data.get('global_total_bigrams'),
-            'types_evaluated': tok_data.get('global_types_evaluated'),
-            'types_excluded': tok_data.get('global_types_excluded'),
+            'bigram_entropy': out.pop('global_bigram_entropy', None),
+            'total_bigrams': out.pop('global_total_bigrams', None),
+            'types_evaluated': out.pop('global_types_evaluated', None),
+            'types_excluded': out.pop('global_types_excluded', None),
         }
-        if 'per_language' in tok_data:
-            out['per_language'] = tok_data['per_language']
 
     # --- Trigram entropy: the same pivot as bigram, one n-gram order up ---
     elif metric_name == 'trigram_entropy':
         out['global'] = {
-            'trigram_entropy': tok_data.get('global_trigram_entropy'),
-            'total_trigrams': tok_data.get('global_total_trigrams'),
-            'types_evaluated': tok_data.get('global_types_evaluated'),
-            'types_excluded': tok_data.get('global_types_excluded'),
+            'trigram_entropy': out.pop('global_trigram_entropy', None),
+            'total_trigrams': out.pop('global_total_trigrams', None),
+            'types_evaluated': out.pop('global_types_evaluated', None),
+            'types_excluded': out.pop('global_types_excluded', None),
         }
-        if 'per_language' in tok_data:
-            out['per_language'] = tok_data['per_language']
 
-    # --- Rényi efficiency: pivot from {renyi_X: {overall, lang...}} to {global: {renyi_X: v}, per_language: {lang: {renyi_X: v}}} ---
+    # --- Rényi efficiency: transpose {renyi_X: {overall, lang...}} into a
+    # global block keyed by alpha and a per_language block keyed by language.
+    # The source per-alpha dicts and token_counts are left in place: the
+    # transpose is many-to-many, not a one-to-one rename, so nothing is
+    # removed here. ---
     elif metric_name == 'renyi_efficiency':
         global_vals = {}
         lang_vals = {}  # lang -> {renyi_X: v}
@@ -453,110 +457,83 @@ def _slim_tokenizer_entry(
                     entry['count'] = token_counts[lang]
             out['per_language'] = lang_vals
 
-    # --- Tokenizer fairness (Gini) ---
+    # --- Tokenizer fairness (Gini): nest the global-scope scalars under
+    # 'global' and rename language_costs to per_language. The remaining
+    # fields (most_efficient_language, least_efficient_language,
+    # sorted_language_costs) have no canonical published name, so they stay
+    # where they are. ---
     elif metric_name == 'tokenizer_fairness_gini':
+        gini_global_fields = (
+            'gini_coefficient', 'mean_cost', 'std_cost', 'min_cost',
+            'max_cost', 'cost_ratio', 'num_languages', 'warning',
+        )
         out['global'] = {
-            'gini_coefficient': tok_data.get('gini_coefficient'),
-            'mean_cost': tok_data.get('mean_cost'),
-            'std_cost': tok_data.get('std_cost'),
-            'cost_ratio': tok_data.get('cost_ratio'),
-            'num_languages': tok_data.get('num_languages'),
+            field: out.pop(field) for field in gini_global_fields if field in out
         }
-        if 'warning' in tok_data:
-            out['global']['warning'] = tok_data['warning']
-        if 'language_costs' in tok_data:
-            out['per_language'] = tok_data['language_costs']
+        _move('language_costs', 'per_language')
 
-    # --- Lorenz curve data: keep as-is but sample large arrays. Unreachable
-    # from a CLI run (merged into tokenizer_fairness_gini). See the docstring. ---
+    # --- Lorenz curve data: unreachable from a CLI run (merged into
+    # tokenizer_fairness_gini). See the docstring. Already at its own flat
+    # names; downsampling large arrays is a selection-time concern, not a
+    # rename. ---
     elif metric_name == 'lorenz_curve_data':
-        for key, value in tok_data.items():
-            out[key] = _sample_array(value)
+        pass
 
-    # --- Token length: keep character_length and byte_length sub-dicts stripped ---
-    # 'global' repeats 'primary_length'. Every metric publishes a global block,
-    # with no exceptions, so this one does too even though the same numbers sit
-    # beside it under the name that says which of the two lengths it is.
+    # --- Token length: already at its published names ---
     elif metric_name == 'token_length':
-        for key in ('character_length', 'byte_length', 'primary_length', 'global'):
-            if key in tok_data:
-                out[key] = _strip_stats(tok_data[key])
+        pass
 
-    # --- UTF-8 metrics ---
+    # --- UTF-8 metrics: already at their published names.
     # utf8_char_split: unreachable from a CLI run (merged into
-    # utf8_token_integrity). See the docstring.
+    # utf8_token_integrity). See the docstring. ---
     elif metric_name in ('utf8_token_integrity', 'utf8_char_split'):
-        if 'global' in tok_data:
-            out['global'] = tok_data['global']
-        if 'per_language' in tok_data:
-            out['per_language'] = tok_data['per_language']
+        pass
 
-    # --- MorphScore ---
+    # --- MorphScore: rename summary to global ---
     elif metric_name == 'morphscore':
-        if 'per_language' in tok_data:
-            out['per_language'] = tok_data['per_language']
-        if 'summary' in tok_data:
-            out['global'] = tok_data['summary']
-        if 'error' in tok_data:
-            out['error'] = tok_data['error']
+        _move('summary', 'global')
 
-    # --- AST boundary alignment: drop by_category, rename overall->global, by_language->per_language ---
+    # --- AST boundary alignment: rename overall to global, by_language to
+    # per_language. by_category was already renamed to per_category by the
+    # recursive pass at the top of normalize_results and is left in place. ---
     elif metric_name == 'ast_boundary_alignment':
-        if 'overall' in tok_data:
-            out['global'] = tok_data['overall']
-        if 'by_language' in tok_data:
-            out['per_language'] = tok_data['by_language']
-        # by_category dropped (full results only)
+        _move('overall', 'global')
+        _move('by_language', 'per_language')
 
-    # --- Digit boundary metrics: overall is per-language, keep by_digit_length and by_bucket ---
+    # --- Digit boundary metrics: 'overall' holds per-language values, so it
+    # is renamed to per_language rather than global.
+    # three_digit_boundary_alignment additionally gets a computed global: a
+    # count-weighted pool of the per-language mean_f1/mean_precision/
+    # mean_recall. The old slimming step computed this while selecting, which
+    # meant the pooled value existed only in analysis_results.json; it is
+    # computed here instead so the full file carries it too.
     # digit_split_variability: unreachable from a CLI run (merged into
-    # three_digit_boundary_alignment). See the docstring.
+    # three_digit_boundary_alignment). See the docstring. ---
     elif metric_name in ('three_digit_boundary_alignment', 'digit_split_variability'):
-        if 'overall' in tok_data:
-            out['per_language'] = tok_data['overall']
-        if 'by_digit_length' in tok_data:
-            out['by_digit_length'] = tok_data['by_digit_length']
-        if 'by_bucket' in tok_data:
-            out['by_bucket'] = tok_data['by_bucket']
+        _move('overall', 'per_language')
         if metric_name == 'three_digit_boundary_alignment':
             out['global'] = _pool_per_language(
                 out.get('per_language'),
                 ('mean_f1', 'mean_precision', 'mean_recall'),
             )
 
-    # --- Numeric magnitude consistency: same as digit boundary + scaling ---
+    # --- Numeric magnitude consistency: same per-language rename, plus a
+    # computed global pool of mean_fertility, moved here for the same reason
+    # as three_digit_boundary_alignment above. ---
     elif metric_name == 'numeric_magnitude_consistency':
-        if 'overall' in tok_data:
-            out['per_language'] = tok_data['overall']
-        if 'by_digit_length' in tok_data:
-            out['by_digit_length'] = tok_data['by_digit_length']
-        if 'scaling' in tok_data:
-            out['scaling'] = tok_data['scaling']
-        out['global'] = _pool_per_language(
-            out.get('per_language'), ('mean_fertility',)
-        )
+        _move('overall', 'per_language')
+        out['global'] = _pool_per_language(out.get('per_language'), ('mean_fertility',))
 
-    # --- Operator isolation rate: rename by_language->per_language, drop all by_category (full results only) ---
+    # --- Operator isolation rate: rename by_language to per_language, and
+    # copy in the pooled rate and the by_domain split. Both live as siblings
+    # of per_tokenizer on metric_data rather than inside tok_data, and both
+    # are left in place there, so this is a copy, not a move: the same value
+    # is reachable at metric_data.summary.<tok> (or
+    # metric_data.by_domain.<domain>.summary.<tok>) and at
+    # metric_data.per_tokenizer.<tok>.global (or ...by_domain.<domain>). ---
     elif metric_name == 'operator_isolation_rate':
-        if 'by_language' in tok_data:
-            per_lang = {}
-            for lang, lang_data in tok_data['by_language'].items():
-                if isinstance(lang_data, dict):
-                    # Drop nested by_category from each language entry
-                    entry = {k: v for k, v in lang_data.items() if k != 'by_category'}
-                    per_lang[lang] = entry
-                else:
-                    per_lang[lang] = lang_data
-            out['per_language'] = per_lang
+        _move('by_language', 'per_language')
 
-        # `tok_data` here is metric_data['per_tokenizer'][tok_name], which
-        # holds only by_category/by_language. The pooled rate for this
-        # tokenizer lives in the sibling `summary` dict built by
-        # _build_operator_results (math.py), so it has to be read from
-        # `metric_data` rather than from `tok_data`. The pool is a
-        # micro-average weighted by operator instances across prose, code and
-        # math, so with a real code corpus it sits close to the code-domain
-        # rate; by_domain (below) is what makes that pooled number readable.
         if metric_data is not None and tok_name is not None:
             global_stats = metric_data.get('summary', {}).get(tok_name)
             if global_stats:
@@ -572,155 +549,408 @@ def _slim_tokenizer_entry(
                 if by_domain_out:
                     out['by_domain'] = by_domain_out
 
-    # --- Reconstruction fidelity: domain-keyed data ---
+    # --- Reconstruction fidelity: rename overall to global, by_domain to
+    # per_domain, by_language to per_language ---
     elif metric_name == 'reconstruction_fidelity':
-        for key, value in tok_data.items():
-            if key == 'overall':
-                out['global'] = value
-            elif key in ('by_domain', 'by_language'):
-                out['per_' + key.split('_', 1)[1]] = value
-            else:
-                out[key] = value
+        _move('overall', 'global')
+        _move('by_domain', 'per_domain')
+        _move('by_language', 'per_language')
 
-    # --- Identifier fragmentation ---
+    # --- Identifier fragmentation: rename overall to global, and by_language
+    # to per_language unless per_language is already published under that
+    # name (a hand-built results dict could set both) ---
     elif metric_name == 'identifier_fragmentation':
-        if 'overall' in tok_data:
-            out['global'] = tok_data['overall']
-        per_lang = tok_data.get('per_language') or tok_data.get('by_language')
-        if per_lang:
-            out['per_language'] = per_lang
+        _move('overall', 'global')
+        if 'by_language' in out and 'per_language' not in out:
+            _move('by_language', 'per_language')
 
     # --- Indentation consistency ---
     elif metric_name in ('indentation_preservation', 'indentation_consistency'):
-        if 'by_language' in tok_data:
-            out['per_language'] = tok_data['by_language']
-        if 'overall' in tok_data:
-            out['global'] = tok_data['overall']
+        _move('by_language', 'per_language')
+        _move('overall', 'global')
 
-    # --- Fallback: copy keys with basic renaming ---
+    # --- Fallback: the same generic rename the old code applied to any
+    # metric not named above ---
     else:
-        for key, value in tok_data.items():
-            if key == 'overall':
-                out['global'] = value
-            elif key == 'by_language':
-                out['per_language'] = value
-            elif key == 'by_category':
-                pass  # per_category only in full results
-            elif key == 'global' and isinstance(value, dict):
-                out['global'] = _strip_stats(value)
-            elif key == 'per_language':
-                out['per_language'] = _strip_per_language(value)
-            else:
-                out[key] = value
+        _move('overall', 'global')
+        _move('by_language', 'per_language')
 
     return out
 
 
-def _rename_by_category(obj):
-    """Recursively rename by_category → per_category in a results dict."""
-    if isinstance(obj, dict):
-        return {
-            ('per_category' if k == 'by_category' else k): _rename_by_category(v)
-            for k, v in obj.items()
-        }
-    if isinstance(obj, list):
-        return [_rename_by_category(item) for item in obj]
-    return obj
+def _normalize_metric_block(metric_name: str, metric_data: dict) -> dict:
+    """Rewrite one metric's block to its published key names, dropping nothing.
 
-
-def slim_results_for_json(results: Dict) -> Dict:
-    """Create a slimmed-down version of results for JSON export.
-
-    Normalizes every metric to a consistent schema:
-      {metric: {per_tokenizer: {tok: {global, per_language, ...}}, per_language, metadata}}
-    Drops summary (duplicate data) and redundant stat fields (sum, std_err,
-    min, max).
+    Copies every key metric_data has, then overwrites per_tokenizer with the
+    normalized per-tokenizer entries and renames a top-level by_language to
+    per_language when nothing is already published under that name. summary,
+    metadata, vocabulary_sizes, by_domain, domain_operator_counts,
+    observed_normalization, reference_definition, and any other key, stay
+    exactly as they were.
     """
-    slimmed = {}
+    normalized = dict(metric_data)
 
-    for metric_name, metric_data in results.items():
+    if 'per_tokenizer' in metric_data:
+        normalized['per_tokenizer'] = {
+            tok: _normalize_tokenizer_entry(metric_name, tok_data, tok, metric_data)
+            for tok, tok_data in metric_data['per_tokenizer'].items()
+        }
+
+    if 'by_language' in normalized and 'per_language' not in normalized:
+        normalized['per_language'] = normalized.pop('by_language')
+
+    return normalized
+
+
+def normalize_results(results: Dict) -> Dict:
+    """Rewrite raw analysis results to their published key names, dropping nothing.
+
+    This is the first of the two passes that build analysis_results_full.json
+    and analysis_results.json. It applies every rename and pivot the old
+    single-pass slimming step used to perform (overall to global, by_language
+    to per_language, by_category to per_category, the flat global_* siblings
+    folded into a nested global block, and so on), but it never deletes a
+    value: a field with a canonical published name is moved there, and a
+    field with no canonical name (summary, by_category's un-nested siblings,
+    the redundant stat fields sum/std_err/min/max, and so on) is left where it
+    was. select_results then builds analysis_results.json by deleting from
+    this function's output, never renaming, so every path in the slim file
+    also exists, under the same name and with the same value, in the full
+    file.
+
+    run_metadata is provenance, not a metric. It has no per_tokenizer block
+    and is carried through unchanged. grouped_analysis is one level deeper
+    ({group_type: {group_name: {metric: block}}}) than every other key here,
+    so each group's results are normalized recursively with the same rules.
+    """
+    renamed = _rename_by_category(results)
+
+    normalized = {}
+    for metric_name, metric_data in renamed.items():
         if not isinstance(metric_data, dict):
-            slimmed[metric_name] = metric_data
+            normalized[metric_name] = metric_data
             continue
 
-        # Provenance is not a metric; it has no per_tokenizer block and must
-        # survive verbatim, so the slimming branches below never see it.
         if metric_name == 'run_metadata':
-            slimmed[metric_name] = metric_data
+            normalized[metric_name] = metric_data
             continue
 
-        # Grouped results are {group_type: {group_name: {metric: block}}}, one
-        # level deeper than everything else here, so the branches below found no
-        # per_tokenizer key and wrote an empty dict. A run with
-        # --run-grouped-analysis and no --save-full-results published
-        # "grouped_analysis": {} and lost the whole grouped result. Slim each
-        # group's metric block with the same rules instead.
         if metric_name == 'grouped_analysis':
-            slimmed[metric_name] = {
+            normalized[metric_name] = {
                 group_type: {
-                    group_name: slim_results_for_json(group_result)
+                    group_name: normalize_results(group_result)
                     for group_name, group_result in groups.items()
                 }
                 for group_type, groups in metric_data.items()
             }
             continue
 
-        out = {}
+        normalized[metric_name] = _normalize_metric_block(metric_name, metric_data)
 
-        # Normalize per-tokenizer entries
-        if 'per_tokenizer' in metric_data:
-            out['per_tokenizer'] = {
-                tok: _slim_tokenizer_entry(metric_name, tok_data, tok, metric_data)
-                for tok, tok_data in metric_data['per_tokenizer'].items()
-            }
+    return normalized
 
-        # Cross-tokenizer per-language leaderboard (top-level)
-        per_lang = metric_data.get('per_language') or metric_data.get('by_language')
+
+def _select_tokenizer_entry(
+    metric_name: str,
+    tok_data: dict,
+    tok_name: Optional[str] = None,
+    metric_data: Optional[dict] = None,
+) -> dict:
+    """Delete down to the fields analysis_results.json publishes for one tokenizer.
+
+    tok_data has already been rewritten to its published key names by
+    normalize_results (by way of _normalize_tokenizer_entry); this function
+    only decides which of those keys survive. No key is renamed here: every
+    field this function reads is already at its published name.
+    """
+    if not isinstance(tok_data, dict):
+        return tok_data
+
+    out = {}
+
+    # Fields folded in from a redundant metric (see metrics/redundancy.py)
+    # carry through unchanged: without this, a caller assembling results from
+    # part of the pipeline would silently lose the merged field rather than
+    # see it relocated.
+    for _sec, _pri, _field, _ in _MERGES:
+        if metric_name == _pri and _field in tok_data:
+            out[_field] = tok_data[_field]
+
+    if metric_name in ('fertility', 'avg_tokens_per_line'):
+        if 'global' in tok_data:
+            out['global'] = _strip_stats(tok_data['global'])
+        if 'per_language' in tok_data:
+            out['per_language'] = _strip_per_language(tok_data['per_language'])
+
+    elif metric_name == 'compression_rate':
+        if 'global' in tok_data:
+            out['global'] = tok_data['global']  # {compression_rate, total_units, total_tokens}
+        if 'per_language' in tok_data:
+            out['per_language'] = tok_data['per_language']
+
+    elif metric_name == 'vocabulary_utilization':
+        out['global'] = tok_data.get('global', {})
+        # Cross-language dispersion of the utilization ratio
+        out['per_language_mean'] = tok_data.get('per_language_mean')
+        out['per_language_std'] = tok_data.get('per_language_std')
+        out['per_language_cov'] = tok_data.get('per_language_cov')
+        if 'per_language' in tok_data:
+            out['per_language'] = tok_data['per_language']
+
+    elif metric_name == 'type_token_ratio':
+        out['global'] = tok_data.get('global', {})
+
+    elif metric_name == 'unigram_distribution_metrics':
+        out['global'] = tok_data.get('global', {})
+        if 'per_language' in tok_data:
+            out['per_language'] = tok_data['per_language']
+
+    elif metric_name == 'bigram_entropy':
+        out['global'] = tok_data.get('global', {})
+        if 'per_language' in tok_data:
+            out['per_language'] = tok_data['per_language']
+
+    elif metric_name == 'trigram_entropy':
+        out['global'] = tok_data.get('global', {})
+        if 'per_language' in tok_data:
+            out['per_language'] = tok_data['per_language']
+
+    elif metric_name == 'renyi_efficiency':
+        out['global'] = tok_data.get('global', {})
+        if 'per_language' in tok_data:
+            out['per_language'] = tok_data['per_language']
+
+    elif metric_name == 'tokenizer_fairness_gini':
+        global_full = tok_data.get('global', {})
+        out['global'] = {
+            'gini_coefficient': global_full.get('gini_coefficient'),
+            'mean_cost': global_full.get('mean_cost'),
+            'std_cost': global_full.get('std_cost'),
+            'cost_ratio': global_full.get('cost_ratio'),
+            'num_languages': global_full.get('num_languages'),
+        }
+        if 'warning' in global_full:
+            out['global']['warning'] = global_full['warning']
+        if 'per_language' in tok_data:
+            out['per_language'] = tok_data['per_language']
+
+    elif metric_name == 'lorenz_curve_data':
+        for key, value in tok_data.items():
+            out[key] = _sample_array(value)
+
+    # 'global' repeats 'primary_length'. Every metric publishes a global
+    # block, with no exceptions, so this one does too even though the same
+    # numbers sit beside it under the name that says which of the two lengths
+    # it is.
+    elif metric_name == 'token_length':
+        for key in ('character_length', 'byte_length', 'primary_length', 'global'):
+            if key in tok_data:
+                out[key] = _strip_stats(tok_data[key])
+
+    elif metric_name in ('utf8_token_integrity', 'utf8_char_split'):
+        if 'global' in tok_data:
+            out['global'] = tok_data['global']
+        if 'per_language' in tok_data:
+            out['per_language'] = tok_data['per_language']
+
+    elif metric_name == 'morphscore':
+        if 'per_language' in tok_data:
+            out['per_language'] = tok_data['per_language']
+        if 'global' in tok_data:
+            out['global'] = tok_data['global']
+        if 'error' in tok_data:
+            out['error'] = tok_data['error']
+
+    elif metric_name == 'ast_boundary_alignment':
+        if 'global' in tok_data:
+            out['global'] = tok_data['global']
+        if 'per_language' in tok_data:
+            out['per_language'] = tok_data['per_language']
+        # per_category (renamed from by_category) dropped: full results only
+
+    elif metric_name in ('three_digit_boundary_alignment', 'digit_split_variability'):
+        if 'per_language' in tok_data:
+            out['per_language'] = tok_data['per_language']
+        if 'by_digit_length' in tok_data:
+            out['by_digit_length'] = tok_data['by_digit_length']
+        if 'by_bucket' in tok_data:
+            out['by_bucket'] = tok_data['by_bucket']
+        if metric_name == 'three_digit_boundary_alignment':
+            out['global'] = tok_data.get('global')
+
+    elif metric_name == 'numeric_magnitude_consistency':
+        if 'per_language' in tok_data:
+            out['per_language'] = tok_data['per_language']
+        if 'by_digit_length' in tok_data:
+            out['by_digit_length'] = tok_data['by_digit_length']
+        if 'scaling' in tok_data:
+            out['scaling'] = tok_data['scaling']
+        out['global'] = tok_data.get('global')
+
+    elif metric_name == 'operator_isolation_rate':
+        if 'per_language' in tok_data:
+            per_lang = {}
+            for lang, lang_data in tok_data['per_language'].items():
+                if isinstance(lang_data, dict):
+                    # Drop the nested per_category (renamed from by_category)
+                    # from each language entry.
+                    per_lang[lang] = {
+                        k: v for k, v in lang_data.items() if k != 'per_category'
+                    }
+                else:
+                    per_lang[lang] = lang_data
+            out['per_language'] = per_lang
+        if 'global' in tok_data:
+            out['global'] = tok_data['global']
+        if 'by_domain' in tok_data:
+            out['by_domain'] = tok_data['by_domain']
+
+    elif metric_name == 'reconstruction_fidelity':
+        for key in ('global', 'per_domain', 'per_language'):
+            if key in tok_data:
+                out[key] = tok_data[key]
+
+    elif metric_name == 'identifier_fragmentation':
+        if 'global' in tok_data:
+            out['global'] = tok_data['global']
+        per_lang = tok_data.get('per_language')
         if per_lang:
             out['per_language'] = per_lang
 
-        # Keep vocabulary sizes if present
-        if 'vocabulary_sizes' in metric_data:
-            out['vocabulary_sizes'] = metric_data['vocabulary_sizes']
+    elif metric_name in ('indentation_preservation', 'indentation_consistency'):
+        if 'per_language' in tok_data:
+            out['per_language'] = tok_data['per_language']
+        if 'global' in tok_data:
+            out['global'] = tok_data['global']
 
-        # Keep metadata
-        if 'metadata' in metric_data:
-            out['metadata'] = metric_data['metadata']
+    # --- Fallback: keep every key, stripping stats where the shape matches ---
+    else:
+        for key, value in tok_data.items():
+            if key == 'global' and isinstance(value, dict):
+                out['global'] = _strip_stats(value)
+            elif key == 'per_language':
+                out['per_language'] = _strip_per_language(value)
+            elif key == 'per_category':
+                pass  # by_category equivalent; full results only
+            else:
+                out[key] = value
 
-        # Renyi publishes the pre-1.0 normalization alongside the published one
-        # so an older value stays reproducible. Keep it; it is not derivable
-        # from the primary block, since the divisors differ per tokenizer and
-        # per language.
-        if 'observed_normalization' in metric_data:
-            out['observed_normalization'] = metric_data['observed_normalization']
+    return out
 
-        # Successor entropy under the reference normalizer and aggregation,
-        # published next to this library's own definition for comparison.
-        if 'reference_definition' in metric_data:
-            out['reference_definition'] = metric_data['reference_definition']
 
-        # Operator isolation: keep the per-domain split (prose / code / math).
-        #
-        # It is NOT derivable from the slimmed per_tokenizer block, because that block POOLS the
-        # three corpora. The corpus decides the answer (a matched pretokenizer pair differs by 0.60
-        # on prose and 0.01 on math), so dropping by_domain here would leave the summary file
-        # carrying only the pooled number, and any consumer reading it would silently get a
-        # different quantity than the one it asked for. Keep each domain's per-tokenizer summary and
-        # the source corpus it was computed on; the bulky per-tokenizer/per-language detail stays in
-        # analysis_results_full.json.
-        if 'by_domain' in metric_data:
-            out['by_domain'] = {
-                domain: {
-                    'summary': dom_data.get('summary', {}),
-                    'source': dom_data.get('source'),
-                }
-                for domain, dom_data in metric_data['by_domain'].items()
+def _select_metric_block(metric_name: str, metric_data: dict) -> dict:
+    """Delete down from a normalized metric block to what analysis_results.json publishes.
+
+    metric_data has already been rewritten to its published key names by
+    normalize_results; this function only decides which of those keys
+    survive.
+    """
+    out = {}
+
+    if 'per_tokenizer' in metric_data:
+        out['per_tokenizer'] = {
+            tok: _select_tokenizer_entry(metric_name, tok_data, tok, metric_data)
+            for tok, tok_data in metric_data['per_tokenizer'].items()
+        }
+
+    # Cross-tokenizer per-language leaderboard (top-level)
+    per_lang = metric_data.get('per_language')
+    if per_lang:
+        out['per_language'] = per_lang
+
+    # Keep vocabulary sizes if present
+    if 'vocabulary_sizes' in metric_data:
+        out['vocabulary_sizes'] = metric_data['vocabulary_sizes']
+
+    # Keep metadata
+    if 'metadata' in metric_data:
+        out['metadata'] = metric_data['metadata']
+
+    # Renyi publishes the pre-1.0 normalization alongside the published one
+    # so an older value stays reproducible. Kept: it is not derivable from
+    # the primary block, since the divisors differ per tokenizer and per
+    # language.
+    if 'observed_normalization' in metric_data:
+        out['observed_normalization'] = metric_data['observed_normalization']
+
+    # Successor entropy under the reference normalizer and aggregation,
+    # published next to this library's own definition for comparison.
+    if 'reference_definition' in metric_data:
+        out['reference_definition'] = metric_data['reference_definition']
+
+    # Operator isolation: keep the per-domain split (prose / code / math).
+    #
+    # It is NOT derivable from the selected per_tokenizer block, because that block POOLS the
+    # three corpora. The corpus decides the answer (a matched pretokenizer pair differs by 0.60
+    # on prose and 0.01 on math), so dropping by_domain here would leave the summary file
+    # carrying only the pooled number, and any consumer reading it would silently get a
+    # different quantity than the one it asked for. Keep each domain's per-tokenizer summary and
+    # the source corpus it was computed on; the bulky per-tokenizer/per-language detail stays in
+    # analysis_results_full.json.
+    if 'by_domain' in metric_data:
+        out['by_domain'] = {
+            domain: {
+                'summary': dom_data.get('summary', {}),
+                'source': dom_data.get('source'),
             }
+            for domain, dom_data in metric_data['by_domain'].items()
+        }
 
-        # Deliberately drop: summary
-        slimmed[metric_name] = out
+    # Deliberately dropped: summary, and any other key normalize_results left
+    # in place but with no entry above.
+    return out
 
-    return slimmed
+
+def select_results(normalized: Dict) -> Dict:
+    """Delete down from normalize_results' output to analysis_results.json's shape.
+
+    This is the second of the two passes. It only deletes keys: every value it
+    publishes already exists, at the same key path and with the same value, in
+    ``normalized`` (and therefore in analysis_results_full.json, which is
+    written from ``normalized`` directly). No rename and no computation
+    happens here.
+    """
+    selected = {}
+
+    for metric_name, metric_data in normalized.items():
+        if not isinstance(metric_data, dict):
+            selected[metric_name] = metric_data
+            continue
+
+        # Provenance is not a metric; it has no per_tokenizer block and must
+        # survive verbatim, so the branches below never see it.
+        if metric_name == 'run_metadata':
+            selected[metric_name] = metric_data
+            continue
+
+        # Grouped results are {group_type: {group_name: {metric: block}}}, one
+        # level deeper than everything else here, so a flat pass would find no
+        # per_tokenizer key and write an empty dict. Select each group's
+        # metric block with the same rules instead.
+        if metric_name == 'grouped_analysis':
+            selected[metric_name] = {
+                group_type: {
+                    group_name: select_results(group_result)
+                    for group_name, group_result in groups.items()
+                }
+                for group_type, groups in metric_data.items()
+            }
+            continue
+
+        selected[metric_name] = _select_metric_block(metric_name, metric_data)
+
+    return selected
+
+
+def slim_results_for_json(results: Dict) -> Dict:
+    """Build analysis_results.json's shape directly from raw results.
+
+    Equivalent to ``select_results(normalize_results(results))``. Kept as one
+    entry point because it is imported directly by callers, including tests,
+    that only want the slim shape and have no use for the intermediate
+    full-shape dict.
+    """
+    return select_results(normalize_results(results))
 
 
 # --- Deprecation shims for flags/choices removed in 1.0.0 ---
@@ -1755,23 +1985,29 @@ def run_from_args(args: argparse.Namespace):
         language_metadata=getattr(analyzer, 'language_metadata', None),
     )
 
+    # Both output files are built from the same normalized results: full is
+    # normalize_results(results) as-is, and slim is select_results applied on
+    # top. That makes slim a strict key-path subset of full by construction,
+    # rather than each file separately renaming and selecting from raw results.
+    normalized_results = normalize_results(results)
+
     # Save results to JSON (slimmed version)
     results_file = Path(args.output_dir) / "analysis_results.json"
     logger.info(f"Saving slimmed results to {results_file}")
-    
-    # Create slimmed version and convert numpy arrays to lists for JSON serialization
+
+    # Convert numpy arrays to lists for JSON serialization
     convert_for_json = _convert_for_json_public
-    slimmed_results = slim_results_for_json(results)
+    slimmed_results = select_results(normalized_results)
     results_json = convert_for_json(slimmed_results)
-    
+
     with open(results_file, 'w') as f:
         json.dump(results_json, f, indent=2)
-    
+
     # Optionally save full results
     if args.save_full_results:
         full_results_file = Path(args.output_dir) / "analysis_results_full.json"
         logger.info(f"Saving full results to {full_results_file}")
-        full_results_json = convert_for_json(_rename_by_category(results))
+        full_results_json = convert_for_json(normalized_results)
         with open(full_results_file, 'w') as f:
             json.dump(full_results_json, f, indent=2)
     

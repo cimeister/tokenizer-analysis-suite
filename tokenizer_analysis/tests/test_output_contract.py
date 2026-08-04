@@ -109,6 +109,98 @@ def test_every_metric_has_a_per_tokenizer_block(demo_results):
         assert "per_tokenizer" in block, f"{name} has no per_tokenizer block"
 
 
+@pytest.fixture(scope="module")
+def full_and_slim_results(tmp_path_factory):
+    """Run the bundled demo with --save-full-results and return both files, parsed.
+
+    A separate run from demo_results above: that fixture never passes
+    --save-full-results, so it has no full file to compare against.
+    """
+    out = tmp_path_factory.mktemp("full_and_slim")
+    proc = subprocess.run(
+        [sys.executable, "-m", "tokenizer_analysis.cli.run_analysis",
+         "--use-sample-data", "--samples-per-lang", "10",
+         "--no-plots", "--no-code-ast", "--save-full-results",
+         "--output-dir", str(out)],
+        cwd=REPO_ROOT, capture_output=True, timeout=900,
+    )
+    if proc.returncode != 0:
+        pytest.fail(
+            "demo run failed with exit "
+            f"{proc.returncode}:\n{proc.stderr.decode(errors='replace')[-3000:]}"
+        )
+    slim = json.loads((out / "analysis_results.json").read_text())
+    full = json.loads((out / "analysis_results_full.json").read_text())
+    return slim, full
+
+
+def _leaf_paths(obj, prefix=()):
+    """Yield (key_path, value) for every leaf under obj, including empty dicts.
+
+    A key path is the tuple of keys walked to reach a value that is not
+    itself a dict, or is an empty dict (which has no further keys to walk
+    into but is still a value a consumer can read).
+    """
+    if isinstance(obj, dict):
+        if not obj:
+            yield prefix, {}
+        for key, value in obj.items():
+            yield from _leaf_paths(value, prefix + (key,))
+    elif isinstance(obj, list):
+        yield prefix, obj
+    else:
+        yield prefix, obj
+
+
+@requires_flores
+def test_slim_file_is_a_strict_projection_of_the_full_file(full_and_slim_results):
+    """Every value analysis_results.json publishes must exist, unchanged, at the
+    same key path in analysis_results_full.json.
+
+    This is the property normalize_results and select_results exist to
+    guarantee: normalize_results renames and pivots raw results to their
+    published key names without deleting anything, analysis_results_full.json
+    is written from that output directly, and select_results (used by
+    slim_results_for_json) only deletes keys from it to build
+    analysis_results.json. Because the second pass never renames, every path
+    the slim file publishes must already be present, under the same name and
+    with the same value, in the output of the first pass.
+
+    Before this split, a single function renamed keys while selecting them
+    (overall to global, by_language to per_language, and so on), so a value
+    read out of the slim file could not be looked up at the same path in the
+    full file: the full file still used the raw, pre-rename names. A demo run
+    measured 1022 slim paths with no counterpart in the full file. This test
+    asserts that count is zero, so a future change to either pass cannot
+    reintroduce a rename that only one of the two files sees.
+
+    run_metadata is provenance, added to the slim file only, after both files
+    are written from the same normalized results, and is excluded from the
+    comparison for that reason.
+    """
+    slim, full = full_and_slim_results
+
+    full_paths = dict(_leaf_paths(full))
+    slim_paths = {
+        path: value for path, value in _leaf_paths(slim) if path[0] != "run_metadata"
+    }
+
+    missing = [path for path in slim_paths if path not in full_paths]
+    differing = [
+        path for path in slim_paths
+        if path in full_paths and full_paths[path] != slim_paths[path]
+    ]
+
+    assert not missing, (
+        f"{len(missing)} slim path(s) have no counterpart in the full file, "
+        f"starting with {missing[:5]}"
+    )
+    assert not differing, (
+        f"{len(differing)} slim path(s) differ in value from the full file, "
+        f"starting with {differing[:5]}"
+    )
+
+
 def test_merge_is_a_no_op_when_the_secondary_is_absent():
     """A run that disabled a metric family must not trip the merge step."""
     results = {"compression_rate": {"per_tokenizer": {"t": {"global": {}}}}}
