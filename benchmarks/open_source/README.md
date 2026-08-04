@@ -33,3 +33,24 @@ Two of the nine tokenizers, `meta-llama/Meta-Llama-3-8B` and
 `google/gemma-2-9b`, are gated on the Hub and need an accepted license. Drop
 them from `tokenizers.json` to run without one: no other number changes, since
 every metric here is computed per tokenizer.
+
+## What the committed results file leaves out
+
+`analysis_results.json` here is the output of `run.sh` with two fields removed:
+`encoding_speed`, which is wall-clock, and `run_metadata.timestamp_utc`. Both
+change on every run, so leaving them in meant every regeneration produced a
+diff of roughly ninety lines in which a real change to a measured value was not
+visible. Your own run writes both.
+
+## Reading the CER column
+
+Which tokenizers report `mean_cer` depends on how fast the machine is. The
+character error rate is an edit distance, and the run abandons it for a
+tokenizer once it projects past `--cer-time-budget` (120 seconds here). In this
+benchmark `bert-base-uncased` exceeds it, because a tokenizer that lowercases,
+strips accents and substitutes unknown tokens has a large distance on every
+text, so its `mean_cer` is `null`. On faster hardware it might not be.
+
+`cer_skipped` in the results file distinguishes a skipped value from a measured
+one, and `exact_match_rate` carries the same information without the time cost:
+`bert-base-uncased` reconstructs 0.031 of its inputs exactly.

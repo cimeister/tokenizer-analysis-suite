@@ -14,6 +14,7 @@ import logging
 import math
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -632,8 +633,8 @@ def slim_results_for_json(results: Dict) -> Dict:
 
     Normalizes every metric to a consistent schema:
       {metric: {per_tokenizer: {tok: {global, per_language, ...}}, per_language, metadata}}
-    Drops pairwise_comparisons, summary (derivable/duplicate data), and
-    redundant stat fields (sum, std_err, min, max).
+    Drops summary (duplicate data) and redundant stat fields (sum, std_err,
+    min, max).
     """
     slimmed = {}
 
@@ -716,7 +717,7 @@ def slim_results_for_json(results: Dict) -> Dict:
                 for domain, dom_data in metric_data['by_domain'].items()
             }
 
-        # Deliberately drop: pairwise_comparisons, summary
+        # Deliberately drop: summary
         slimmed[metric_name] = out
 
     return slimmed
@@ -1134,6 +1135,93 @@ def _file_digest(path: str) -> Optional[str]:
         return None
 
 
+def _hub_revision(repo_id: str) -> Optional[str]:
+    """Commit sha of the locally cached snapshot of a Hugging Face repo.
+
+    Read from the cache rather than the Hub, so it names the revision this run
+    actually loaded and needs no network. Returns None when the repo was not
+    loaded from the cache (a local directory, or a class that is not
+    huggingface), which is the same case _file_digest already covers.
+    """
+    try:
+        from huggingface_hub.constants import HF_HUB_CACHE
+    except ImportError:
+        return None
+
+    repo_dir = Path(HF_HUB_CACHE) / f"models--{repo_id.replace('/', '--')}"
+    ref = repo_dir / "refs" / "main"
+    try:
+        if ref.is_file():
+            return ref.read_text(encoding="utf-8").strip() or None
+        snapshots = sorted((repo_dir / "snapshots").iterdir())
+        if len(snapshots) == 1:
+            return snapshots[0].name
+    except OSError:
+        return None
+    # More than one snapshot and no refs/main: which one was loaded is not
+    # decidable here, so record nothing rather than guess.
+    return None
+
+
+def _corpus_digest(language_metadata: Any) -> Dict[str, Any]:
+    """Per-language path, byte count and short hash of the corpus that was read.
+
+    The config hashes beside this record which corpus was *requested*. They do
+    not record what the file held, so two runs over different snapshots of
+    FLORES+ under the same config were indistinguishable after the fact. This
+    closes that: a rerun whose numbers moved can be attributed to the corpus or
+    ruled out.
+    """
+    if language_metadata is None:
+        return {}
+    try:
+        languages = list(language_metadata.languages)
+    except (AttributeError, TypeError):
+        return {}
+
+    files: Dict[str, Any] = {}
+    for lang in sorted(languages):
+        try:
+            path = language_metadata.get_data_path(lang)
+        except (AttributeError, KeyError, TypeError):
+            continue
+        if not path:
+            continue
+        # Relative to the working directory where it sits under it, so a
+        # committed results file records "parallel/eng_Latn.txt" rather than a
+        # path naming whoever ran it.
+        resolved = Path(path)
+        try:
+            display = str(resolved.resolve().relative_to(Path.cwd().resolve()))
+        except (ValueError, OSError):
+            display = str(path)
+        entry: Dict[str, Any] = {"path": display}
+        try:
+            entry["bytes"] = resolved.stat().st_size
+        except OSError:
+            pass
+        digest = _file_digest(str(path))
+        if digest:
+            entry["sha256_16"] = digest
+        files[lang] = entry
+    if not files:
+        return {}
+
+    out: Dict[str, Any] = {"n_languages": len(files), "files": files}
+    # The fetch scripts write a manifest beside the corpus naming the dataset
+    # revision they read. Carry it through, so the results file records which
+    # snapshot of the corpus produced these numbers rather than only what the
+    # bytes hashed to.
+    for entry in files.values():
+        manifest = Path(entry["path"]).parent / "corpus_manifest.json"
+        try:
+            out["source"] = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        break
+    return out
+
+
 def _git_state() -> Dict[str, Any]:
     """Commit of the repo this package runs from, and whether it was modified.
 
@@ -1194,7 +1282,8 @@ def _non_default_arguments(args: argparse.Namespace) -> Dict[str, Any]:
     return changed
 
 
-def _build_run_metadata(args: argparse.Namespace, tokenizer_configs: Dict) -> Dict:
+def _build_run_metadata(args: argparse.Namespace, tokenizer_configs: Dict,
+                        language_metadata: Any = None) -> Dict:
     """Describe the run, so a results file can be traced back to what made it.
 
     Without this a results file is untraceable: nothing recorded the package
@@ -1225,6 +1314,13 @@ def _build_run_metadata(args: argparse.Namespace, tokenizer_configs: Dict) -> Di
             digest = _file_digest(path)
             if digest:
                 entry["sha256_16"] = digest
+            elif entry.get("class") == "huggingface":
+                # Not a readable file, so it is a Hub id. Record the cached
+                # snapshot's commit sha: without it a Hub-side retokenization
+                # changes every number here and nothing says so.
+                revision = _hub_revision(path)
+                if revision:
+                    entry["hub_revision"] = revision
         tokenizers[name] = entry
 
     configs = {}
@@ -1241,6 +1337,11 @@ def _build_run_metadata(args: argparse.Namespace, tokenizer_configs: Dict) -> Di
     git = _git_state()
     return {
         "package_version": __version__,
+        # UTC, ISO 8601. Separates two runs of the same commit over the same
+        # configs, which is exactly the case that produced an unexplained
+        # difference between two benchmark runs before Gini was made
+        # order-independent.
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "git_commit": git["commit"],
         "git_tree_modified": git["dirty"],
         "configs": configs,
@@ -1255,6 +1356,7 @@ def _build_run_metadata(args: argparse.Namespace, tokenizer_configs: Dict) -> Di
             "use_sample_data": bool(args.use_sample_data),
             "tokenized_data_file": args.tokenized_data_file,
             "samples_per_lang": args.samples_per_lang,
+            "digest": _corpus_digest(language_metadata),
         },
         # Effective caps applied by CodeDataLoader when --code-ast-config
         # names real code files (max_code_files_per_lang feeds the AST
@@ -1648,7 +1750,10 @@ def run_from_args(args: argparse.Namespace):
             results['grouped_analysis'] = grouped_results
     
     # Record what produced this file, before writing it.
-    results['run_metadata'] = _build_run_metadata(args, tokenizer_configs)
+    results['run_metadata'] = _build_run_metadata(
+        args, tokenizer_configs,
+        language_metadata=getattr(analyzer, 'language_metadata', None),
+    )
 
     # Save results to JSON (slimmed version)
     results_file = Path(args.output_dir) / "analysis_results.json"

@@ -41,6 +41,22 @@ def languages_from_config(config_path: Path) -> list:
     return list(languages)
 
 
+def _resolved_revision(dataset, requested):
+    """The commit sha the loaded dataset came from, when it can be read.
+
+    `datasets` records it on the dataset's info for Hub loads. Returns the
+    requested value when it cannot be read, so the manifest never claims a
+    revision that was not observed.
+    """
+    info = getattr(dataset, "info", None)
+    if info is not None:
+        for attr in ("dataset_revision", "version"):
+            value = getattr(info, attr, None)
+            if value:
+                return str(value)
+    return requested
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -59,6 +75,12 @@ def main(argv=None) -> int:
     parser.add_argument(
         "--split", default=SPLIT,
         help=f"FLORES+ split to write (default: {SPLIT}, 997 sentences)",
+    )
+    parser.add_argument(
+        "--revision", default=None,
+        help="Dataset revision to fetch (branch, tag or commit sha). Defaults "
+             "to the Hub's current default branch. Whichever is used is "
+             "recorded in the manifest this script writes.",
     )
     args = parser.parse_args(argv)
 
@@ -86,7 +108,7 @@ def main(argv=None) -> int:
     # same file.
     print(f"Loading {DATASET} split={args.split}. The dataset is gated, so this "
           "fails with a 401 unless you have accepted its terms and logged in.")
-    dataset = load_dataset(DATASET, split=args.split)
+    dataset = load_dataset(DATASET, split=args.split, revision=args.revision)
 
     by_language = {}
     for row in dataset:
@@ -111,7 +133,24 @@ def main(argv=None) -> int:
         out.write_text("\n".join(lines) + "\n", encoding="utf-8")
         print(f"  {code:12s} {len(lines):5d} lines -> {out.relative_to(REPO_ROOT)}")
 
+    # Record which revision produced these files. Without it a Hub-side update
+    # to the dataset changes every number computed from this corpus and nothing
+    # says so. The manifest is read by nothing at run time; it is the record a
+    # later reader consults when two runs of the same commit disagree.
+    manifest = {
+        "dataset": DATASET,
+        "split": args.split,
+        "revision_requested": args.revision,
+        "revision_resolved": _resolved_revision(dataset, args.revision),
+        "n_languages": len(by_language),
+    }
+    manifest_path = args.output_dir / "corpus_manifest.json"
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+
     print(f"\nWrote {len(by_language)} language file(s) to {args.output_dir}.")
+    print(f"Recorded the dataset revision in {manifest_path.relative_to(REPO_ROOT)}.")
     print("FLORES+ is CC-BY-SA 4.0; see NOTICE for the attribution terms.")
     return 0
 

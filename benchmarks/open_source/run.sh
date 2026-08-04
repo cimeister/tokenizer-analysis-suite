@@ -23,6 +23,11 @@
 # google/gemma-2). Accept their licenses first, or drop them from
 # tokenizers.json and rerun; every other number is unaffected by their absence.
 #
+# --save-full-results is deliberately absent. Nothing here reads the full file:
+# render_report.py opens analysis_results.json only, and the full file is not
+# gitignored, so writing it leaves an uncommitted artifact in a tracked
+# directory. Pass it by hand if you want the dropped blocks.
+#
 # Most of the run is encoding and the character error rate, which is an edit
 # distance in Python. --cer-time-budget 120 is generous for the byte-level
 # tokenizers, which reconstruct exactly and finish in seconds. A lossy tokenizer
@@ -55,8 +60,27 @@ uv run tokenizer-analysis \
     --samples-per-lang 250 \
     --use-builtin-math-data \
     --cer-time-budget 120 \
-    --save-full-results \
     --output-dir "${OUTPUT_DIR}"
+
+# Strip the two fields that change on every run, so a diff of the committed
+# results file shows a real change to a measured value rather than timing noise
+# and a new timestamp. Only the copy in this directory is stripped; a run
+# pointed at another --output-dir keeps both. render_report.py reads neither.
+if [ "${OUTPUT_DIR}" = "${HERE}" ]; then
+    uv run python - "${OUTPUT_DIR}/analysis_results.json" <<'PY'
+import json, sys
+
+path = sys.argv[1]
+with open(path, encoding="utf-8") as f:
+    results = json.load(f)
+results.pop("encoding_speed", None)
+results.get("run_metadata", {}).pop("timestamp_utc", None)
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(results, f, indent=2, ensure_ascii=False)
+    f.write("\n")
+print(f"Stripped encoding_speed and run_metadata.timestamp_utc from {path}")
+PY
+fi
 
 uv run python "${HERE}/render_report.py" \
     --results "${OUTPUT_DIR}/analysis_results.json" \
