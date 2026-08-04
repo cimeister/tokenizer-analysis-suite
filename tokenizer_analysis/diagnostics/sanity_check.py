@@ -552,7 +552,18 @@ class TokenizerSanityChecker:
                 bare.append(cleaned)
             elif _is_mark(cleaned[0]):
                 leading += 1
-        lead_frac = (leading / considered) if considered else 0.0
+        if not considered:
+            # No vocabulary entry could be examined, so there is no fraction to
+            # report. 0.0 here was a PASS derived from zero tokens, which is
+            # what a pretokenized config with no vocab_dict produces.
+            # check_byte_coverage already skips that case explicitly.
+            return _mk(name, "static", Severity.NOT_APPLICABLE, "no vocab examined",
+                       SANITY_MARK_LEADING_TOKEN_WARN_FRAC,
+                       "no vocabulary entry was available to examine, so the "
+                       "combining-mark share is not reported",
+                       "a fraction over zero examined tokens is not a "
+                       "measurement; reporting 0.0 would be a silent pass")
+        lead_frac = leading / considered
         if bare:
             return _mk(name, "static", Severity.FAIL, len(bare), 0,
                        f"{len(bare)} vocab token(s) are bare combining marks",
@@ -831,6 +842,24 @@ class TokenizerSanityChecker:
                     directions["other"] = directions.get("other", 0) + 1
         ent = DigitBoundaryMetrics._compute_pattern_entropy(patterns)
         npat = ent["num_patterns"]
+        if npat == 0:
+            # Nothing was measured, so there is no consistency to report.
+            # Reporting 1.0 here was a perfect score computed from zero digit
+            # spans: every probe above is skipped by `if not offsets`, and
+            # TokenizerWrapper.encode_with_offsets returns (ids, None) by
+            # default, which _ScriptTokTokenizer (ScriptBPE, MinGram) and
+            # PreTokenizedDataTokenizer inherit unchanged. Measured on the
+            # bundled bpe.json: WARN at 0.3769 with offsets, PASS at 1.0000
+            # with the same tokenizer once offsets are removed. This follows
+            # check_byte_coverage, which skips explicitly rather than passing
+            # silently.
+            return _mk(name, "behavioral", Severity.NOT_APPLICABLE, "no digit spans",
+                       SANITY_DIGIT_CONSISTENCY_PASS,
+                       "no digit span could be measured, so consistency is not "
+                       "reported",
+                       "the tokenizer reported no character offsets, or no "
+                       "probe contained a number; a score computed from zero "
+                       "spans would be a perfect one")
         if npat > 1:
             norm_ent = ent["entropy"] / math.log2(npat)
         else:

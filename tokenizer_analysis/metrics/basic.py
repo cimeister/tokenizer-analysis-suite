@@ -449,7 +449,10 @@ class BasicTokenizationMetrics(BaseMetrics):
         used_tokens = len(unique_tokens)
         
         return {
-            'utilization': self.safe_divide(used_tokens, vocab_size, 0.0),
+            # A zero vocabulary size leaves utilization undefined rather than
+            # zero. With a real vocabulary this is an ordinary division, and an
+            # empty corpus gives a true 0 of N.
+            'utilization': self.safe_divide(used_tokens, vocab_size),
             'used_tokens': used_tokens,
             'vocab_size': vocab_size,
             'unused_tokens': vocab_size - used_tokens
@@ -525,7 +528,11 @@ class BasicTokenizationMetrics(BaseMetrics):
         unique_count = len(unique_tokens)
         
         return {
-            'ttr': self.safe_divide(unique_count, total_tokens, 0.0),
+            # None, not 0.0, when no token was emitted. A type-token ratio of
+            # 0.0 cannot be measured (it would need types to be zero while
+            # tokens is not), so it can only mean "nothing was tokenized", and
+            # the 'tokens' field beside it says that plainly.
+            'ttr': self.safe_divide(unique_count, total_tokens),
             'types': unique_count,
             'tokens': total_tokens
         }

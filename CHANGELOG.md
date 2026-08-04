@@ -39,6 +39,35 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   changes.
 
 ### Fixed
+- `tokenizer-sanity-check` reported a passing score for checks it never ran.
+  C6 digit handling computes `consistency = 1.0 - normalized_entropy`, and the
+  normalized entropy is `0.0` when no digit pattern was collected, so a
+  tokenizer whose every probe was skipped scored a perfect 1.0. Every probe is
+  skipped by `if not offsets`, and `TokenizerWrapper.encode_with_offsets`
+  returns `(ids, None)` by default, which `_ScriptTokTokenizer` (ScriptBPE,
+  MinGram) and `PreTokenizedDataTokenizer` inherit unchanged. Measured on the
+  bundled `bpe.json`: WARN at 0.3769 with offsets, PASS at 1.0000 with the same
+  tokenizer once offsets are removed. C2 combining marks did the same from an
+  empty vocabulary. Both now return `NOT_APPLICABLE` and say why, following
+  `check_byte_coverage`, which already skipped explicitly rather than passing
+  silently.
+- `type_token_ratio` published `0.0` when no token was emitted. A ratio of 0.0
+  cannot be measured, since it would need zero types beside a non-zero token
+  count, so it could only ever mean "nothing was tokenized". Now `null`.
+  `vocabulary_utilization` uses the same convention for a zero-size vocabulary.
+- The digit summary published `entropy_long` and `entropy_short` as `0.0` for a
+  bucket that held no number, which reads as perfectly consistent chunking.
+  `_compute_pattern_entropy` returns `0.0` with a `count` of 0 beside it, and
+  the summary dropped the count. The summary now publishes `null` for an empty
+  bucket and carries `long_numbers_analyzed` and `short_numbers_analyzed`, so
+  each entropy is interpretable where it is read.
+- `cer_skipped` was dropped from the published file by the schema refactor in
+  this same release, and restored. `mean_cer` and `whitespace_fidelity` are
+  null both when the character error rate exceeded `--cer-time-budget` and when
+  there was nothing to measure; this flag is the only field separating the two,
+  and METRICS.md and the benchmark README both name it. It is written only when
+  a tokenizer exceeds the budget, so no comparison against a demo run could
+  have caught its loss.
 - `utf8_token_integrity` published `completeness_rate: 1.0` and
   `boundary_crossing_rate: 0.0` for a language or tokenizer with zero content
   tokens, at six sites. That reads as flawless UTF-8 integrity for a tokenizer

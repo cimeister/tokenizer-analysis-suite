@@ -579,3 +579,120 @@ def test_cer_skipped_survives_slimming():
         "mean_cer from one that had nothing to measure"
     )
     assert entry["global"]["mean_cer"] is None
+
+
+@pytest.fixture(scope="module")
+def degenerate_run(tmp_path_factory):
+    """A corpus too small for most metrics to have anything to measure.
+
+    One short document and two tokenizers.  Bigram and trigram contexts do not
+    clear their occurrence thresholds, there is one language so cross-language
+    dispersion is undefined, and several counts are zero.  This is the shape
+    that produced the 1.0.2 defects: a value that could not be computed was
+    published as 0.0 or 1.0, and one path raised TypeError instead.
+    """
+    work = tmp_path_factory.mktemp("degenerate")
+    corpus = work / "tiny.txt"
+    corpus.write_text("The cat sat.\n", encoding="utf-8")
+
+    toks = work / "toks.json"
+    toks.write_text(json.dumps({
+        "bpe": {"class": "huggingface", "path": "tokenizers/bpe.json"},
+        "unigramlm": {"class": "huggingface", "path": "tokenizers/unigramlm.json"},
+    }), encoding="utf-8")
+
+    out = work / "out"
+    proc = subprocess.run(
+        [sys.executable, "-m", "tokenizer_analysis.cli.run_analysis",
+         "--tokenizer-config", str(toks), "--input", str(corpus),
+         "--no-plots", "--no-code-ast", "--output-dir", str(out)],
+        cwd=REPO_ROOT, capture_output=True, timeout=900,
+    )
+    if proc.returncode != 0:
+        pytest.fail(
+            "a corpus with nothing to measure must still complete; exit "
+            f"{proc.returncode}:\n{proc.stderr.decode(errors='replace')[-3000:]}"
+        )
+    return json.loads((out / "analysis_results.json").read_text())
+
+
+def test_a_corpus_with_nothing_to_measure_publishes_null_not_a_number(degenerate_run):
+    """A count of zero may not sit beside a number that reads as a measurement.
+
+    This is the invariant behind every 1.0.2 metric fix.  Where a global block
+    reports it measured nothing, every rate and mean in that block has to be
+    null: a bigram entropy of 0.0 means every context has exactly one
+    successor, a compression rate of 1.0 means one unit per token, and a
+    completeness rate of 1.0 means every token was well formed.  None of those
+    may stand in for "there was nothing to measure".
+
+    Fields that count things (count, total_tokens, used_tokens and the like)
+    stay numeric: zero of something is a true statement about the sample.
+    """
+    counters = ("count", "total", "types_evaluated", "types_excluded",
+                "used_tokens", "vocab_size", "num_samples", "unmappable",
+                "parse_error_spans", "num_languages", "num_depth_levels")
+    offenders = []
+
+    for name, block in _metrics(degenerate_run).items():
+        for tok, entry in (block.get("per_tokenizer") or {}).items():
+            glob = (entry or {}).get("global")
+            if not isinstance(glob, dict):
+                continue
+            count = glob.get("count")
+            if count != 0:
+                continue
+            for field, value in glob.items():
+                if field in counters or field.startswith("total_"):
+                    continue
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    offenders.append(f"{name}.{tok}.global.{field} = {value} beside count 0")
+
+    assert not offenders, (
+        "a measured-looking number published where count is 0:\n  "
+        + "\n  ".join(sorted(offenders))
+    )
+
+
+def test_run_metadata_records_the_inputs_that_decide_the_numbers(degenerate_run):
+    """Provenance the 1.0.1 file did not carry.
+
+    A results file has to say which corpus and which tokenizers produced it,
+    not only which config named them.  Two runs over different snapshots of a
+    corpus under one config were previously indistinguishable, and a Hub-side
+    retokenization would move every number with nothing recording it.
+    """
+    meta = degenerate_run["run_metadata"]
+
+    assert meta.get("timestamp_utc"), "no timestamp, so two runs of one commit are indistinguishable"
+    assert meta["timestamp_utc"].endswith("+00:00"), "timestamp is not UTC"
+
+    for name, entry in meta["tokenizers"].items():
+        assert entry.get("sha256_16") or entry.get("hub_revision"), (
+            f"tokenizer {name} is recorded by path alone, so a change to it "
+            "would move every number with nothing saying so"
+        )
+
+    digest = meta["corpus"]["digest"]
+    assert digest.get("n_languages"), "no corpus digest"
+    for lang, entry in digest["files"].items():
+        assert entry.get("sha256_16"), f"corpus {lang} has no hash"
+        assert entry.get("bytes"), f"corpus {lang} has no byte count"
+
+
+@requires_flores
+def test_corpus_paths_under_the_working_directory_are_recorded_relative(demo_results):
+    """So a committed results file does not name whoever produced it.
+
+    The digest records a path per language. A corpus inside the working
+    directory is recorded relative to it; one outside keeps its absolute path,
+    because there is nothing to make it relative to. The benchmark reads
+    parallel/ from the repository root, so its committed results file must
+    carry short paths rather than a home directory.
+    """
+    files = demo_results["run_metadata"]["corpus"]["digest"]["files"]
+    absolute = {lang: e["path"] for lang, e in files.items() if e["path"].startswith("/")}
+    assert not absolute, (
+        "corpus paths under the working directory recorded as absolute: "
+        + ", ".join(f"{k} -> {v}" for k, v in sorted(absolute.items()))
+    )

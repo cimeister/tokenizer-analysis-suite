@@ -1221,9 +1221,17 @@ class DigitBoundaryMetrics(BaseMetrics):
             if languages_seen:
                 long_stats = self._compute_pattern_entropy(pooled_long_patterns)
                 short_stats = self._compute_pattern_entropy(pooled_short_patterns)
+                # _compute_pattern_entropy returns 0.0 for an empty list, with
+                # count 0 beside it to say so. This summary drops the counts,
+                # so a bucket that held no number would publish 0.0, which
+                # reads as perfectly consistent chunking. Publish None instead,
+                # and carry the counts so each entropy is interpretable where
+                # it is read.
                 results["summary"][tok_name] = {
-                    "entropy_long": long_stats["entropy"],
-                    "entropy_short": short_stats["entropy"],
+                    "entropy_long": long_stats["entropy"] if long_stats["count"] else None,
+                    "entropy_short": short_stats["entropy"] if short_stats["count"] else None,
+                    "long_numbers_analyzed": long_stats["count"],
+                    "short_numbers_analyzed": short_stats["count"],
                     "numbers_analyzed": total_numbers,
                     "languages_analyzed": len(languages_seen),
                 }
