@@ -98,8 +98,13 @@ def _load_huggingface_tokenizer(config):
             tokenizer = PreTrainedTokenizerFast.from_pretrained(path)
             logger.info(f"Loaded {path} via PreTrainedTokenizerFast")
             return tokenizer
-        except Exception:
-            pass
+        except Exception as exc:
+            # Logged even though AutoTokenizer may still succeed: a silent
+            # catch here previously hid a NameError from a typo'd function
+            # name and reported it as a bad file (see the note below).
+            logger.debug("PreTrainedTokenizerFast could not load %s (%s: %s); "
+                         "trying AutoTokenizer",
+                         path, type(exc).__name__, exc)
         tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
         return tokenizer
     except Exception as e:

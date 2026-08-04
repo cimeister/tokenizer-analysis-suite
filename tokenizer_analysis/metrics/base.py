@@ -356,8 +356,10 @@ class BaseMetrics(ABC):
             try:
                 if hasattr(tokenizer, 'convert_ids_to_tokens'):
                     raw_tokens = tokenizer.convert_ids_to_tokens(token_ids)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("decode-table probe %r failed (%s: %s); that "
+                             "character keeps no remap entry",
+                             original_char, type(exc).__name__, exc)
             if not raw_tokens:
                 continue
             # Look at the token at target_pos (the one after 'a')

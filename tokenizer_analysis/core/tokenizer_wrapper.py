@@ -390,8 +390,10 @@ class HuggingFaceTokenizer(TokenizerWrapper):
                     ids = enc['input_ids']
                     offsets = [tuple(pair) for pair in enc['offset_mapping']]
                     return ids, offsets
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("offset-aware encode failed for %s (%s: %s); "
+                             "returning ids with no offsets",
+                             self.get_name(), type(exc).__name__, exc)
         # Reuse result, do not call encode() again
         if hasattr(result, 'ids'):
             return result.ids, None
@@ -432,8 +434,10 @@ class HuggingFaceTokenizer(TokenizerWrapper):
                             batch_enc['offset_mapping'],
                         )
                     ]
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("batched offset encode failed for %s (%s: %s); "
+                             "falling back to one text at a time",
+                             self.get_name(), type(exc).__name__, exc)
 
         # Fallback: loop
         return [self.encode_with_offsets(text) for text in texts]
@@ -524,8 +528,11 @@ class HuggingFaceTokenizer(TokenizerWrapper):
         ids = set()
         try:
             ids.update(i for i in getattr(tok, 'all_special_ids', []) or [] if i is not None)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("all_special_ids raised for %s (%s: %s); the special "
+                         "token set may be incomplete, so a special token can "
+                         "be counted as ordinary content",
+                         self.get_name(), type(exc).__name__, exc)
         for i in self._added_tokens_decoder().keys():
             ids.add(int(i))
         return ids
@@ -949,8 +956,10 @@ class SentencePieceTokenizer(TokenizerWrapper):
             unk_id = self._sp.unk_id()
             if unk_id is not None and unk_id >= 0:
                 return int(unk_id)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("sentencepiece unk_id() raised for %s (%s: %s); "
+                         "trying the vocab candidates",
+                         self.get_name(), type(exc).__name__, exc)
 
         # Fallbacks: check common UNK pieces in the vocab
         vocab = self.get_vocab()
@@ -1126,8 +1135,10 @@ class CustomBPETokenizer(TokenizerWrapper):
                 return self._tokenizer.unk_token_id
             if hasattr(self._tokenizer, 'token_to_id'):
                 return self._tokenizer.token_to_id('<unk>')
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("UNK lookup raised for %s (%s: %s); reporting no UNK "
+                         "token, which is not the same as having none",
+                         self.get_name(), type(exc).__name__, exc)
         return None
 
     def get_underlying_tokenizer(self):

@@ -1996,8 +1996,10 @@ class ASTBoundaryMetrics(BaseMetrics):
                     ids_raw = tokenizer_obj.encode(source_code)
                 ids = list(ids_raw.ids) if hasattr(ids_raw, "ids") else list(ids_raw)
                 out["n_tokens"] = len(ids)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("could not count tokens for an unparsed snippet "
+                             "(%s: %s); n_tokens stays 0",
+                             type(exc).__name__, exc)
             return out
 
         # Byte→char map for span conversion (mirrors compute() body).

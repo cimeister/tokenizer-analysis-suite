@@ -55,6 +55,24 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   changes.
 
 ### Fixed
+- A swallowed exception in the C16 vocabulary-reachability check could turn a
+  FAIL into a PASS. When the tokenizer's own normalizer raised on a vocabulary
+  surface, execution fell through to `non_self_reproducing`, a bucket the
+  severity computation ignores, instead of `normalization_unreachable`, which
+  drives FAIL. The loop covers the whole vocabulary, so a normalizer that
+  raises systematically could suppress the verdict across many entries. Those
+  cases now count as `unverifiable`, which forces at least WARN, and are
+  logged. This is what the module docstring already said must happen:
+  undecidable cases are "surfaced as `unverifiable`, never hidden".
+- 13 of the 14 `except Exception: pass` handlers in the package now log what
+  failed and what the code did next. Three in `diagnostics/sanity_check.py` log
+  at warning level, because a swallowed error there corrupts the check's own
+  verdict or root-cause attribution: C3 could report a real defect under the
+  wrong root cause, and C7 could report "special tokens consistent" for a token
+  whose atomicity was never verified. The other ten log at debug, where the
+  failure degrades an already-handled fallback. One handler is deliberately
+  silent and now says so: it only affects a display string, and every
+  `TokenizerWrapper.decode()` already catches and logs its own errors.
 - Seven console printers formatted a value that can now be `null` with a
   numeric format spec, which raises `TypeError` and takes the run's summary
   down. Making UTF-8 integrity nullable earlier in this release broke two that

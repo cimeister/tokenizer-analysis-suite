@@ -627,8 +627,16 @@ class TokenizerSanityChecker:
                 blob.extend(tb)
             if ok and _classify_malformation(bytes(blob)) is not None:
                 return "byte_bug"
-        except Exception:
-            pass
+        except Exception as exc:
+            # The probe still gets classified below, most likely as
+            # merge_or_decode_bug. C3 then reports a real defect under the
+            # wrong root cause, which points whoever reads it at the wrong
+            # part of the tokenizer.
+            logger.warning(
+                "C3: byte-level classification failed for a probe (%s: %s); "
+                "its root cause bucket may be wrong",
+                type(exc).__name__, exc,
+            )
         # Casing
         if d.casefold() == text.casefold():
             return ("casing_loss_expected" if self.lowercasing_normalizer
@@ -935,8 +943,16 @@ class TokenizerSanityChecker:
                     if self._encode(surface) != [sid]:
                         issues.append(f"{label} surface {surface!r} not atomic")
                         sev = Severity.FAIL
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # Without this the check reports "special tokens
+                    # consistent" for a token whose atomicity was never
+                    # verified, which reads as a clean result rather than an
+                    # unchecked one.
+                    logger.warning(
+                        "C7: could not re-encode %s surface %r (%s: %s); its "
+                        "atomicity is unverified, not confirmed",
+                        label, surface, type(exc).__name__, exc,
+                    )
         if not has_unk and self.byte_enc["style"] is None:
             issues.append("no UNK token for a non-byte-level tokenizer")
             sev = Severity.WARN if sev == Severity.PASS else sev
@@ -1186,6 +1202,13 @@ class TokenizerSanityChecker:
                         if dec:
                             example = dec
                     except Exception:
+                        # Deliberately silent, and the only one left in this
+                        # package. example already holds the cleaned surface,
+                        # so a failure here costs readability in one report
+                        # line and changes no count and no severity. Every
+                        # TokenizerWrapper.decode() already catches and logs
+                        # its own errors and returns None rather than raising,
+                        # so this cannot currently fire at all.
                         pass
                 outliers.append(example[:80])
         sev = Severity.WARN if outliers else Severity.PASS
@@ -1345,8 +1368,22 @@ class TokenizerSanityChecker:
                         if len(dead_examples) < MAX_EXAMPLE_DISPLAY_COUNT:
                             dead_examples.append(surface[:40])
                         continue
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # Falling through to non_self_reproducing hid a FAIL: that
+                    # bucket feeds no severity, while normalization_unreachable
+                    # above it drives FAIL. A normalizer that raises on the
+                    # surfaces of genuinely dead vocabulary therefore turned a
+                    # FAIL into a PASS, over a loop that covers the whole
+                    # vocabulary. unverifiable forces at least WARN, which is
+                    # what this module's docstring says an undecidable case
+                    # must do.
+                    logger.warning(
+                        "C16: normalizer raised on vocab surface %r (%s: %s); "
+                        "counted as unverifiable rather than assumed benign",
+                        surface[:40], type(exc).__name__, exc,
+                    )
+                    buckets["unverifiable"] += 1
+                    continue
                 buckets["non_self_reproducing"] += 1
             else:
                 buckets["unverifiable"] += 1
