@@ -1,6 +1,6 @@
 [project]
 name = "tokenizer-intrinsic-evals"
-version = "1.0.1"
+version = "1.0.2"
 description = "Comprehensive tokenizer analysis framework"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -23,15 +23,16 @@ dependencies = [
     "transformers>=4.20.0,<6",           # PreTrainedTokenizerFast and trust_remote_code at 4.20.0
     "tree-sitter-language-pack>=0.13.0,<1",
 ]
+# CI (.github/workflows/ci.yml) covers 3.10, 3.12 and 3.13 on Linux only; the
+# classifiers below list only what is actually tested.
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
+    "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
@@ -71,14 +72,14 @@ flores = [
 [dependency-groups]
 dev = [
     "sentencepiece>=0.2.0,<1",   # so the SentencePieceTokenizer tests run rather than skip
-    "black>=21.0",
-    "flake8>=3.8",
-    "mypy>=0.800",
     "pytest>=6.0",
 ]
 
 [build-system]
-requires = ["hatchling"]
+# 1.26 is the floor that added the PEP 639 license-expression and license-files
+# fields used above; both are required by this file's `license` and
+# `license-files` keys.
+requires = ["hatchling>=1.26"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]

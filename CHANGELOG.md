@@ -4,6 +4,87 @@ All notable changes to this project are recorded here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] - 2026-08-04
+
+### Removed
+- `compute_pairwise_comparisons` and the automatic `pairwise_comparisons` block
+  every metric computed. It did unguarded arithmetic on values that
+  `empty_stats()` sets to `None`: `val1 - val2` and two `safe_divide` calls,
+  none of them guarded. A fertility corpus measured under a `CUSTOM_REGEX`
+  counting method whose regex matches every character produced
+  `TypeError: unsupported operand type(s) for -: 'NoneType' and 'NoneType'`,
+  killing the run and naming neither the tokenizer nor the metric. Reachable
+  through the Python API only, since `fertility_use_global_config` defaults to
+  false and nothing in the package sets it. The block was already dropped from
+  both published files (`slim_results_for_json` discarded it as duplicate
+  data), it was quadratic in the number of tokenizers, and its differences and
+  ratios are derivable from the published `global` blocks. The
+  `--pairwise tok1 tok2` flag is unaffected.
+- `reference_line_method` on `UnifiedTokenizerAnalyzer.run_grouped_analysis`
+  and `TokenizerVisualizer.plot_grouped_analysis`. It was documented as
+  selecting 'macro' or 'micro' reference lines, threaded through two call
+  layers, and then never forwarded: `plots.generate_all_plots` has no such
+  parameter. A caller asking for 'micro' silently got 'macro'. Removed rather
+  than implemented, so the request now fails at the call site.
+  `overall_results` on the same method and `print_pairwise` on
+  `generate_all_plots` were dropped for the same reason.
+- The `char_decode_table` parameter on `ASTBoundaryMetrics.compute_per_text`,
+  `DigitBoundaryMetrics.compute_per_text`, `per_example_digit_alignment` and
+  `per_example_ast_alignment`, and the four `_set_tokenizer_context` calls it
+  fed. Those calls installed a character decode table, a special-token set and
+  a subword-marker set once per code snippet per tokenizer, for a reader
+  (`_process_token`) that no path has called since the metrics moved onto
+  encoder offsets. The per-tokenizer precompute that supplied them, including a
+  probe encode per tokenizer, is removed with them. No published number
+  changes.
+
+### Fixed
+- Seven fields published a number where nothing was measured, against the
+  policy `empty_stats()` and `safe_divide()` state. Pooled bigram and trigram
+  entropy returned `0.0` when no context type cleared
+  `min_bigram_occurrences`, where `0.0` is a real and extreme measurement
+  meaning every context has exactly one successor. `compression_rate.global`
+  returned `1.0` when no token was emitted, and 1.0 is a real rate of one unit
+  per token. `global_avg_token_rank` returned `0.0`, where ranks start at 1.
+  `vocabulary_utilization.per_language_std` returned `0.0` for a single
+  language, which read as identical utilization across languages; this is the
+  defect `tokenizer_fairness_gini` already avoided, and the `--input`
+  single-corpus route makes it an ordinary case. All now publish `null`. The
+  per-context `eta` keeps `0.0` when a context has exactly one distinct
+  successor, which is a measurement rather than a placeholder.
+- `analysis_results.json` is now a strict projection of
+  `analysis_results_full.json`: every leaf sits at the same key path with the
+  same value in both. Slimming previously renamed and pivoted keys while
+  selecting them, so 1022 leaves of a demo run had no counterpart path in the
+  full file and the two could not be cross-referenced. Normalization and
+  selection are separate passes, and a test asserts the property.
+
+### Added
+- `run_metadata` records a UTC ISO 8601 `timestamp_utc`, which separates two
+  runs of the same commit over the same configs.
+- `run_metadata.tokenizers.<name>.hub_revision`, the commit sha of the cached
+  snapshot for a Hugging Face repo id. Without it a Hub-side retokenization
+  changes every number in a results file and nothing records that it happened.
+  Read from the local cache, so it names the revision the run actually loaded
+  and needs no network.
+- `run_metadata.corpus.digest`, giving each language's corpus path, byte count
+  and short hash. The config hashes recorded which corpus was requested; this
+  records what the file held, so two runs over different snapshots of a corpus
+  under the same config are now distinguishable. Paths are recorded relative to
+  the working directory where they sit under it.
+
+### Changed
+- The classifiers no longer claim Python 3.11 or `OS Independent`. CI covers
+  3.10, 3.12 and 3.13 on Linux. `requires-python = ">=3.10"` is unchanged: 3.11
+  is untested rather than unsupported.
+- `black`, `flake8` and `mypy` are dropped from the dev dependency group. No CI
+  step or script invoked any of them.
+- `build-system.requires` pins `hatchling>=1.26`, the floor that added the
+  PEP 639 `license-files` handling this file depends on.
+- `benchmarks/open_source/run.sh` no longer passes `--save-full-results`.
+  Nothing read the full file, and the path is not gitignored, so the documented
+  command left an uncommitted artifact in a tracked directory.
+
 ## [1.0.1] - 2026-08-04
 
 ### Fixed
