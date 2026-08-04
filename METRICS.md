@@ -24,13 +24,47 @@ value sits deeper in the file, the path is written out.
 - **Vocabulary utilization** (`vocabulary_utilization`): the fraction of the
   declared vocabulary that the corpus used.
 
+**Compression rate and measurement method.** Under the `lines` measurement
+method, `compression_rate` and `avg_tokens_per_line` (reported under
+`compression_rate.per_tokenizer.<tok>.tokens_per_line`) are exact reciprocals:
+their product is 1.000000 for every tokenizer. Under every measurement method the
+two correlate at Spearman -1.000, because a higher token count always lowers
+`compression_rate` and raises `avg_tokens_per_line`, whichever unit
+`compression_rate` divides by.
+
+Within a single run, `compression_rate` computed under the `characters`,
+`bytes` and `lines` methods correlates at exactly 1.0000 between every pair.
+The numerator (the character, byte or line count of the corpus) is fixed once
+the corpus is fixed and does not depend on the tokenizer; only the token count
+in the denominator varies by tokenizer. Changing `--measurement-config`
+therefore rescales `compression_rate` but does not change the ranking of
+tokenizers within a run.
+
+**Fertility and whitespace word counting.** The default word counting splits
+text on whitespace. On FLORES+, 96.2% of Japanese lines and 69.3% of Chinese
+lines hold exactly one whitespace-delimited token, so for those languages
+`fertility` measures tokens per sentence rather than tokens per word. Median
+per-language fertility runs from 1.261 (eng) to 38.195 (jpn), and the pooled
+value across the FLORES+ languages correlates with fertility over the other 11
+languages at Spearman 0.401. A pooled `fertility` computed over a corpus
+containing CJK text reflects the language mix as much as the tokenizer.
+
+**Vocabulary utilization and unreachable tokens.** The denominator is the
+declared vocabulary size, which includes special and added tokens that
+encoding with `add_special_tokens=False` can never emit. The unreachable count
+is tokenizer-dependent: 1000 of 131072 vocabulary entries for one tokenizer in
+a 37-tokenizer run, 4 for most of the others. For a tokenizer with a large
+unreachable count, the maximum `vocabulary_utilization` can reach is capped
+below 1.0 by that margin.
+
 ### Encoding speed (`encoding_speed`)
 
 Wall-clock time spent encoding, per tokenizer:
 `encoding_speed.per_tokenizer.<tok>` holds `mean_ms` (mean milliseconds per
-sample), `total_s` (total seconds) and `num_samples`. It measures the run, not
-the tokenizer's quality, so it has no `global` block and no per-language
-breakdown. Use it to size a larger run from a small one.
+sample), `total_s` (total seconds) and `num_samples`, plus a `global` block that
+repeats the same three fields. It measures the run, not the tokenizer's quality,
+so it has no per-language breakdown. Use it to size a larger run from a small
+one.
 
 ## Information-theoretic metrics
 
@@ -47,8 +81,14 @@ the corpus, is still written under the top-level
 **Average token rank** is written under
 `renyi_efficiency.per_tokenizer.<tok>.unigram_distribution.global_avg_token_rank`:
 the mean position of the corpus tokens within the frequency-ordered vocabulary.
-The same block holds `global_unigram_entropy`, which is the unnormalized
-numerator of `renyi_1.0`.
+It correlates with total token count at Spearman -0.977 across a 37-tokenizer
+run and has no scale-free definition, so comparing it across runs of different
+size compares the corpus sizes rather than the tokenizers.
+
+The same block holds `global_unigram_entropy`. `renyi_1.0` multiplied by
+`log2` of the declared vocabulary size reproduces `global_unigram_entropy` to
+zero relative error over the same 37 tokenizers: `global_unigram_entropy` is
+the unnormalized numerator of `renyi_1.0`, not merely correlated with it.
 
 ### Bigram entropy (`bigram_entropy`)
 
@@ -76,9 +116,8 @@ the distribution of tokens that follow it. Poelman et al. define only the bigram
 form, so there is no published value to compare this against. Token contexts
 occurring fewer than 3 times (`min_trigram_occurrences`) are excluded.
 
-The value sits in flat fields rather than a `global` block:
-`trigram_entropy.per_tokenizer.<tok>.global_trigram_entropy`, beside
-`global_total_trigrams`, `global_types_evaluated` and `global_types_excluded`.
+The value sits in `trigram_entropy.per_tokenizer.<tok>.global`, which holds
+`trigram_entropy`, `total_trigrams`, `types_evaluated` and `types_excluded`.
 
 The default threshold discards 89 to 90 percent of context types and a median 70
 percent of occurrences, and the ranking moves with it: Spearman 0.728 between
@@ -305,11 +344,20 @@ per tokenizer. When the budget is exceeded, `mean_cer` and `whitespace_fidelity`
 are `null` for that tokenizer and the run logs the projection that triggered the
 skip. `--cer-time-budget 0` disables the cap.
 
+Which tokenizers report `mean_cer` therefore depends on how fast the machine
+running the analysis is: a tokenizer skipped at a given `--cer-time-budget` on a
+slow machine can complete at the same budget on a faster one.
+`per_tokenizer.<tok>.cer_skipped` is `true` when the budget was exceeded for
+that tokenizer, distinguishing a skipped value from a measured one.
+`exact_match_rate` does not run the Levenshtein computation and is unaffected.
+
 ### UNK token rate (`unk_token_rate`)
 
 The fraction of encoded tokens equal to the tokenizer's UNK token id: how much
-of the input the tokenizer has no representation for. 0.0 means no unknown
-tokens were produced.
+of the input the tokenizer has no representation for. 0.0 means either no
+unknown tokens were produced or the tokenizer reports no UNK token id at all,
+in which case the count of UNK tokens is zero by construction rather than by
+measurement. The two cases are not distinguishable from `unk_token_rate` alone.
 
 **Example:** encoding `"𝕳𝖊𝖑𝖑𝖔"` to `[UNK, UNK, UNK, UNK, UNK]` gives UNK rate
 1.0. Encoding `"Hello"` to `[15496]` gives 0.0.
@@ -318,7 +366,10 @@ tokens were produced.
 
 The fraction of whitespace characters (spaces, tabs, newlines, plus the Unicode
 Zs category) in the original text preserved through the round trip. Characters
-are paired by a greedy forward scan.
+are paired by a greedy forward scan. 1.0 means either every whitespace
+character round-tripped or the evaluated text held no whitespace at all, in
+which case fidelity is 1.0 by convention rather than by measurement. The two
+cases are not distinguishable from `whitespace_fidelity` alone.
 
 **Example:** original `"a b\tc"` decoded as `"a b c"`, the tab replaced by a
 space, preserves 1 of 2 whitespace characters, fidelity 0.5.

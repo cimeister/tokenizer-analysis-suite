@@ -88,8 +88,9 @@ See NOTICE for the attribution terms.
 
 ## Quick Start
 
-Compare tokenizers on one corpus. This example downloads nothing: it writes a
-small corpus file, names two tokenizers from the Hugging Face Hub, and runs.
+Compare tokenizers on one corpus. The corpus is written locally; `gpt2` and
+`xlm-roberta-base` are downloaded from the Hugging Face Hub the first time this
+runs (both are public models, no login needed).
 
 ```bash
 # 1. a corpus: one plain-text file, one document per line
@@ -502,8 +503,9 @@ Specify via `--morphscore-config`:
 
 Requires languages in `<ISO 639-3>_<script>` format (for example `eng_Latn`).
 Override with `"language_subset"` in the config to bypass code mapping.
-Datasets are downloaded from the
-[MorphScore repository](https://github.com/cimeister/morphscore).
+Datasets come from the Hugging Face dataset `catherinearnett/morphscore`; see
+[Optional extras](#optional-extras) above for the download command. The
+MorphScore submodule holds the scoring code, not the data.
 
 ### Code AST Configuration
 
@@ -545,6 +547,7 @@ results/
 ├── lorenz_curves_individual.svg
 ├── tokenizer_fairness_gini_individual.svg
 ├── vocab_util_cross_lingual_cov_individual.svg
+├── morphscore_individual.svg         # only when MorphScore results are present (--morphscore or --morphscore-config)
 ├── utf8_integrity.svg
 ├── per-language/                    # one chart per metric per language (--per-language-plots)
 ├── faceted_plots/                   # one subplot per tokenizer, shared y-axis (--faceted-plots)
@@ -587,18 +590,18 @@ in the results file.
 | Compression rate | `compression_rate` | `.per_tokenizer.<tok>.global.compression_rate` | higher |
 | Tokens per line | (under `compression_rate`) | `.per_tokenizer.<tok>.tokens_per_line.global_avg` | lower |
 | Fertility | `fertility` | `.per_tokenizer.<tok>.global.mean` | lower |
-| Token length | `token_length` | `.per_tokenizer.<tok>.primary_length.mean` | neither |
+| Token length | `token_length` | `.per_tokenizer.<tok>.global.mean` | neither |
 | Vocabulary utilization | `vocabulary_utilization` | `.per_tokenizer.<tok>.global.utilization` | higher |
 | Type-token ratio | (under `vocabulary_utilization`) | `.per_tokenizer.<tok>.type_token_ratio.global_ttr` | neither |
 | Cross-lingual vocabulary-utilization CoV | (under `vocabulary_utilization`) | `.per_tokenizer.<tok>.per_language_cov` | lower |
 | Rényi efficiency | `renyi_efficiency` | `.per_tokenizer.<tok>.global.renyi_<alpha>`, one field per alpha in 1.0, 2.0, 2.5, 3.0 | higher |
 | Average token rank | (under `renyi_efficiency`) | `.per_tokenizer.<tok>.unigram_distribution.global_avg_token_rank` | neither |
 | Bigram entropy | `bigram_entropy` | `.per_tokenizer.<tok>.global.bigram_entropy` | higher |
-| Trigram entropy | `trigram_entropy` | `.per_tokenizer.<tok>.global_trigram_entropy` | higher |
+| Trigram entropy | `trigram_entropy` | `.per_tokenizer.<tok>.global.trigram_entropy` | higher |
 | MorphScore | `morphscore` | `.per_tokenizer.<tok>.global.avg_morphscore_recall` and `.avg_morphscore_precision` | higher |
-| Three-digit boundary alignment | `three_digit_boundary_alignment` | `.per_tokenizer.<tok>.per_language.<lang>.mean_f1` (no `global`) | higher |
+| Three-digit boundary alignment | `three_digit_boundary_alignment` | `.per_tokenizer.<tok>.global.mean_f1` | higher |
 | Digit split variability | (under `three_digit_boundary_alignment`) | `.per_tokenizer.<tok>.split_variability.by_digit_length.<n>.<lang>.entropy` | lower |
-| Numeric magnitude consistency | `numeric_magnitude_consistency` | `.per_tokenizer.<tok>.scaling.cv_of_mean_fertility` (no `global`) | lower |
+| Numeric magnitude consistency | `numeric_magnitude_consistency` | `.per_tokenizer.<tok>.global.mean_fertility` | lower |
 | Operator isolation rate | `operator_isolation_rate` | `.per_tokenizer.<tok>.global.overall_isolation_rate` | higher |
 | Compound operator preservation | (under `operator_isolation_rate`) | `.per_tokenizer.<tok>.global.overall_compound_preservation_rate` | higher |
 | Round-trip exact match rate | `reconstruction_fidelity` | `.per_tokenizer.<tok>.global.exact_match_rate` | higher |
@@ -613,7 +616,7 @@ in the results file.
 | Indentation depth correlation | `indentation_consistency` | `.per_tokenizer.<tok>.global.depth_proportionality_correlation` | higher |
 | Tokenizer fairness Gini | `tokenizer_fairness_gini` | `.per_tokenizer.<tok>.global.gini_coefficient` | lower |
 | Lorenz curve | (under `tokenizer_fairness_gini`) | `.per_tokenizer.<tok>.lorenz_curve` | n/a, a curve |
-| Encoding speed | `encoding_speed` | `.per_tokenizer.<tok>.mean_ms` | lower |
+| Encoding speed | `encoding_speed` | `.per_tokenizer.<tok>.global.mean_ms` | lower |
 
 "Direction" gives the better direction for the quantity as defined.
 "neither" marks a metric that describes a tokenizer without ranking it: a longer
@@ -679,16 +682,14 @@ Most metrics follow this layout:
 - **`metadata`**: the metric's configuration and data provenance, where it has
   any.
 
-Six metrics depart from that layout:
+Three metrics depart from that layout. All three still have `global` and
+`metadata.aggregation`; what differs is the rest of the shape.
 
 | Metric | How it differs |
 |---|---|
-| `token_length` | No `global`. Three sibling blocks instead: `character_length`, `byte_length`, `primary_length`, each a stats dict |
-| `trigram_entropy` | No `global` block. Flat fields instead: `global_trigram_entropy`, `global_total_trigrams`, `global_types_evaluated`, `global_types_excluded` |
-| `three_digit_boundary_alignment` | No `global`. `per_language`, `by_digit_length`, `by_bucket` and `split_variability` only |
-| `numeric_magnitude_consistency` | No `global` and no `metadata`. `per_language`, `by_digit_length` and `scaling` only, where `scaling` holds `per_bucket`, `spearman_rho`, `cv_of_mean_fertility` and `linear_fit` |
+| `token_length` | `global` holds `count`, `mean`, `median`, `std`. Three sibling blocks carry the same four stats separately: `character_length`, `byte_length`, `primary_length`. No `per_language` |
+| `encoding_speed` | `global` holds `mean_ms`, `total_s`, `num_samples`, duplicating the same three fields already published directly under `per_tokenizer.<tok>`. No `per_language` |
 | `reconstruction_fidelity` | `per_domain` in place of `per_language`, because it also runs on code and math |
-| `encoding_speed` | No `global` and no `per_language`. `mean_ms`, `total_s`, `num_samples` directly under `per_tokenizer.<tok>` |
 
 `operator_isolation_rate` holds `global`, `per_language` **and** `by_domain`,
 the last splitting the pooled global into `prose`, `code` and `math`. Its
@@ -916,6 +917,8 @@ Every flag `tokenizer-analysis` accepts.
 | `--use-builtin-math-data` | Use the bundled math corpus for the digit metrics. Ignored when `--math-data` is also given |
 | `--no-code-ast` | Skip `ast_boundary_alignment`, `identifier_fragmentation` and `indentation_consistency`, including their synthetic-code fallback. The `code` domain of `operator_isolation_rate` still runs |
 | `--code-ast-config FILE` | JSON mapping languages to code paths for AST analysis |
+| `--max-code-files-per-lang N` | Cap on code files loaded per language from `--code-ast-config` paths (default: 0, no cap) |
+| `--max-code-file-chars N` | Truncate each loaded code file to this many characters before it reaches the code metrics (default: 0, no cap) |
 | `--no-utf8-integrity` | Skip `utf8_token_integrity` |
 | `--morphscore` | Enable MorphScore with default settings |
 | `--morphscore-config FILE` | Custom MorphScore configuration |
@@ -1104,7 +1107,7 @@ MIT. See [LICENSE](LICENSE), and [NOTICE](NOTICE) for third-party attributions.
   title   = {TokEval: intrinsic evaluation metrics for tokenizers},
   author  = {Meister, Clara},
   year    = {2026},
-  version = {1.0.0},
+  version = {1.0.2},
   url     = {https://github.com/cimeister/tokenizer-intrinsic-evals}
 }
 ```

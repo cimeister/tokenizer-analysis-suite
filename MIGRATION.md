@@ -70,7 +70,9 @@ Three additions, one of them a shape change:
   `{"compression_rate": ..., "count": ..., "total_tokens": ...}`. A parser
   reading that value directly needs `["compression_rate"]` added.
   `tokenizer_fairness_gini` and `morphscore` publish no per-language count and
-  state why in `metadata.per_language_count`.
+  state why in `metadata.per_language_count`. `encoding_speed`, `token_length`
+  and `reconstruction_fidelity` carry no `per_language` block at all, so there
+  is no per-language count to read for them either.
 
 ### Six metrics moved under the metric they restate
 
