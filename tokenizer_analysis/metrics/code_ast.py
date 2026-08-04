@@ -1086,23 +1086,6 @@ class ASTBoundaryMetrics(BaseMetrics):
                     tok_name,
                 )
 
-        # Pre-build character decode tables for byte-level BPE / SP tokenizers.
-        decode_tables = {n: self._build_char_decode_table(t) for n, t in active_tokenizers}
-        # Pre-resolve each tokenizer's declared special tokens. They have to be
-        # the ones this tokenizer declares rather than anything matched on
-        # surface form; BaseMetrics._process_token records what a surface
-        # pattern deleted instead.
-        special_tokens = {n: self._resolve_special_tokens(t) for n, t in active_tokenizers}
-        # Pre-resolve each tokenizer's subword-marker set. A marker (WordPiece
-        # '##', CLIP-BPE '</w>', subword-nmt '@@') is stripped only when this
-        # tokenizer is shown to use it; see _detect_subword_markers.
-        subword_markers = {n: self._resolve_subword_markers(t) for n, t in active_tokenizers}
-        # _process_token is the only reader of the three values installed by
-        # _set_tokenizer_context below, and nothing on this path calls it any
-        # more: the alignment, identifier and indentation paths all read the
-        # encoder's character offsets. The context is still installed per
-        # snippet per tokenizer, so the three attributes are never left set to
-        # another tokenizer's values.
 
         for code_lang, spans_list in parsed_spans.items():
             snippets = code_snippets[code_lang]
@@ -1169,11 +1152,6 @@ class ASTBoundaryMetrics(BaseMetrics):
 
                 # Per-tokenizer work
                 for tok_name, tokenizer in active_tokenizers:
-                    self._set_tokenizer_context(
-                        decode_tables[tok_name],
-                        special_tokens[tok_name],
-                        subword_markers[tok_name],
-                    )
                     try:
                         token_ids, enc_offsets = tokenizer.encode_with_offsets(
                             snippet
@@ -1271,8 +1249,6 @@ class ASTBoundaryMetrics(BaseMetrics):
                                 "num_ws_tokens": num_ws_tokens,
                                 "ws_width": ws_width,
                             })
-
-        self._clear_tokenizer_context()
 
         # Log Phase 2 summary: how many AST nodes contributed per tokenizer
         for tok_name in self.tokenizer_names:
@@ -1912,7 +1888,6 @@ class ASTBoundaryMetrics(BaseMetrics):
         tokenizer_obj: Any,
         source_code: str,
         language: str = "python",
-        char_decode_table: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         """Compute AST boundary alignment metrics for ONE source-code snippet
         under ONE tokenizer.
@@ -2052,125 +2027,110 @@ class ASTBoundaryMetrics(BaseMetrics):
                 char_spans.append((byte_to_char[byte_start], byte_to_char[byte_end]))
             char_spans_by_category[category] = char_spans
 
-        # Snapshot + restore aggregator state so compute() callers are unaffected.
-        saved_table = getattr(self, "_char_decode_table", None)
-        saved_specials = getattr(self, "_special_tokens", None)
-        saved_markers = getattr(self, "_subword_markers", None)
+        # Encode source. The offsets are what the alignment is measured
+        # against, so they are required rather than optional here.
         try:
-            self._set_tokenizer_context(
-                char_decode_table
-                if char_decode_table is not None
-                else self._build_char_decode_table(tokenizer_obj),
-                self._resolve_special_tokens(tokenizer_obj),
-                self._resolve_subword_markers(tokenizer_obj),
-            )
+            enc_offsets: Optional[List[Tuple[int, int]]]
+            if hasattr(tokenizer_obj, "encode_with_offsets"):
+                token_ids, enc_offsets = tokenizer_obj.encode_with_offsets(source_code)
+            else:
+                try:
+                    ids_raw = tokenizer_obj.encode(source_code, add_special_tokens=False)
+                except TypeError:
+                    ids_raw = tokenizer_obj.encode(source_code)
+                token_ids = list(ids_raw.ids) if hasattr(ids_raw, "ids") else list(ids_raw)
+                enc_offsets = (
+                    [tuple(pair) for pair in ids_raw.offsets]
+                    if hasattr(ids_raw, "offsets") else None
+                )
+        except Exception as e:
+            out = dict(empty)
+            out["parse_status"] = f"encode_error:{type(e).__name__}"
+            return out
 
-            # Encode source. The offsets are what the alignment is measured
-            # against, so they are required rather than optional here.
-            try:
-                enc_offsets: Optional[List[Tuple[int, int]]]
-                if hasattr(tokenizer_obj, "encode_with_offsets"):
-                    token_ids, enc_offsets = tokenizer_obj.encode_with_offsets(source_code)
+        if not token_ids:
+            out = dict(empty)
+            out["parse_status"] = "empty_encode"
+            return out
+
+        token_strings = self._convert_ids_to_tokens(tokenizer_obj, token_ids)
+        source_char_to_token = self._build_source_char_to_token_map(
+            source_code, token_strings,
+            offsets=enc_offsets,
+            tokenizer_name=(
+                tokenizer_obj.get_name()
+                if hasattr(tokenizer_obj, "get_name")
+                else getattr(tokenizer_obj, "name_or_path", None)
+                or type(tokenizer_obj).__name__
+            ),
+        )
+        s2t_arr = np.fromiter(
+            (-1 if t is None else t for t in source_char_to_token),
+            dtype=np.int64,
+            count=len(source_char_to_token),
+        )
+
+        # Per-category alignment counters (one record per AST span).
+        per_cat_full: Dict[str, List[float]] = defaultdict(list)
+        per_cat_start: Dict[str, List[float]] = defaultdict(list)
+        per_cat_end: Dict[str, List[float]] = defaultdict(list)
+
+        n_unmappable = 0
+        n_idents = 0
+        n_idents_unmappable = 0
+        n_idents_fragmented = 0
+
+        for category, char_spans in char_spans_by_category.items():
+            for c_start, c_end in char_spans:
+                alignment = self._check_boundary_alignment_offsets(
+                    c_start, c_end, s2t_arr
+                )
+                if alignment is None:
+                    # No token covers any character of this span, so it was
+                    # not measured. Counting it as misaligned, which this
+                    # used to do, reports a failure to measure as a property
+                    # of the tokenizer.
+                    n_unmappable += 1
                 else:
-                    try:
-                        ids_raw = tokenizer_obj.encode(source_code, add_special_tokens=False)
-                    except TypeError:
-                        ids_raw = tokenizer_obj.encode(source_code)
-                    token_ids = list(ids_raw.ids) if hasattr(ids_raw, "ids") else list(ids_raw)
-                    enc_offsets = (
-                        [tuple(pair) for pair in ids_raw.offsets]
-                        if hasattr(ids_raw, "offsets") else None
-                    )
-            except Exception as e:
-                out = dict(empty)
-                out["parse_status"] = f"encode_error:{type(e).__name__}"
-                return out
+                    per_cat_full[category].append(1.0 if alignment["fully_aligned"] else 0.0)
+                    per_cat_start[category].append(1.0 if alignment["start_aligned"] else 0.0)
+                    per_cat_end[category].append(1.0 if alignment["end_aligned"] else 0.0)
 
-            if not token_ids:
-                out = dict(empty)
-                out["parse_status"] = "empty_encode"
-                return out
-
-            token_strings = self._convert_ids_to_tokens(tokenizer_obj, token_ids)
-            source_char_to_token = self._build_source_char_to_token_map(
-                source_code, token_strings,
-                offsets=enc_offsets,
-                tokenizer_name=(
-                    tokenizer_obj.get_name()
-                    if hasattr(tokenizer_obj, "get_name")
-                    else getattr(tokenizer_obj, "name_or_path", None)
-                    or type(tokenizer_obj).__name__
-                ),
-            )
-            s2t_arr = np.fromiter(
-                (-1 if t is None else t for t in source_char_to_token),
-                dtype=np.int64,
-                count=len(source_char_to_token),
-            )
-
-            # Per-category alignment counters (one record per AST span).
-            per_cat_full: Dict[str, List[float]] = defaultdict(list)
-            per_cat_start: Dict[str, List[float]] = defaultdict(list)
-            per_cat_end: Dict[str, List[float]] = defaultdict(list)
-
-            n_unmappable = 0
-            n_idents = 0
-            n_idents_unmappable = 0
-            n_idents_fragmented = 0
-
-            for category, char_spans in char_spans_by_category.items():
-                for c_start, c_end in char_spans:
-                    alignment = self._check_boundary_alignment_offsets(
+                if category == "identifier":
+                    n_tok = self._count_identifier_tokens_offsets(
                         c_start, c_end, s2t_arr
                     )
-                    if alignment is None:
-                        # No token covers any character of this span, so it was
-                        # not measured. Counting it as misaligned, which this
-                        # used to do, reports a failure to measure as a property
-                        # of the tokenizer.
-                        n_unmappable += 1
+                    if n_tok is None:
+                        n_idents_unmappable += 1
                     else:
-                        per_cat_full[category].append(1.0 if alignment["fully_aligned"] else 0.0)
-                        per_cat_start[category].append(1.0 if alignment["start_aligned"] else 0.0)
-                        per_cat_end[category].append(1.0 if alignment["end_aligned"] else 0.0)
+                        n_idents += 1
+                        if n_tok > 1:
+                            n_idents_fragmented += 1
 
-                    if category == "identifier":
-                        n_tok = self._count_identifier_tokens_offsets(
-                            c_start, c_end, s2t_arr
-                        )
-                        if n_tok is None:
-                            n_idents_unmappable += 1
-                        else:
-                            n_idents += 1
-                            if n_tok > 1:
-                                n_idents_fragmented += 1
+        # Aggregate
+        all_full = [v for vals in per_cat_full.values() for v in vals]
+        all_start = [v for vals in per_cat_start.values() for v in vals]
+        all_end = [v for vals in per_cat_end.values() for v in vals]
+        n_total = len(all_full)
 
-            # Aggregate
-            all_full = [v for vals in per_cat_full.values() for v in vals]
-            all_start = [v for vals in per_cat_start.values() for v in vals]
-            all_end = [v for vals in per_cat_end.values() for v in vals]
-            n_total = len(all_full)
+        def _rate(values: List[float]) -> float:
+            return float(np.mean(values)) if values else float("nan")
 
-            def _rate(values: List[float]) -> float:
-                return float(np.mean(values)) if values else float("nan")
-
-            result: Dict[str, Any] = {
-                "n_ast_nodes": n_total,
-                "n_unmappable_nodes": n_unmappable,
-                "n_parse_error_spans": n_parse_error_spans,
-                "full_alignment_rate": _rate(all_full),
-                "start_alignment_rate": _rate(all_start),
-                "end_alignment_rate": _rate(all_end),
-                "n_identifiers": n_idents,
-                "n_identifiers_unmappable": n_idents_unmappable,
-                "identifier_fragmentation_rate": (
-                    (n_idents_fragmented / n_idents) if n_idents else float("nan")
-                ),
-                "n_tokens": len(token_ids),
-                "parse_status": "ok",
-            }
-            for cat in self._CATEGORIES:
-                result[f"{cat}_full_alignment_rate"] = _rate(per_cat_full.get(cat, []))
-            return result
-        finally:
-            self._set_tokenizer_context(saved_table, saved_specials, saved_markers)
+        result: Dict[str, Any] = {
+            "n_ast_nodes": n_total,
+            "n_unmappable_nodes": n_unmappable,
+            "n_parse_error_spans": n_parse_error_spans,
+            "full_alignment_rate": _rate(all_full),
+            "start_alignment_rate": _rate(all_start),
+            "end_alignment_rate": _rate(all_end),
+            "n_identifiers": n_idents,
+            "n_identifiers_unmappable": n_idents_unmappable,
+            "identifier_fragmentation_rate": (
+                (n_idents_fragmented / n_idents) if n_idents else float("nan")
+            ),
+            "n_tokens": len(token_ids),
+            "parse_status": "ok",
+        }
+        for cat in self._CATEGORIES:
+            result[f"{cat}_full_alignment_rate"] = _rate(per_cat_full.get(cat, []))
+        return result

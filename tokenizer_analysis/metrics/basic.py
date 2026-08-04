@@ -156,7 +156,6 @@ class BasicTokenizationMetrics(BaseMetrics):
             'fertility': {
                 'per_tokenizer': {},
                 'per_language': {},
-                'pairwise_comparisons': {},
                 'metadata': {
                     'normalization_method': normalization_unit,
                     'description': f'Average number of tokens per {normalization_unit[:-1]}',
@@ -166,8 +165,6 @@ class BasicTokenizationMetrics(BaseMetrics):
                 }
             }
         }
-        
-        global_values = {}
         
         for tok_name in self.tokenizer_names:
             if tok_name not in tokenized_data:
@@ -198,15 +195,7 @@ class BasicTokenizationMetrics(BaseMetrics):
                 'global': global_fertility,
                 'per_language': per_lang_fertility
             }
-            
-            global_values[tok_name] = global_fertility.get('mean', 0.0)
-        
-        # Compute pairwise comparisons
-        if len(global_values) >= 2:
-            results['fertility']['pairwise_comparisons'] = self.compute_pairwise_comparisons(
-                global_values, 'fertility'
-            )
-        
+
         return results
     
     def _compute_fertility_stats(self, tokenized_data: List[TokenizedData], 
@@ -387,8 +376,14 @@ class BasicTokenizationMetrics(BaseMetrics):
                 util_std = float(np.std(util_ratios, ddof=1))
                 util_cov = util_std / util_mean if util_mean > 0 else None
             else:
-                util_mean = float(util_ratios[0]) if n == 1 else 0.0
-                util_std = 0.0
+                # A dispersion over fewer than two languages is undefined, not
+                # zero.  Publishing 0.0 here read as "the same utilization in
+                # every language" on a single-corpus run, which the --input
+                # route makes an ordinary case rather than an edge one.  This
+                # matches tokenizer_fairness_gini, which already returns None
+                # below MIN_LANGUAGES_FOR_GINI.
+                util_mean = float(util_ratios[0]) if n == 1 else None
+                util_std = None
                 util_cov = None
 
             avg_langs = self._compute_avg_langs_per_token(tok_name, per_lang_used_ids)

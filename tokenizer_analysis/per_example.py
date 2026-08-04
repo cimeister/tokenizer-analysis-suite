@@ -300,7 +300,6 @@ def _get_ast_metric():
 def per_example_digit_alignment(
     tokenizer,
     text: str,
-    char_decode_table: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """Per-doc digit boundary + operator isolation metrics for math prompts.
 
@@ -308,16 +307,13 @@ def per_example_digit_alignment(
     canonical alignment scoring (``_score_boundaries``,
     ``_get_digit_span_boundaries``, ``_find_number_spans``).
     """
-    return _get_digit_metric().compute_per_text(
-        tokenizer, text, char_decode_table=char_decode_table,
-    )
+    return _get_digit_metric().compute_per_text(tokenizer, text)
 
 
 def per_example_ast_alignment(
     tokenizer,
     source_code: str,
     language: str = "python",
-    char_decode_table: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """Per-doc AST boundary alignment metrics for code prompts.
 
@@ -335,5 +331,5 @@ def per_example_ast_alignment(
     ``"javascript"``). MBPP and HumanEval are Python.
     """
     return _get_ast_metric().compute_per_text(
-        tokenizer, source_code, language=language, char_decode_table=char_decode_table,
+        tokenizer, source_code, language=language
     )

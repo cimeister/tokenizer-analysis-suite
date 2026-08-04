@@ -36,7 +36,7 @@ class TokenizerVisualizer:
         os.makedirs(save_dir, exist_ok=True)
         logger.info(f"Initialized TokenizerVisualizer for {len(tokenizer_names)} tokenizers")
     
-    def generate_all_plots(self, results: Dict[str, Any], print_pairwise: bool = False) -> None:
+    def generate_all_plots(self, results: Dict[str, Any]) -> None:
         """Generate all available plots for the results."""
         logger.info(f"Generating plots in {self.save_dir}")
         
@@ -50,9 +50,7 @@ class TokenizerVisualizer:
             logger.error(f"Error generating plots: {e}")
             raise
     
-    def plot_grouped_analysis(self, grouped_results: Dict[str, Dict[str, Any]], 
-                             overall_results: Dict[str, Any] = None, 
-                             reference_line_method: str = 'macro') -> None:
+    def plot_grouped_analysis(self, grouped_results: Dict[str, Dict[str, Any]]) -> None:
         """Generate plots for grouped analysis results."""
         if not grouped_results:
             logger.warning("No grouped results provided for plotting")

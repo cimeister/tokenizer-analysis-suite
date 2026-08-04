@@ -6,8 +6,7 @@ interface.
 per-tokenizer context the metrics resolve once and read per token (declared
 special tokens, detected subword markers, probed character decode table), the
 token-id to token-string conversion with its fallbacks, the statistics helpers
-(``compute_basic_stats``, ``safe_divide``, ``compute_pairwise_comparisons``)
-and the input validators. ``TokenizedDataProcessor`` below it groups and
+(``compute_basic_stats``, ``safe_divide``) and the input validators. ``TokenizedDataProcessor`` below it groups and
 flattens TokenizedData lists. ``format_optional`` prints a None as 'n/a'.
 
 The token-string reconstruction helpers here (``_process_token``,
@@ -747,28 +746,6 @@ class BaseMetrics(ABC):
         explicitly, which makes the choice visible at the call site.
         """
         return numerator / denominator if denominator != 0 else default
-    
-    def compute_pairwise_comparisons(self, values: Dict[str, float], metric_name: str = "metric") -> Dict[str, Dict[str, Any]]:
-        """Compute pairwise comparisons between tokenizers."""
-        comparisons = {}
-        
-        tokenizer_list = list(values.keys())
-        for i, tok1 in enumerate(tokenizer_list):
-            for j, tok2 in enumerate(tokenizer_list[i+1:], i+1):
-                val1, val2 = values[tok1], values[tok2]
-                
-                comparison_key = f"{tok1}_vs_{tok2}"
-                comparisons[comparison_key] = {
-                    'tokenizer_1': tok1,
-                    'tokenizer_2': tok2,
-                    'value_1': val1,
-                    'value_2': val2,
-                    'difference': val1 - val2,
-                    'ratio': self.safe_divide(val1, val2, 1.0),
-                    'percent_difference': self.safe_divide(abs(val1 - val2), (val1 + val2) / 2, 0.0) * PERCENTAGE_MULTIPLIER
-                }
-        
-        return comparisons
     
     @staticmethod
     def empty_stats() -> Dict[str, Optional[float]]:

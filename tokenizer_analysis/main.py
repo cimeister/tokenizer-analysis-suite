@@ -354,7 +354,7 @@ class UnifiedTokenizerAnalyzer:
         # Generate plots
         if save_plots:
             logger.info("Generating plots...")
-            self.visualizer.generate_all_plots(results, print_pairwise=False)
+            self.visualizer.generate_all_plots(results)
         
         logger.info("Analysis completed successfully!")
         return results
@@ -363,7 +363,6 @@ class UnifiedTokenizerAnalyzer:
                            group_by: Optional[Union[str, List[str]]] = None,
                            save_plots: bool = True,
                            base_results: Optional[Dict[str, Any]] = None,
-                           reference_line_method: str = 'macro',
                            include_reconstruction: bool = True,
                            cer_time_budget_s: float = DEFAULT_CER_TIME_BUDGET_S) -> Dict[str, Dict[str, Any]]:
         """
@@ -378,7 +377,6 @@ class UnifiedTokenizerAnalyzer:
                 both and an empty result.
             save_plots: Whether to generate grouped plots
             base_results: Optional pre-computed results to filter instead of recomputing
-            reference_line_method: Method for reference lines ('macro' for average across groups, 'micro' for overall global)
             include_reconstruction: Whether to include reconstruction fidelity analysis
             cer_time_budget_s: Max seconds for CER computation per tokenizer (0 disables budget)
 
@@ -496,7 +494,7 @@ class UnifiedTokenizerAnalyzer:
         # Generate grouped plots
         if save_plots and grouped_results:
             logger.info("Generating grouped plots...")
-            self.visualizer.plot_grouped_analysis(grouped_results, reference_line_method=reference_line_method)
+            self.visualizer.plot_grouped_analysis(grouped_results)
         
         return grouped_results
     

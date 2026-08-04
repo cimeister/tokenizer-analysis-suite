@@ -887,11 +887,6 @@ class DigitBoundaryMetrics(BaseMetrics):
                 continue
 
             tokenizer_obj = self.input_provider.get_tokenizer(tok_name)
-            self._set_tokenizer_context(
-                self._decode_table_for(tok_name, tokenizer_obj),
-                self._resolve_special_tokens(tokenizer_obj),
-                self._resolve_subword_markers(tokenizer_obj),
-            )
             lang_groups = TokenizedDataProcessor.group_by_language(
                 tokenized_data[tok_name]
             )
@@ -998,7 +993,6 @@ class DigitBoundaryMetrics(BaseMetrics):
                 skipped_no_offsets,
             )
 
-        self._clear_tokenizer_context()
         return acc
 
     @staticmethod
@@ -1783,7 +1777,6 @@ class DigitBoundaryMetrics(BaseMetrics):
         self,
         tokenizer_obj: Any,
         text: str,
-        char_decode_table: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         """Compute digit boundary alignment metrics for ONE text under ONE
         tokenizer, returning a per-document summary.
@@ -1841,217 +1834,202 @@ class DigitBoundaryMetrics(BaseMetrics):
         if not text or not text.strip():
             return empty
 
-        # Snapshot + restore aggregator state so compute() callers are unaffected.
-        saved_table = getattr(self, "_char_decode_table", None)
-        saved_specials = getattr(self, "_special_tokens", None)
-        saved_markers = getattr(self, "_subword_markers", None)
+        # ---- Encode and build char→token map (mirrors compute() body) ----
+        # The digit metrics are measured against the encoder's own
+        # character offsets, so they are required rather than optional.
         try:
-            self._set_tokenizer_context(
-                char_decode_table
-                if char_decode_table is not None
-                else self._build_char_decode_table(tokenizer_obj),
-                self._resolve_special_tokens(tokenizer_obj),
-                self._resolve_subword_markers(tokenizer_obj),
+            enc_offsets: Optional[List[Tuple[int, int]]]
+            if hasattr(tokenizer_obj, "encode_with_offsets"):
+                ids_raw, enc_offsets = tokenizer_obj.encode_with_offsets(text)
+                token_ids = list(ids_raw)
+            else:
+                try:
+                    token_ids_raw = tokenizer_obj.encode(text, add_special_tokens=False)
+                except TypeError:
+                    token_ids_raw = tokenizer_obj.encode(text)
+                token_ids = (
+                    list(token_ids_raw.ids)
+                    if hasattr(token_ids_raw, "ids")
+                    else list(token_ids_raw)
+                )
+                enc_offsets = (
+                    [tuple(pair) for pair in token_ids_raw.offsets]
+                    if hasattr(token_ids_raw, "offsets")
+                    else None
+                )
+        except Exception as e:
+            out = dict(empty)
+            out["parse_status"] = f"encode_error:{type(e).__name__}"
+            return out
+
+        # Source character → token index. See the comment in compute() for
+        # why the reconstruction this replaced was wrong and why the
+        # word-start-space trim the code metrics apply is not needed here.
+        source_char_to_token = self._char_to_token_from_offsets(
+            len(text), enc_offsets, keep_later_token_on_overlap=True
+        )
+        if source_char_to_token is None:
+            named = (
+                tokenizer_obj.get_name()
+                if hasattr(tokenizer_obj, "get_name")
+                else getattr(tokenizer_obj, "name_or_path", None)
+                or type(tokenizer_obj).__name__
+            )
+            raise ValueError(
+                "The digit metrics need character offsets, and tokenizer "
+                f"{named!r} reported none. Offsets are the only exact way "
+                "to say which token covers which digit. The shortfall "
+                "applies to every text the caller would pass, so it is "
+                "raised rather than returned as a row: pass a tokenizer "
+                "whose encode_with_offsets() returns offsets, or one whose "
+                "encode() returns a tokenizers.Encoding."
             )
 
-            # ---- Encode and build char→token map (mirrors compute() body) ----
-            # The digit metrics are measured against the encoder's own
-            # character offsets, so they are required rather than optional.
-            try:
-                enc_offsets: Optional[List[Tuple[int, int]]]
-                if hasattr(tokenizer_obj, "encode_with_offsets"):
-                    ids_raw, enc_offsets = tokenizer_obj.encode_with_offsets(text)
-                    token_ids = list(ids_raw)
-                else:
-                    try:
-                        token_ids_raw = tokenizer_obj.encode(text, add_special_tokens=False)
-                    except TypeError:
-                        token_ids_raw = tokenizer_obj.encode(text)
-                    token_ids = (
-                        list(token_ids_raw.ids)
-                        if hasattr(token_ids_raw, "ids")
-                        else list(token_ids_raw)
-                    )
-                    enc_offsets = (
-                        [tuple(pair) for pair in token_ids_raw.offsets]
-                        if hasattr(token_ids_raw, "offsets")
-                        else None
-                    )
-            except Exception as e:
-                out = dict(empty)
-                out["parse_status"] = f"encode_error:{type(e).__name__}"
-                return out
+        # Match compute() early-exit semantics: both checks on the original text.
+        has_digits = bool(self._DIGIT_SPAN.search(text))
+        has_operators = bool(self._OPERATOR_SPAN.search(text))
 
-            # Source character → token index. See the comment in compute() for
-            # why the reconstruction this replaced was wrong and why the
-            # word-start-space trim the code metrics apply is not needed here.
-            source_char_to_token = self._char_to_token_from_offsets(
-                len(text), enc_offsets, keep_later_token_on_overlap=True
-            )
-            if source_char_to_token is None:
-                named = (
-                    tokenizer_obj.get_name()
-                    if hasattr(tokenizer_obj, "get_name")
-                    else getattr(tokenizer_obj, "name_or_path", None)
-                    or type(tokenizer_obj).__name__
+        if not has_digits and not has_operators:
+            out = dict(empty)
+            out["n_tokens"] = len(token_ids)
+            out["parse_status"] = "no_digits_or_operators"
+            return out
+
+        # ---- Per-digit-span scoring ----
+        digit_f1s: List[float] = []
+        digit_fertility: List[float] = []
+        single_token_flags: List[float] = []
+        uniform_chunk_flags: List[float] = []
+
+        if has_digits:
+            for src_start, src_end, digit_str in self._find_number_spans(text):
+                num_digits = len(digit_str)
+                if num_digits == 0:
+                    continue
+                if any(
+                    source_char_to_token[i] is None
+                    for i in range(src_start, src_end)
+                ):
+                    # A digit no token covers: the number was not measured.
+                    continue
+
+                boundaries = self._get_digit_span_boundaries(
+                    source_char_to_token, src_start, src_end,
                 )
-                raise ValueError(
-                    "The digit metrics need character offsets, and tokenizer "
-                    f"{named!r} reported none. Offsets are the only exact way "
-                    "to say which token covers which digit. The shortfall "
-                    "applies to every text the caller would pass, so it is "
-                    "raised rather than returned as a row: pass a tokenizer "
-                    "whose encode_with_offsets() returns offsets, or one whose "
-                    "encode() returns a tokenizers.Encoding."
-                )
+                if boundaries is None:
+                    continue
 
-            # Match compute() early-exit semantics: both checks on the original text.
-            has_digits = bool(self._DIGIT_SPAN.search(text))
-            has_operators = bool(self._OPERATOR_SPAN.search(text))
+                actual = set(boundaries)
+                ideal = self._ideal_boundaries(num_digits)
+                scores = self._score_boundaries(actual, ideal)
 
-            if not has_digits and not has_operators:
-                out = dict(empty)
-                out["n_tokens"] = len(token_ids)
-                out["parse_status"] = "no_digits_or_operators"
-                return out
+                bnd_list = sorted(boundaries)
+                chunk_lengths: List[int] = []
+                prev = 0
+                for b in bnd_list:
+                    chunk_lengths.append(b - prev)
+                    prev = b
+                chunk_lengths.append(num_digits - prev)
+                uniform_chunk = 1.0 if len(set(chunk_lengths)) <= 1 else 0.0
+                single_token = 1.0 if len(bnd_list) == 0 else 0.0
+                num_tokens = len(bnd_list) + 1
+                fertility_per_digit = num_tokens / num_digits
 
-            # ---- Per-digit-span scoring ----
-            digit_f1s: List[float] = []
-            digit_fertility: List[float] = []
-            single_token_flags: List[float] = []
-            uniform_chunk_flags: List[float] = []
+                digit_f1s.append(scores["f1"])
+                digit_fertility.append(fertility_per_digit)
+                single_token_flags.append(single_token)
+                uniform_chunk_flags.append(uniform_chunk)
 
-            if has_digits:
-                for src_start, src_end, digit_str in self._find_number_spans(text):
-                    num_digits = len(digit_str)
-                    if num_digits == 0:
-                        continue
-                    if any(
-                        source_char_to_token[i] is None
-                        for i in range(src_start, src_end)
+        # ---- Per-operator scoring ----
+        isolated_flags: List[float] = []
+        compound_total = 0
+        compound_ok = 0
+
+        if has_operators:
+            # Operators are located in the SOURCE and resolved to tokens
+            # through the same offsets the digit scoring above used. The
+            # body below is ``_accumulate_operators``'s per-text body, so
+            # this method and ``compute()`` score a given text identically.
+            #
+            # This used to run the operator regex over a reconstruction
+            # built by concatenating cleaned token strings, which
+            # ``compute()`` stopped doing when ``_accumulate_operators``
+            # moved onto the offsets, so the two disagreed. Two ways the
+            # reconstruction gave wrong answers. A special token the surface
+            # pattern does not recognise was spliced in as literal text, so
+            # a Mistral-form BOS token '<s>' contributed a '<' and a '>'
+            # that were counted as two operators. And a superword token such
+            # as 'G=G' reconstructs with a trailing space, which defeated the
+            # isolation test even though the token covers only '=' in the
+            # source.
+            token_to_chars: Dict[int, Set[int]] = defaultdict(set)
+            for ci, ti in enumerate(source_char_to_token):
+                if ti is not None:
+                    token_to_chars[ti].add(ci)
+            for m in self._OPERATOR_SPAN.finditer(text):
+                op_str = m.group()
+                op_start = m.start()
+                op_end = m.end()
+                category = self._OPERATOR_TO_CATEGORY.get(op_str)
+                if category is None:
+                    continue
+                op_token_indices: Set[int] = set()
+                for i in range(op_start, op_end):
+                    if (
+                        i < len(source_char_to_token)
+                        and source_char_to_token[i] is not None
                     ):
-                        # A digit no token covers: the number was not measured.
-                        continue
+                        op_token_indices.add(source_char_to_token[i])
+                if not op_token_indices:
+                    continue
 
-                    boundaries = self._get_digit_span_boundaries(
-                        source_char_to_token, src_start, src_end,
-                    )
-                    if boundaries is None:
-                        continue
-
-                    actual = set(boundaries)
-                    ideal = self._ideal_boundaries(num_digits)
-                    scores = self._score_boundaries(actual, ideal)
-
-                    bnd_list = sorted(boundaries)
-                    chunk_lengths: List[int] = []
-                    prev = 0
-                    for b in bnd_list:
-                        chunk_lengths.append(b - prev)
-                        prev = b
-                    chunk_lengths.append(num_digits - prev)
-                    uniform_chunk = 1.0 if len(set(chunk_lengths)) <= 1 else 0.0
-                    single_token = 1.0 if len(bnd_list) == 0 else 0.0
-                    num_tokens = len(bnd_list) + 1
-                    fertility_per_digit = num_tokens / num_digits
-
-                    digit_f1s.append(scores["f1"])
-                    digit_fertility.append(fertility_per_digit)
-                    single_token_flags.append(single_token)
-                    uniform_chunk_flags.append(uniform_chunk)
-
-            # ---- Per-operator scoring ----
-            isolated_flags: List[float] = []
-            compound_total = 0
-            compound_ok = 0
-
-            if has_operators:
-                # Operators are located in the SOURCE and resolved to tokens
-                # through the same offsets the digit scoring above used. The
-                # body below is ``_accumulate_operators``'s per-text body, so
-                # this method and ``compute()`` score a given text identically.
-                #
-                # This used to run the operator regex over a reconstruction
-                # built by concatenating cleaned token strings, which
-                # ``compute()`` stopped doing when ``_accumulate_operators``
-                # moved onto the offsets, so the two disagreed. Two ways the
-                # reconstruction gave wrong answers. A special token the surface
-                # pattern does not recognise was spliced in as literal text, so
-                # a Mistral-form BOS token '<s>' contributed a '<' and a '>'
-                # that were counted as two operators. And a superword token such
-                # as 'G=G' reconstructs with a trailing space, which defeated the
-                # isolation test even though the token covers only '=' in the
-                # source.
-                token_to_chars: Dict[int, Set[int]] = defaultdict(set)
-                for ci, ti in enumerate(source_char_to_token):
-                    if ti is not None:
-                        token_to_chars[ti].add(ci)
-                for m in self._OPERATOR_SPAN.finditer(text):
-                    op_str = m.group()
-                    op_start = m.start()
-                    op_end = m.end()
-                    category = self._OPERATOR_TO_CATEGORY.get(op_str)
-                    if category is None:
-                        continue
-                    op_token_indices: Set[int] = set()
-                    for i in range(op_start, op_end):
-                        if (
-                            i < len(source_char_to_token)
-                            and source_char_to_token[i] is not None
-                        ):
-                            op_token_indices.add(source_char_to_token[i])
-                    if not op_token_indices:
-                        continue
-
-                    # Isolated = the covering tokens carry no non-whitespace
-                    # character from outside the operator span, i.e. the
-                    # operator is not glued to an operand. Whitespace is
-                    # excluded because these are source coordinates: a token
-                    # such as 'G=' covers the space before the operator as well
-                    # as the operator, and that token is still an isolated
-                    # operator.
-                    op_char_set = set(range(op_start, op_end))
-                    outside_non_ws = False
-                    for ti in op_token_indices:
-                        for ci in token_to_chars[ti]:
-                            if ci in op_char_set:
-                                continue
-                            if not text[ci].isspace():
-                                outside_non_ws = True
-                                break
-                        if outside_non_ws:
+                # Isolated = the covering tokens carry no non-whitespace
+                # character from outside the operator span, i.e. the
+                # operator is not glued to an operand. Whitespace is
+                # excluded because these are source coordinates: a token
+                # such as 'G=' covers the space before the operator as well
+                # as the operator, and that token is still an isolated
+                # operator.
+                op_char_set = set(range(op_start, op_end))
+                outside_non_ws = False
+                for ti in op_token_indices:
+                    for ci in token_to_chars[ti]:
+                        if ci in op_char_set:
+                            continue
+                        if not text[ci].isspace():
+                            outside_non_ws = True
                             break
-                    isolated_flags.append(0.0 if outside_non_ws else 1.0)
+                    if outside_non_ws:
+                        break
+                isolated_flags.append(0.0 if outside_non_ws else 1.0)
 
-                    if len(op_str) > 1:
-                        compound_total += 1
-                        if len(op_token_indices) == 1:
-                            compound_ok += 1
+                if len(op_str) > 1:
+                    compound_total += 1
+                    if len(op_token_indices) == 1:
+                        compound_ok += 1
 
-            n_digit_spans = len(digit_f1s)
-            n_operators = len(isolated_flags)
-            return {
-                "n_digit_spans": n_digit_spans,
-                "mean_digit_f1": float(np.mean(digit_f1s)) if n_digit_spans else float("nan"),
-                "mean_fertility_per_digit": (
-                    float(np.mean(digit_fertility)) if n_digit_spans else float("nan")
-                ),
-                "single_token_number_rate": (
-                    float(np.mean(single_token_flags)) if n_digit_spans else float("nan")
-                ),
-                "uniform_chunk_rate": (
-                    float(np.mean(uniform_chunk_flags)) if n_digit_spans else float("nan")
-                ),
-                "n_operators": n_operators,
-                "operator_isolation_rate": (
-                    float(np.mean(isolated_flags)) if n_operators else float("nan")
-                ),
-                "n_compound_operators": compound_total,
-                "compound_operator_preserved_rate": (
-                    (compound_ok / compound_total) if compound_total else float("nan")
-                ),
-                "n_tokens": len(token_ids),
-                "parse_status": "ok",
-            }
-        finally:
-            self._set_tokenizer_context(saved_table, saved_specials, saved_markers)
+        n_digit_spans = len(digit_f1s)
+        n_operators = len(isolated_flags)
+        return {
+            "n_digit_spans": n_digit_spans,
+            "mean_digit_f1": float(np.mean(digit_f1s)) if n_digit_spans else float("nan"),
+            "mean_fertility_per_digit": (
+                float(np.mean(digit_fertility)) if n_digit_spans else float("nan")
+            ),
+            "single_token_number_rate": (
+                float(np.mean(single_token_flags)) if n_digit_spans else float("nan")
+            ),
+            "uniform_chunk_rate": (
+                float(np.mean(uniform_chunk_flags)) if n_digit_spans else float("nan")
+            ),
+            "n_operators": n_operators,
+            "operator_isolation_rate": (
+                float(np.mean(isolated_flags)) if n_operators else float("nan")
+            ),
+            "n_compound_operators": compound_total,
+            "compound_operator_preserved_rate": (
+                (compound_ok / compound_total) if compound_total else float("nan")
+            ),
+            "n_tokens": len(token_ids),
+            "parse_status": "ok",
+        }
