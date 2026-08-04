@@ -39,6 +39,24 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   changes.
 
 ### Fixed
+- `utf8_token_integrity` published `completeness_rate: 1.0` and
+  `boundary_crossing_rate: 0.0` for a language or tokenizer with zero content
+  tokens, at six sites. That reads as flawless UTF-8 integrity for a tokenizer
+  that was never measured, and the per-tokenizer loop iterates every configured
+  tokenizer rather than only those with data. The file's own `_ratio` helper
+  already returned `None` on a zero denominator; these six inline expressions
+  did not use it. All six now publish `null`.
+- `numeric_magnitude_consistency` published `r_squared: 1.0` when the total sum
+  of squares is zero, asserting a perfect fit for a fit that was never
+  determined, and `cv_of_mean_fertility: 0.0` in two branches where the sibling
+  fields already used `null`. Its Spearman guard set `spearman_rho: 0.0` and
+  `spearman_p: 1.0` for constant input, which bypassed the convention stated in
+  a comment four lines below it. All now `null`.
+- The verbose printers raised `TypeError` on two further paths: `main.py`
+  formatted fertility and token length with `.get('mean', 0.0)` and a `:.3f`
+  spec, and `empty_stats()` stores `None` under that key, so the default never
+  fires. This is the defect 1.0.1 fixed with `format_optional`; these two call
+  sites were missed and now use it.
 - Seven fields published a number where nothing was measured, against the
   policy `empty_stats()` and `safe_divide()` state. Pooled bigram and trigram
   entropy returned `0.0` when no context type cleared
