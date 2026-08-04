@@ -148,11 +148,6 @@ def builtin_probes() -> List[Probe]:
     return probes
 
 
-def all_byte_strings() -> List[bytes]:
-    """The 256 single-byte values, for C1's behavioral byte-coverage probe."""
-    return [bytes([b]) for b in range(256)]
-
-
 def load_flores_probes(language_config_path: str,
                        samples_per_lang: int) -> List[Probe]:
     """Opt-in FLORES breadth via the existing multilingual loader.
@@ -187,9 +182,3 @@ def load_math_probes(path: Optional[str] = None) -> List[Probe]:
         raise ValueError(f"Math probe load from {src} produced 0 texts.")
     return [Probe(t, CAT_MATH) for t in texts]
 
-
-def probes_by_category(probes: List[Probe]) -> Dict[str, List[Probe]]:
-    out: Dict[str, List[Probe]] = {}
-    for p in probes:
-        out.setdefault(p.category, []).append(p)
-    return out

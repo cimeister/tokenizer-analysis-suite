@@ -706,18 +706,6 @@ class DigitBoundaryMetrics(BaseMetrics):
             return dict(by_lang)
         return {}
 
-    def _decode_table_for(self, tok_name: str, tokenizer_obj) -> Any:
-        """``_build_char_decode_table`` memoized per tokenizer.
-
-        ``_accumulate_operators`` runs once per domain, so without this the table
-        is rebuilt three times for every tokenizer.
-        """
-        if tok_name not in self._decode_table_cache:
-            self._decode_table_cache[tok_name] = self._build_char_decode_table(
-                tokenizer_obj
-            )
-        return self._decode_table_cache[tok_name]
-
     def _tokenize_texts_cached(
         self, key: str, texts_by_lang: Dict[str, List[str]]
     ) -> Dict[str, List[TokenizedData]]:
@@ -1670,8 +1658,8 @@ class DigitBoundaryMetrics(BaseMetrics):
                     if tok_name in ent["summary"]:
                         s = ent["summary"][tok_name]
                         print(f"{tok_name}:")
-                        print(f"  {'Entropy (long)':25}: {s['entropy_long']:.3f} bits")
-                        print(f"  {'Entropy (short)':25}: {s['entropy_short']:.3f} bits")
+                        print(f"  {'Entropy (long)':25}: {format_optional(s['entropy_long'], '.3f')} bits")
+                        print(f"  {'Entropy (short)':25}: {format_optional(s['entropy_short'], '.3f')} bits")
                         print(f"  {'Numbers Analyzed':25}: {s['numbers_analyzed']:,}")
                         print(f"  {'Languages':25}: {s['languages_analyzed']}")
 
@@ -1711,11 +1699,12 @@ class DigitBoundaryMetrics(BaseMetrics):
                         s = mag["summary"][tok_name]
                         print(f"{tok_name}:")
                         print(f"  {'Avg Fertility':25}: {s['avg_fertility']:.3f}")
-                        print(f"  {'CV of Mean Fertility':25}: {s['cv_of_mean_fertility']:.3f}")
+                        print(f"  {'CV of Mean Fertility':25}: "
+                              f"{format_optional(s['cv_of_mean_fertility'], '.3f')}")
                         rho = s.get('spearman_rho')
                         print(f"  {'Spearman rho':25}: {format_optional(rho)}")
                         if 'linear_r_squared' in s:
-                            print(f"  {'Linear R^2':25}: {s['linear_r_squared']:.3f}")
+                            print(f"  {'Linear R^2':25}: {format_optional(s['linear_r_squared'], '.3f')}")
                             print(f"  {'Linear Slope':25}: {s['linear_slope']:.3f}")
                         print(f"  {'Numbers Analyzed':25}: {s['numbers_analyzed']:,}")
                         print(f"  {'Languages':25}: {s['languages_analyzed']}")

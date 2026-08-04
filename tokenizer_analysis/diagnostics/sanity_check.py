@@ -36,6 +36,7 @@ from ..constants import (
     SANITY_MAX_UNREPRESENTABLE_BYTES_WARN,
     SANITY_PRETOK_CONSERVATION_FAIL_FRAC,
     SANITY_ROUNDTRIP_BUG_FAIL_FRAC,
+    SANITY_ROUNDTRIP_BUG_WARN_FRAC,
     SANITY_ROUNDTRIP_CLEAN_PASS_FRAC,
     SANITY_UNK_SCRIPT_WARN_RATE,
     SANITY_VOCAB_UNREACHABLE_WARN_COUNT,
@@ -678,7 +679,8 @@ class TokenizerSanityChecker:
                        "ASCII text must always roundtrip", ex)
         if bd["bug_frac"] >= SANITY_ROUNDTRIP_BUG_FAIL_FRAC:
             sev = Severity.FAIL
-        elif bd["bug_frac"] > 0 or bd["clean_frac"] < SANITY_ROUNDTRIP_CLEAN_PASS_FRAC:
+        elif (bd["bug_frac"] > SANITY_ROUNDTRIP_BUG_WARN_FRAC
+              or bd["clean_frac"] < SANITY_ROUNDTRIP_CLEAN_PASS_FRAC):
             sev = Severity.WARN
         elif bd["unverifiable"] > 0:
             sev = Severity.UNVERIFIABLE

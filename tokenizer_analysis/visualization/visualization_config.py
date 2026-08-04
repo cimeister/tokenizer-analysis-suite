@@ -22,15 +22,3 @@ class PlotConfig:
     FACETED_XTICK_SIZE = 8
     FACETED_YTICK_SIZE = 9
 
-
-def setup_default_style():
-    """Setup basic matplotlib styling."""
-    plt.rcParams.update({
-        'font.family': 'serif',
-        'figure.figsize': (10, 6),
-        'axes.labelsize': 12,
-        'axes.titlesize': 14,
-        'xtick.labelsize': PlotConfig.REGULAR_XTICK_SIZE,
-        'ytick.labelsize': PlotConfig.REGULAR_YTICK_SIZE,
-        'legend.fontsize': 10
-    })

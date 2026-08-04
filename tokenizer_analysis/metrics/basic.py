@@ -11,7 +11,7 @@ import unicodedata
 
 import numpy as np
 
-from .base import BaseMetrics, TokenizedDataProcessor
+from .base import BaseMetrics, TokenizedDataProcessor, format_optional
 from ..core.input_types import TokenizedData
 from ..core.input_providers import InputProvider
 from ..config import TextMeasurementConfig, TextMeasurer, DEFAULT_TEXT_MEASUREMENT_CONFIG, DEFAULT_WORD_MEASUREMENT_CONFIG
@@ -932,7 +932,8 @@ class BasicTokenizationMetrics(BaseMetrics):
             }
             if cer_skipped:
                 results['reconstruction_fidelity']['summary'][tok_name]['cer_skipped'] = True
-            cer_msg = "SKIPPED" if cer_skipped else f"{tok_result['overall']['mean_cer']:.4f}"
+            cer_msg = ("SKIPPED" if cer_skipped
+                       else format_optional(tok_result['overall']['mean_cer'], '.4f'))
             logger.info(
                 "Reconstruction fidelity: %s done, %d texts decoded, "
                 "exact_match=%.3f, mean_cer=%s",

@@ -900,12 +900,13 @@ class UTF8IntegrityMetrics(BaseMetrics):
                 if tok_name in integrity['summary']:
                     s = integrity['summary'][tok_name]
                     print(f"{tok_name}:")
-                    print(f"  {'Completeness Rate':25}: {s['completeness_rate']:.4f}")
+                    print(f"  {'Completeness Rate':25}: {format_optional(s['completeness_rate'], '.4f')}")
                     print(f"  {'Incomplete Tokens':25}: {s['total_incomplete_tokens']:,}")
                     print(f"  {'  Trailing Incomplete':25}: {s.get('trailing_incomplete', 0):,}")
                     print(f"  {'  Orphan Continuation':25}: {s.get('orphan_continuation', 0):,}")
                     print(f"  {'Boundary Crossings':25}: {s.get('boundary_crossings', 0):,}")
-                    print(f"  {'Boundary Crossing Rate':25}: {s.get('boundary_crossing_rate', 0.0):.4f}")
+                    print(f"  {'Boundary Crossing Rate':25}: "
+                          f"{format_optional(s.get('boundary_crossing_rate'), '.4f')}")
                     print(f"  {'Content Tokens':25}: {s['total_content_tokens']:,}")
                     print(f"  {'Languages':25}: {s['languages_analyzed']}")
 

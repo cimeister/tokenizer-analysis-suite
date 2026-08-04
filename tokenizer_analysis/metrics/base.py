@@ -306,40 +306,6 @@ class BaseMetrics(ABC):
             markers.add(_CLIP_BPE_END_OF_WORD_SUFFIX)
         return markers
 
-    def _set_tokenizer_context(
-        self,
-        char_decode_table: Optional[Dict[str, str]],
-        special_tokens: Optional[Set[str]],
-        subword_markers: Optional[Set[str]],
-    ) -> None:
-        """Assign the three per-tokenizer attributes _process_token reads, together.
-
-        One entry point for _char_decode_table, _special_tokens and
-        _subword_markers so a call site cannot update two of them and forget
-        the third, which is what happened before _subword_markers existed:
-        every _char_decode_table assignment in this codebase had a
-        _special_tokens assignment next to it, added by hand at each site.
-
-        Takes already-resolved values rather than a tokenizer to resolve
-        itself, because some call sites (ASTBoundaryMetrics.compute()'s
-        per-snippet loop) resolve once per tokenizer into a dict outside a
-        per-snippet loop and only assign per snippet; resolving here on every
-        call would reintroduce the repeated tokenizer.encode() probing that
-        precompute step exists to avoid.
-        """
-        self._char_decode_table = char_decode_table
-        self._special_tokens = special_tokens
-        self._subword_markers = subword_markers
-
-    def _clear_tokenizer_context(self) -> None:
-        """Reset the three per-tokenizer attributes to the "none resolved" state.
-
-        _process_token's fallbacks then apply: GENERIC_SPECIAL_TOKENS for
-        special tokens, the bundled default char-decode table, and "strip no
-        subword marker" (the same state as __init__).
-        """
-        self._set_tokenizer_context(None, None, None)
-
     def get_tokenized_data(self) -> Dict[str, List[TokenizedData]]:
         """Get tokenized data organized by tokenizer."""
         return self.input_provider.get_tokenized_data()
@@ -768,38 +734,6 @@ class BaseMetrics(ABC):
             'sum': 0,
         }
     
-    @staticmethod
-    def validate_non_empty_data(data: Any, name: str) -> None:
-        """Raise ValueError if data is empty."""
-        if not data:
-            raise ValueError(f"{name} cannot be empty")
-    
-    @staticmethod
-    def validate_minimum_count(items: List[Any], min_count: int, name: str) -> None:
-        """Raise ValueError if len(items) < min_count."""
-        if len(items) < min_count:
-            raise ValueError(f"{name} must have at least {min_count} items, got {len(items)}")
-    
-    @staticmethod
-    def validate_positive_number(value: float, name: str) -> None:
-        """Raise ValueError if value <= 0."""
-        if value <= 0:
-            raise ValueError(f"{name} must be positive, got {value}")
-    
-    @staticmethod
-    def truncate_for_display(items: List[Any], max_count: int = MAX_ERROR_DISPLAY_COUNT) -> List[Any]:
-        if len(items) <= max_count:
-            return items
-        return items[:max_count]
-    
-    @staticmethod
-    def format_list_for_display(items: List[Any], max_count: int = MAX_ERROR_DISPLAY_COUNT) -> str:
-        if len(items) <= max_count:
-            return str(items)
-        
-        truncated = items[:max_count]
-        return f"{truncated}... (showing {max_count}/{len(items)})"
-    
     @abstractmethod
     def compute(self, tokenized_data: Optional[Dict[str, List[TokenizedData]]] = None) -> Dict[str, Any]:
         """If tokenized_data is None, uses input_provider data."""
@@ -818,27 +752,12 @@ class TokenizedDataProcessor:
         return dict(grouped)
     
     @staticmethod
-    def extract_tokens(tokenized_data: List[TokenizedData]) -> List[List[int]]:
-        """Extract token lists from TokenizedData objects."""
-        return [data.tokens for data in tokenized_data]
-    
-    @staticmethod
-    def extract_texts(tokenized_data: List[TokenizedData]) -> List[str]:
-        """Extract text strings from TokenizedData objects (where available)."""
-        return [data.text for data in tokenized_data if data.text is not None]
-    
-    @staticmethod
     def flatten_all_tokens(tokenized_data: List[TokenizedData]) -> List[int]:
         """Flatten all tokens into a single list."""
         all_tokens = []
         for data in tokenized_data:
             all_tokens.extend(data.tokens)
         return all_tokens
-    
-    @staticmethod
-    def count_total_tokens(tokenized_data: List[TokenizedData]) -> int:
-        """Count total number of tokens across all data."""
-        return sum(len(data.tokens) for data in tokenized_data)
     
     @staticmethod
     def get_unique_tokens(tokenized_data: List[TokenizedData]) -> set:

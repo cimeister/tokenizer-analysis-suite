@@ -822,7 +822,8 @@ class UnifiedTokenizerAnalyzer:
                     utilization = util_data.get('global_utilization', 0.0)
                     used_tokens = util_data.get('global_used_tokens', 0)
                     vocab_size = util_data.get('global_vocab_size', 0)
-                    print(f"{tok_name:20}: {utilization:.1%} ({used_tokens:,}/{vocab_size:,} tokens)")
+                    print(f"{tok_name:20}: {format_optional(utilization, '.1%')} "
+                          f"({used_tokens:,}/{vocab_size:,} tokens)")
         
         # Print type-token ratio
         if 'type_token_ratio' in results:
@@ -835,7 +836,8 @@ class UnifiedTokenizerAnalyzer:
                     ttr = ttr_data.get('global_ttr', 0.0)
                     types = ttr_data.get('global_types', 0)
                     tokens = ttr_data.get('global_tokens', 0)
-                    print(f"{tok_name:20}: {ttr:.4f} ({types:,} types / {tokens:,} tokens)")
+                    print(f"{tok_name:20}: {format_optional(ttr, '.4f')} "
+                          f"({types:,} types / {tokens:,} tokens)")
 
         # Print reconstruction fidelity
         if 'reconstruction_fidelity' in results:
@@ -857,20 +859,6 @@ class UnifiedTokenizerAnalyzer:
                         print(f"{tok_name:20}: EM={em:.3f}  CER={cer_str}  UNK={unk:.4f}  WS={ws_str}  ({n} texts)")
 
         print("\n" + "="*60)
-    
-    def get_analysis_summary(self) -> Dict[str, Any]:
-        """Get summary of analysis configuration and capabilities."""
-        return {
-            'tokenizer_names': self.tokenizer_names,
-            'num_tokenizers': len(self.tokenizer_names),
-            'languages': self.input_provider.get_languages(),
-            'num_languages': len(self.input_provider.get_languages()),
-            'vocab_sizes': {name: self.input_provider.get_vocab_size(name) for name in self.tokenizer_names},
-            'measurement_method': self.measurement_config.method.value,
-            'has_language_metadata': self.language_metadata is not None,
-            'analysis_groups': list(self.language_metadata.analysis_groups.keys()) if self.language_metadata else [],
-            'plot_save_dir': self.plot_save_dir
-        }
     
     def generate_latex_tables(self, 
                              results: Dict[str, Any],
@@ -1184,17 +1172,3 @@ def create_analyzer_from_tokenized_data(tokenized_data: Dict[str, List[Tokenized
     input_provider = create_input_provider(specifications)
     return UnifiedTokenizerAnalyzer(input_provider, **kwargs)
 
-
-def create_analyzer_from_input_provider(input_provider: InputProvider,
-                                       **kwargs) -> UnifiedTokenizerAnalyzer:
-    """
-    Create analyzer from existing InputProvider.
-    
-    Args:
-        input_provider: InputProvider instance
-        **kwargs: Additional arguments for UnifiedTokenizerAnalyzer
-        
-    Returns:
-        UnifiedTokenizerAnalyzer instance
-    """
-    return UnifiedTokenizerAnalyzer(input_provider, **kwargs)
