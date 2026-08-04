@@ -150,6 +150,7 @@ def test_no_printer_formats_a_nullable_field_with_a_numeric_spec():
         "entropy_long", "entropy_short", "mean_cer", "whitespace_fidelity",
         "gini_coefficient", "mean_cost", "std_cost", "cost_ratio",
         "isolation_rate", "compound_preservation_rate",
+        "depth_proportionality_correlation",
     ]
     # An f-string replacement field naming one of the above and ending in a
     # numeric presentation type.

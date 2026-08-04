@@ -55,6 +55,20 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   changes.
 
 ### Fixed
+- `indentation_consistency.depth_proportionality_correlation` published `0.0`
+  when the correlation was undefined, which happens when the whitespace-token
+  count is constant across every indentation depth. A rho of 0.0 is a real
+  measurement saying depth and whitespace-token count are unrelated, so this
+  stated a finding that was never measured. `_spearman_correlation` now returns
+  NaN for the undefined cases, which the callers already convert to `null`.
+  Such a language is also excluded from
+  `avg_depth_proportionality_correlation` rather than pulling the mean toward
+  zero.
+
+  This is the only change in 1.0.2 that moves a number in the published
+  benchmark. Six values become `null`: the global and the Haskell and Python
+  entries for `bert-base` and `xlm-roberta`, both whitespace-lossy tokenizers
+  whose whitespace-token count does not vary with depth.
 - A swallowed exception in the C16 vocabulary-reachability check could turn a
   FAIL into a PASS. When the tokenizer's own normalizer raised on a vocabulary
   surface, execution fell through to `non_self_reproducing`, a bucket the

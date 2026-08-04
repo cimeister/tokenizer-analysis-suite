@@ -1559,17 +1559,23 @@ class ASTBoundaryMetrics(BaseMetrics):
         """Compute Spearman rank correlation between two lists.
 
         Uses scipy.stats.spearmanr if available, otherwise falls back to a
-        pure-Python implementation.  Returns 0.0 if the correlation is
-        undefined (e.g. constant input).
+        pure-Python implementation.
+
+        Returns NaN when the correlation is undefined, which happens for fewer
+        than two points and for constant input.  NaN rather than 0.0, because
+        the callers already treat NaN as "not computed" and publish None for
+        it, while 0.0 is a real measurement meaning depth and whitespace-token
+        count are unrelated.  Publishing 0.0 for a constant input stated that
+        finding without having measured it, and fed a spurious zero into
+        avg_depth_proportionality_correlation, pulling the mean toward zero for
+        every language whose correlation could not be computed.
         """
         n = len(x)
         if n < 2:
-            return 0.0
+            return float("nan")
         try:
             from scipy.stats import spearmanr
             rho, _ = spearmanr(x, y)
-            if math.isnan(rho):
-                return 0.0
             return float(rho)
         except ImportError:
             pass
@@ -1594,7 +1600,7 @@ class ASTBoundaryMetrics(BaseMetrics):
         d_sq = sum((a - b) ** 2 for a, b in zip(rx, ry))
         denom = n * (n * n - 1)
         if denom == 0:
-            return 0.0
+            return float("nan")
         rho = 1.0 - 6.0 * d_sq / denom
         return rho
 

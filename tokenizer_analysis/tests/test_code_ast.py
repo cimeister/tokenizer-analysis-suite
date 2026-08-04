@@ -1,5 +1,6 @@
 """Tests for tokenizer_analysis.metrics.code_ast (ASTBoundaryMetrics)."""
 
+import math
 import pytest
 
 from tokenizer_analysis.metrics.code_ast import (
@@ -1718,13 +1719,20 @@ class TestSpearmanCorrelation:
         )
         assert -1.0 <= rho <= 1.0
 
-    def test_single_element_returns_zero(self):
-        rho = ASTBoundaryMetrics._spearman_correlation([1.0], [2.0])
-        assert rho == 0.0
+    def test_single_element_is_undefined(self):
+        """One point cannot be ranked against anything, so rho is NaN.
 
-    def test_empty_returns_zero(self):
+        The callers publish None for NaN. Returning 0.0 here would have said
+        depth and whitespace-token count are unrelated, on the strength of one
+        observation.
+        """
+        rho = ASTBoundaryMetrics._spearman_correlation([1.0], [2.0])
+        assert math.isnan(rho)
+
+    def test_empty_is_undefined(self):
+        """No points at all, same reasoning as one point."""
         rho = ASTBoundaryMetrics._spearman_correlation([], [])
-        assert rho == 0.0
+        assert math.isnan(rho)
 
 
 # ======================================================================
@@ -2051,9 +2059,17 @@ class TestIndentationConsistencyE2E:
         assert "depth_proportionality_correlation" in py
         assert py["total_indented_lines"] == 3
 
-    def test_depth_corr_zero_for_constant_ws_tokens(self, ts_pack):
-        """When the tokenizer produces exactly 1 ws token at every depth,
-        num_ws_tokens is constant → Spearman ρ is 0.0."""
+    def test_depth_corr_null_for_constant_ws_tokens(self, ts_pack):
+        """One whitespace token at every depth leaves the correlation undefined.
+
+        num_ws_tokens is constant, so Spearman has no variance to rank and
+        scipy returns NaN.  The published value is null, not 0.0: a rho of 0.0
+        is a real measurement saying depth and whitespace-token count are
+        unrelated, and asserting that from an undefined statistic states a
+        finding that was never measured.  Such a language is also left out of
+        avg_depth_proportionality_correlation rather than pulling it toward
+        zero.
+        """
         snippet = (
             'if True:\n'
             '    a = 1\n'
@@ -2098,8 +2114,8 @@ class TestIndentationConsistencyE2E:
         result = inst.compute()
         indent = result["indentation_consistency"]
         py = indent["per_tokenizer"]["const_ws"]["by_language"]["python"]
-        # Constant num_ws_tokens → correlation should be 0.0
-        assert py["depth_proportionality_correlation"] == pytest.approx(0.0)
+        # Constant num_ws_tokens leaves the correlation undefined.
+        assert py["depth_proportionality_correlation"] is None
 
     def test_depth_corr_negative_for_inverse_tokenizer(self, ts_pack):
         """When deeper indentation uses *fewer* tokens, correlation is negative."""
@@ -2655,8 +2671,12 @@ class TestIndentationConsistencyBPE:
         assert "depth_proportionality_correlation" in py
         assert py["total_indented_lines"] > 0
 
-    def test_constant_ws_tokens_zero_corr(self, ts_pack):
-        """Constant ws tokens across depths with ĠĠĠĠ/Ċ → ρ = 0.0."""
+    def test_constant_ws_tokens_null_corr(self, ts_pack):
+        """Constant ws tokens across depths with the byte-level encoding.
+
+        Same undefined case as the E2E test above, reached through a real BPE
+        vocabulary rather than a hand-built token list.
+        """
         snippet = (
             'if True:\n'
             '    a = 1\n'
@@ -2699,7 +2719,7 @@ class TestIndentationConsistencyBPE:
         result = inst.compute()
         indent = result["indentation_consistency"]
         py = indent["per_tokenizer"]["bpe_const"]["by_language"]["python"]
-        assert py["depth_proportionality_correlation"] == pytest.approx(0.0)
+        assert py["depth_proportionality_correlation"] is None
 
 
 # ======================================================================
