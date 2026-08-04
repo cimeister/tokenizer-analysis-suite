@@ -34,11 +34,14 @@ PATH_PATTERN = re.compile(r"`([a-z0-9_]+(?:\.[a-zA-Z0-9_<>]+)+)`")
 # Paths that appear in prose describing a rename rather than naming a key of
 # the published file.  Each needs the reason it is here, so the list cannot
 # grow into a way of silencing a real break.
-KNOWN_PRE_SLIM_PATHS = {
-    # README documents that slimming renames this key, so it names the input
-    # of the rename rather than a key of the published file.
-    "morphscore.per_tokenizer.<tok>.summary",
-}
+# Empty since 1.0.2. It held `morphscore.per_tokenizer.<tok>.summary`, on the
+# reasoning that README named it as the input of a rename rather than as a key
+# of the published file. That reasoning stopped holding when slimming became a
+# strict projection: the rename now happens before either file is written, so
+# the key exists in neither, and the whitelist was suppressing the failure that
+# would have caught the stale README paragraph. Add an entry here only with the
+# reason it is not simply a stale document.
+KNOWN_PRE_SLIM_PATHS: set = set()
 
 
 def _documented_paths():

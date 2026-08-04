@@ -197,19 +197,27 @@ def section_domain(results, rows):
         "instances, so with this code corpus it sits close to the code rate; "
         "`by_domain` in the results file splits the three."
     )
+    # Select on cer_skipped, not on mean_cer being None. A null mean_cer means
+    # either that the edit distance exceeded the budget or that there was
+    # nothing to measure, and cer_skipped is the only field separating the two.
+    # Selecting on the null and then asserting the budget explanation was right
+    # by luck on this corpus, not by construction.
     skipped = [
         name for key, name, _repo, _algo in rows
         if get(results, "reconstruction_fidelity", "per_tokenizer", key,
-               "global", "mean_cer") is None
+               "cer_skipped") is True
     ]
+    budget = get(results, "run_metadata", "arguments", "cer_time_budget",
+                 default="the configured")
     if skipped:
         lines.append("")
         lines.append(
             "CER is `n/a` for " + ", ".join(skipped) + ". The character error "
             "rate is an edit distance, and a tokenizer that does not "
             "reconstruct its input has a large distance on every text, so the "
-            "run projected past the 120-second budget and reported the value as "
-            "null rather than spending the time. The exact round-trip column "
+            f"run projected past the {budget}-second budget and reported the "
+            "value as null rather than spending the time, which "
+            "`cer_skipped` records. The exact round-trip column "
             "carries the same information: a tokenizer at 0.031 exact matches "
             "is lossy by construction, in this case through lowercasing, "
             "accent stripping and unknown-token substitution."

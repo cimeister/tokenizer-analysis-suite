@@ -355,7 +355,10 @@ class BasicTokenizationMetrics(BaseMetrics):
                 per_lang_used_ids[language] = unique
                 used = len(unique)
                 per_lang_util[language] = {
-                    'utilization': self.safe_divide(used, vocab_size, 0.0),
+                    # None for a zero-size vocabulary, matching the global
+                    # sibling below, which answers the same question. The two
+                    # gave different answers in the same run.
+                    'utilization': self.safe_divide(used, vocab_size),
                     'used_tokens': used,
                     'vocab_size': vocab_size,
                     'unused_tokens': vocab_size - used,
@@ -369,7 +372,13 @@ class BasicTokenizationMetrics(BaseMetrics):
             # Cross-language dispersion of the utilization ratio. Computed on
             # the ratio (not used_tokens) so it stays comparable across
             # tokenizers with different vocab sizes.
-            util_ratios = [stats['utilization'] for stats in per_lang_util.values()]
+            # None entries are dropped rather than counted as zero: a
+            # language whose utilization is undefined must not pull the mean
+            # or the dispersion toward it.
+            util_ratios = [
+                stats['utilization'] for stats in per_lang_util.values()
+                if stats['utilization'] is not None
+            ]
             n = len(util_ratios)
             if n >= 2:
                 util_mean = float(np.mean(util_ratios))

@@ -2,7 +2,6 @@
 Simple configuration for visualization.
 """
 
-import matplotlib.pyplot as plt
 
 
 # LaTeX table formatting options

@@ -876,10 +876,16 @@ class TestComputeFertilityScaling:
         ]
 
     def test_empty_input(self):
+        """Nothing to measure, so every scaling field is null.
+
+        cv_of_mean_fertility used to be 0.0 here while its three siblings in
+        the same branch were None, which said the buckets have no dispersion
+        when there were no buckets.
+        """
         result = DigitBoundaryMetrics._compute_fertility_scaling({})
         assert result["per_bucket"] == {}
         assert result["spearman_rho"] is None
-        assert result["cv_of_mean_fertility"] == 0.0
+        assert result["cv_of_mean_fertility"] is None
         assert result["linear_fit"] is None
 
     def test_single_bucket(self):

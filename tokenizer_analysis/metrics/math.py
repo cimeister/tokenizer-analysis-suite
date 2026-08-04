@@ -1304,17 +1304,25 @@ class DigitBoundaryMetrics(BaseMetrics):
         if len(digit_lengths) < 2:
             result["spearman_rho"] = None
             result["spearman_p"] = None
-            result["cv_of_mean_fertility"] = 0.0
+            # None for the same reason as its three siblings in this branch:
+            # a dispersion over fewer than two buckets is undefined, and 0.0
+            # is a real measurement meaning every bucket has the same mean
+            # fertility.
+            result["cv_of_mean_fertility"] = None
             result["linear_fit"] = None
             return result
 
         dl_arr = np.array(digit_lengths)
         mf_arr = np.array(mean_fertilities)
 
-        # Spearman rank correlation (guard against constant input)
+        # Spearman rank correlation. Constant input leaves it undefined, which
+        # is what scipy reports as NaN; publishing rho 0.0 with p 1.0 asserted
+        # a definite absence of monotonic relationship from a statistic that
+        # was never computed. cv_of_mean_fertility still records 0.0 for a
+        # genuinely constant non-zero fertility, so the finding is not lost.
         if np.std(mf_arr) == 0.0:
-            result["spearman_rho"] = 0.0
-            result["spearman_p"] = 1.0
+            result["spearman_rho"] = None
+            result["spearman_p"] = None
         else:
             rho, p_val = spearmanr(dl_arr, mf_arr)
             # None, not NaN, for anything scipy could not compute. Two buckets
@@ -1455,7 +1463,12 @@ class DigitBoundaryMetrics(BaseMetrics):
                 scaling = tok_data["scaling"]
                 summary: Dict[str, Any] = {
                     "avg_fertility": float(np.mean(all_fertilities)),
-                    "cv_of_mean_fertility": scaling.get("cv_of_mean_fertility", 0.0),
+                    # No 0.0 default. The sibling on the next line has none,
+                    # _compute_fertility_scaling always sets this key on both
+                    # of its paths, and the key now holds None when the
+                    # dispersion is undefined, so a default could only ever
+                    # fabricate a zero.
+                    "cv_of_mean_fertility": scaling.get("cv_of_mean_fertility"),
                     "spearman_rho": scaling.get("spearman_rho"),
                     "numbers_analyzed": len(all_fertilities),
                     "languages_analyzed": len(languages_seen),

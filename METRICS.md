@@ -9,6 +9,14 @@ README. For which flag supplies the data a metric needs, see
 Section headings below give the top-level results key in backticks. Where a
 value sits deeper in the file, the path is written out.
 
+Some caveats below quote figures from a 37-tokenizer development run. That run
+is not in this repository, so those specific numbers cannot be regenerated from
+anything here: the largest run committed is the nine tokenizers of
+`benchmarks/open_source`. They are quoted because the effect they describe is
+the reason for the caveat, and the direction and rough size are what a reader
+needs. Any figure attributed to `benchmarks/open_source` is reproducible with
+`bash benchmarks/open_source/run.sh`.
+
 ## Basic tokenization metrics
 
 - **Compression rate** (`compression_rate`): total text units (bytes, characters
@@ -87,8 +95,10 @@ size compares the corpus sizes rather than the tokenizers.
 
 The same block holds `global_unigram_entropy`. `renyi_1.0` multiplied by
 `log2` of the declared vocabulary size reproduces `global_unigram_entropy` to
-zero relative error over the same 37 tokenizers: `global_unigram_entropy` is
-the unnormalized numerator of `renyi_1.0`, not merely correlated with it.
+zero relative error: `global_unigram_entropy` is the unnormalized numerator of
+`renyi_1.0`, not merely correlated with it. Checked on the nine tokenizers of
+`benchmarks/open_source/analysis_results.json`, where the largest relative
+error is 1.6e-16.
 
 ### Bigram entropy (`bigram_entropy`)
 

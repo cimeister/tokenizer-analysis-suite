@@ -55,6 +55,34 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   changes.
 
 ### Fixed
+- `compute_basic_stats` published `std: 0.0` and `std_err: 0.0` for a single
+  observation. A sample standard deviation over one value is undefined, and
+  0.0 says the sample has no spread. Observed in real output from a
+  one-document run, which the `--input` route makes an ordinary case. Both are
+  now `null`. Its empty-list branch returned six zeros where `empty_stats()`
+  returns six nulls for the same situation; it now defers to `empty_stats()`.
+- `numeric_magnitude_consistency` still published `cv_of_mean_fertility: 0.0`
+  in its fewer-than-two-buckets branch, and `spearman_rho: 0.0` with
+  `spearman_p: 1.0` for constant input. An earlier entry in this changelog said
+  both were fixed. They were not: the entry described a change that was never
+  made, which is worse than an undocumented fix, because it asserts a state of
+  the code a reader cannot see is false. Both are `null` now, and a third site
+  passing `0.0` as a `.get` default for the same field is removed.
+- `vocabulary_utilization`'s per-language `utilization` returned `0.0` for a
+  zero-size vocabulary while its global sibling returned `null` for the same
+  condition, so one run gave two answers to one question. Both are `null`, and
+  undefined entries are dropped from the cross-language mean and dispersion
+  rather than counted as zero.
+- Two plotting defects the null-for-absent work introduced or exposed.
+  `plot_vocabulary_utilization` multiplied `global_utilization` by 100 before
+  the caller's `None` guard, raising `TypeError` for a zero-size vocabulary.
+  `_plot_per_language_bigram_entropy` defaulted a null entropy to `0.0`,
+  drawing a zero-height bar indistinguishable from a measured zero, which is
+  what this release removed from the JSON.
+- `render_report.py` attributed every null `mean_cer` to the time budget
+  without reading `cer_skipped`, the field restored earlier in this release for
+  exactly that distinction, and hardcoded the budget rather than reading it
+  from `run_metadata`. On the current benchmark the text was right by luck.
 - `indentation_consistency.depth_proportionality_correlation` published `0.0`
   when the correlation was undefined, which happens when the whitespace-token
   count is constant across every indentation depth. A rho of 0.0 is a real

@@ -703,11 +703,11 @@ breakdowns (AST node types, operator types). `bigram_entropy` also holds a
 top-level `reference_definition` block with the same measurement under the
 reference normalizer and aggregation.
 
-The slimming step also renames some blocks, so a path read off
-`analysis_results_full.json` does not always hold in `analysis_results.json`.
-`morphscore.per_tokenizer.<tok>.summary` becomes `global`, and
-`ast_boundary_alignment`'s `overall` and `by_language` become `global` and
-`per_language`. The paths in the table above are the slimmed ones.
+Since 1.0.2 the slim file is a strict projection of the full one: every leaf
+sits at the same key path with the same value in both, and slimming only
+deletes keys. Renaming happens before either file is written, so a path read
+off one holds in the other. Earlier versions renamed while selecting, which
+left the two files impossible to cross-reference.
 
 #### `null` means not measured
 
@@ -733,11 +733,25 @@ Consumers doing arithmetic on these fields need a `None` check.
 
 #### Provenance
 
-Every results file holds a top-level `run_metadata` block: package version,
-git commit, the config files read and their hashes, the tokenizer files measured
-and their hashes, corpus and sample count, the code-corpus caps in force, which
-metric families were disabled, and under `arguments` every command-line
-argument the caller changed from its default. Arguments that only decide where
+Every results file holds a top-level `run_metadata` block: package version, a
+UTC `timestamp_utc`, git commit, the config files read and their hashes, an
+identifier per tokenizer, a digest of the corpus, sample count, the code-corpus
+caps in force, which metric families were disabled, and under `arguments` every
+command-line argument the caller changed from its default.
+
+A tokenizer loaded from a local file is recorded with a `sha256_16` of that
+file. One named by a Hugging Face Hub id has no local file to hash, so it is
+recorded with `hub_revision`, the commit sha of the cached snapshot that was
+loaded. Without it, a retokenization published upstream would move every number
+in the file with nothing saying so. All nine tokenizers in
+`benchmarks/open_source` are Hub-loaded and carry `hub_revision`.
+
+`corpus.digest` gives each language's path, byte count and a short hash, plus
+whatever the fetch script recorded about the dataset revision it read. The
+config hashes say which corpus was requested; the digest says what the files
+held, so two runs over different snapshots of one corpus under one config are
+distinguishable after the fact. Paths under the working directory are recorded
+relative to it, so a committed results file does not name whoever produced it. Arguments that only decide where
 output goes are left out, so two runs writing to different directories do not
 look like different measurements. When two results files disagree,
 `run_metadata` identifies whether the tokenizer, the corpus, the settings or the

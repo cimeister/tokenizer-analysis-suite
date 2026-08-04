@@ -669,26 +669,28 @@ class BaseMetrics(ABC):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def compute_basic_stats(values: List[float]) -> Dict[str, float]:
-        """Compute basic statistics for a list of values."""
+    def compute_basic_stats(values: List[float]) -> Dict[str, Optional[float]]:
+        """Compute basic statistics for a list of values.
+
+        A dispersion over a single observation is undefined, so ``std`` and
+        ``std_err`` are None when ``count`` is 1, not 0.0. Publishing 0.0 said
+        the sample has no spread, which is a statement about a sample of one
+        that no data supports, and the ``--input`` route makes a corpus that
+        small an ordinary case rather than an edge one.
+
+        The empty case defers to ``empty_stats()`` rather than repeating a
+        second, contradictory answer to the same question: this function used
+        to return six zeros where ``empty_stats()`` returns six Nones.
+        """
         if not values:
-            return {
-                'mean': 0.0,
-                'median': 0.0,
-                'std': 0.0,
-                'std_err': 0.0,
-                'min': 0.0,
-                'max': 0.0,
-                'count': 0,
-                'sum': 0
-            }
-            
+            return BaseMetrics.empty_stats()
+
         n = len(values)
         return {
             'mean': float(np.mean(values)),
             'median': float(np.median(values)),
-            'std': float(np.std(values, ddof=1)) if n > 1 else 0.0,
-            'std_err': float(scipy.stats.sem(values)) if n > 1 else 0.0,
+            'std': float(np.std(values, ddof=1)) if n > 1 else None,
+            'std_err': float(scipy.stats.sem(values)) if n > 1 else None,
             'min': float(np.min(values)),
             'max': float(np.max(values)),
             'count': n,

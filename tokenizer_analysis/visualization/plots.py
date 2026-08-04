@@ -270,7 +270,11 @@ def plot_vocabulary_utilization(results: Dict[str, Any], save_path: str, tokeniz
     """Plot vocabulary utilization comparison."""
     plot_metric_bar_chart(
         results, save_path, tokenizer_names, 'vocabulary_utilization',
-        lambda td: td['global_utilization'] * 100,
+        # None when the vocabulary size is zero. Returned as-is so the
+        # caller's `if val is None: continue` skips the bar; multiplying here
+        # would raise TypeError before that guard is reached.
+        lambda td: None if td.get('global_utilization') is None
+        else td['global_utilization'] * 100,
         show_global_lines=show_global_lines, global_avg_fmt='.1f',
     )
 
@@ -933,7 +937,11 @@ def _plot_per_language_bigram_entropy(results, save_dir, tokenizer_names, show_g
     """Plot per-language bigram entropy comparison with grouped bars."""
     _plot_per_language_metric(
         results, save_dir, tokenizer_names, 'bigram_entropy',
-        lambda s: s.get('bigram_entropy', 0.0) if isinstance(s, dict) else s,
+        # No 0.0 default: the entropy is None when no context type cleared
+        # the occurrence threshold, and a zero-height bar is
+        # indistinguishable from a measured zero, which is what the JSON
+        # stopped publishing.
+        lambda s: s.get('bigram_entropy') if isinstance(s, dict) else s,
         'bigram_entropy_per_language.svg', show_global_lines,
     )
 

@@ -152,11 +152,27 @@ def test_no_printer_formats_a_nullable_field_with_a_numeric_spec():
         "isolation_rate", "compound_preservation_rate",
         "depth_proportionality_correlation",
     ]
-    # An f-string replacement field naming one of the above and ending in a
-    # numeric presentation type.
-    pattern = re.compile(
-        r"\{[^{}]*\b(" + "|".join(nullable) + r")\b[^{}]*:[^{}]*[bcdeEfFgGn%]\}"
-    )
+    # Every key empty_stats() publishes as None. These are read through
+    # .get(key, <number>) more often than they are named in an f-string, and
+    # that shape is itself the bug: the default cannot fire, because the key is
+    # present holding None.
+    stats_keys = ["mean", "median", "std", "std_err", "min", "max"]
+
+    patterns = [
+        # An f-string replacement field naming a nullable value and ending in a
+        # numeric presentation type.
+        re.compile(
+            r"\{[^{}]*\b(" + "|".join(nullable) + r")\b[^{}]*:[^{}]*[bcdeEfFgGn%]\}"
+        ),
+        # .get('<nullable key>', <number>). Catches the shape where the value
+        # is bound to a local first and formatted on a later line, which a
+        # line-by-line f-string scan cannot see. Both sites the 1.0.1 pass
+        # missed in main.py had exactly this shape.
+        re.compile(
+            r"\.get\(\s*['\"](" + "|".join(nullable + stats_keys)
+            + r")['\"]\s*,\s*-?\d"
+        ),
+    ]
 
     root = Path(__file__).resolve().parents[1]
     offenders = []
@@ -166,10 +182,14 @@ def test_no_printer_formats_a_nullable_field_with_a_numeric_spec():
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if "format_optional" in line:
                 continue
-            match = pattern.search(line)
-            if match:
-                rel = path.relative_to(root.parent)
-                offenders.append(f"{rel}:{lineno} formats {match.group(1)} numerically: {line.strip()}")
+            for pattern in patterns:
+                match = pattern.search(line)
+                if match:
+                    rel = path.relative_to(root.parent)
+                    offenders.append(
+                        f"{rel}:{lineno} uses {match.group(1)} as a number: {line.strip()}"
+                    )
+                    break
 
     assert not offenders, (
         "a nullable field formatted with a numeric spec; use format_optional:\n  "

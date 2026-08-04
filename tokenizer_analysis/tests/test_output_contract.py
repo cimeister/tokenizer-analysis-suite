@@ -629,27 +629,50 @@ def test_a_corpus_with_nothing_to_measure_publishes_null_not_a_number(degenerate
     Fields that count things (count, total_tokens, used_tokens and the like)
     stay numeric: zero of something is a true statement about the sample.
     """
-    counters = ("count", "total", "types_evaluated", "types_excluded",
-                "used_tokens", "vocab_size", "num_samples", "unmappable",
-                "parse_error_spans", "num_languages", "num_depth_levels")
+    # A field whose zero means "there was nothing to measure". Not every
+    # counter qualifies: trailing_incomplete of 0 means no token was truncated,
+    # a real finding, and gating on it would have flagged a completeness rate
+    # of 1.0 measured over four sound tokens.
+    denominators = (
+        "count", "total_tokens", "total_units", "total_content_tokens",
+        "total_bigrams", "total_trigrams", "total_operators",
+        "total_indented_lines", "num_samples", "num_languages", "vocab_size",
+        # Zero qualifying context types is the entropy metrics' way of saying
+        # nothing was measured; their total_bigrams stays non-zero.
+        "types_evaluated",
+    )
     offenders = []
+    inspected = []
 
     for name, block in _metrics(degenerate_run).items():
         for tok, entry in (block.get("per_tokenizer") or {}).items():
             glob = (entry or {}).get("global")
             if not isinstance(glob, dict):
                 continue
-            count = glob.get("count")
-            if count != 0:
+            # Gating on `count == 0` alone skipped seven metric families that
+            # put no count in their global at all, including every one this
+            # docstring names.
+            if not any(glob.get(k) == 0 for k in denominators if k in glob):
                 continue
+            inspected.append(f"{name}.{tok}")
             for field, value in glob.items():
-                if field in counters or field.startswith("total_"):
-                    continue
-                if isinstance(value, (int, float)) and not isinstance(value, bool):
-                    offenders.append(f"{name}.{tok}.global.{field} = {value} beside count 0")
+                # Counts are integers and a zero count is a true statement
+                # about the sample. Rates, means and correlations are floats,
+                # and those are what must not be invented.
+                if isinstance(value, float):
+                    offenders.append(
+                        f"{name}.{tok}.global.{field} = {value}, "
+                        f"beside a zero denominator"
+                    )
 
+    # Without this the test can silently inspect nothing, which is how its
+    # first version passed while skipping every metric it named.
+    assert inspected, (
+        "this test inspected no block with a zero denominator, so it asserted "
+        "nothing; make the corpus smaller or widen `denominators`"
+    )
     assert not offenders, (
-        "a measured-looking number published where count is 0:\n  "
+        "a measured-looking number published beside a zero denominator:\n  "
         + "\n  ".join(sorted(offenders))
     )
 
