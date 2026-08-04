@@ -23,10 +23,12 @@
 # google/gemma-2). Accept their licenses first, or drop them from
 # tokenizers.json and rerun; every other number is unaffected by their absence.
 #
-# --save-full-results is deliberately absent. Nothing here reads the full file:
-# render_report.py opens analysis_results.json only, and the full file is not
-# gitignored, so writing it leaves an uncommitted artifact in a tracked
-# directory. Pass it by hand if you want the dropped blocks.
+# --save-full-results is deliberately absent and --no-plots is deliberately
+# present. Nothing here reads either output: render_report.py opens
+# analysis_results.json only, and REPORT.md embeds no images. Neither the full
+# results file nor the eight plot files are gitignored, so writing them left
+# uncommitted artifacts in a tracked directory. Add --save-full-results, or
+# drop --no-plots, by hand if you want them.
 #
 # Most of the run is encoding and the character error rate, which is an edit
 # distance in Python. --cer-time-budget 120 is generous for the byte-level
@@ -41,6 +43,7 @@ REPO_ROOT="$(cd "${HERE}/../.." && pwd)"
 OUTPUT_DIR="${1:-${HERE}}"
 
 cd "${REPO_ROOT}"
+HERE_REL="${HERE#${REPO_ROOT}/}"
 
 if [ ! -f parallel/eng_Latn.txt ]; then
     echo "The FLORES+ corpus is not in parallel/. Fetch it first:" >&2
@@ -53,13 +56,18 @@ if [ ! -d "${HERE}/code_data" ]; then
     exit 1
 fi
 
+# Paths are relative to REPO_ROOT, which this script has already cd'd into.
+# run_metadata records the config paths as given, so an absolute path here
+# would put the home directory of whoever ran it into the committed results
+# file.
 uv run tokenizer-analysis \
-    --tokenizer-config "${HERE}/tokenizers.json" \
+    --tokenizer-config "${HERE_REL}/tokenizers.json" \
     --language-config configs/core_lang_config.json \
-    --code-ast-config "${HERE}/code_ast_config.json" \
+    --code-ast-config "${HERE_REL}/code_ast_config.json" \
     --samples-per-lang 250 \
     --use-builtin-math-data \
     --cer-time-budget 120 \
+    --no-plots \
     --output-dir "${OUTPUT_DIR}"
 
 # Strip the two fields that change on every run, so a diff of the committed

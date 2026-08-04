@@ -806,7 +806,14 @@ def _select_tokenizer_entry(
             out['by_domain'] = tok_data['by_domain']
 
     elif metric_name == 'reconstruction_fidelity':
-        for key in ('global', 'per_domain', 'per_language'):
+        # cer_skipped travels with the block. mean_cer and whitespace_fidelity
+        # are null both when the budget abandoned them and when there was
+        # nothing to measure, and this flag is the only thing that tells the
+        # two apart. METRICS.md and the benchmark README both name it as the
+        # field to read, and it is only present when a tokenizer actually
+        # exceeded the budget, so a demo corpus that never skips cannot catch
+        # its loss.
+        for key in ('global', 'per_domain', 'per_language', 'cer_skipped'):
             if key in tok_data:
                 out[key] = tok_data[key]
 

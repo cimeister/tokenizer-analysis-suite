@@ -535,3 +535,47 @@ def test_the_serializer_converts_any_non_finite_float_to_null():
         "d": [1.0, None], "e": {"f": None}, "g": 0.5,
     }
     json.dumps(converted, allow_nan=False)
+
+
+def test_cer_skipped_survives_slimming():
+    """A null mean_cer is ambiguous without the flag that explains it.
+
+    mean_cer and whitespace_fidelity are null both when the character error
+    rate exceeded --cer-time-budget and when there was nothing to measure.
+    cer_skipped is the only field that separates the two, and METRICS.md and
+    the benchmark README both tell readers to consult it.
+
+    It is written only when a tokenizer actually exceeds the budget, so a demo
+    corpus small enough to finish never produces it. That is why this is a
+    unit test over a hand-built results dict rather than an assertion on a demo
+    run: a comparison against demo output cannot see this field at all, which
+    is how the 1.0.2 schema refactor dropped it without any gate noticing.
+    """
+    from tokenizer_analysis.cli.run_analysis import slim_results_for_json
+
+    results = {
+        "reconstruction_fidelity": {
+            "per_tokenizer": {
+                "tok": {
+                    "overall": {
+                        "exact_match_rate": 0.03,
+                        "mean_cer": None,
+                        "whitespace_fidelity": None,
+                        "count": 10,
+                        "total_tokens": 100,
+                    },
+                    "by_domain": {},
+                    "cer_skipped": True,
+                }
+            },
+            "metadata": {"aggregation": "micro_pooled"},
+        }
+    }
+
+    slimmed = slim_results_for_json(results)
+    entry = slimmed["reconstruction_fidelity"]["per_tokenizer"]["tok"]
+    assert entry.get("cer_skipped") is True, (
+        "cer_skipped was dropped, so a reader cannot tell a skipped "
+        "mean_cer from one that had nothing to measure"
+    )
+    assert entry["global"]["mean_cer"] is None
