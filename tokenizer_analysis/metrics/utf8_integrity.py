@@ -732,7 +732,7 @@ class UTF8IntegrityMetrics(BaseMetrics):
                 ti, oc = d['trailing_incomplete'], d['orphan_continuation']
                 bc = d['boundary_crossings']
                 per_lang[lang] = {
-                    'completeness_rate': v / t if t > 0 else 1.0,
+                    'completeness_rate': v / t if t > 0 else None,
                     'total_incomplete_tokens': t - v,
                     'total_content_tokens': t,
                     # count is the schema-wide name for how many items of the
@@ -742,7 +742,7 @@ class UTF8IntegrityMetrics(BaseMetrics):
                     'trailing_incomplete': ti,
                     'orphan_continuation': oc,
                     'boundary_crossings': bc,
-                    'boundary_crossing_rate': bc / t if t > 0 else 0.0,
+                    'boundary_crossing_rate': bc / t if t > 0 else None,
                 }
                 global_valid += v
                 global_total += t
@@ -752,25 +752,25 @@ class UTF8IntegrityMetrics(BaseMetrics):
 
             results['per_tokenizer'][tok_name] = {
                 'global': {
-                    'completeness_rate': global_valid / global_total if global_total > 0 else 1.0,
+                    'completeness_rate': global_valid / global_total if global_total > 0 else None,
                     'total_incomplete_tokens': global_total - global_valid,
                     'total_content_tokens': global_total,
                     'trailing_incomplete': global_trailing,
                     'orphan_continuation': global_orphan,
                     'boundary_crossings': global_crossings,
-                    'boundary_crossing_rate': global_crossings / global_total if global_total > 0 else 0.0,
+                    'boundary_crossing_rate': global_crossings / global_total if global_total > 0 else None,
                 },
                 'per_language': per_lang,
             }
 
             results['summary'][tok_name] = {
-                'completeness_rate': global_valid / global_total if global_total > 0 else 1.0,
+                'completeness_rate': global_valid / global_total if global_total > 0 else None,
                 'total_incomplete_tokens': global_total - global_valid,
                 'total_content_tokens': global_total,
                 'trailing_incomplete': global_trailing,
                 'orphan_continuation': global_orphan,
                 'boundary_crossings': global_crossings,
-                'boundary_crossing_rate': global_crossings / global_total if global_total > 0 else 0.0,
+                'boundary_crossing_rate': global_crossings / global_total if global_total > 0 else None,
                 'languages_analyzed': len(per_lang),
             }
 

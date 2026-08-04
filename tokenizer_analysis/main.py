@@ -13,7 +13,7 @@ from .core.input_types import TokenizedData, InputSpecification
 from .core.input_providers import InputProvider, create_input_provider
 from .core.input_utils import create_simple_specifications, InputValidator
 from .core.tokenizer_wrapper import create_tokenizer_wrapper
-from .metrics.base import BaseMetrics
+from .metrics.base import BaseMetrics, format_optional
 from .metrics.basic import BasicTokenizationMetrics
 from .metrics.information_theoretic import InformationTheoreticMetrics
 from .metrics.gini import TokenizerGiniMetrics
@@ -791,9 +791,13 @@ class UnifiedTokenizerAnalyzer:
             for tok_name in self.tokenizer_names:
                 if tok_name in fertility_data['per_tokenizer']:
                     global_stats = fertility_data['per_tokenizer'][tok_name]['global']
-                    mean_fertility = global_stats.get('mean', 0.0)
-                    std_fertility = global_stats.get('std', 0.0)
-                    print(f"{tok_name:20}: {mean_fertility:.3f} ± {std_fertility:.3f} tokens/{measurement_method[:-1]}")
+                    # empty_stats() stores None under 'mean', so the 0.0
+                    # default never fires and a plain :.3f raises TypeError.
+                    # format_optional prints 'n/a' for a value that was never
+                    # measured.
+                    mean_fertility = format_optional(global_stats.get('mean'), '.3f')
+                    std_fertility = format_optional(global_stats.get('std'), '.3f')
+                    print(f"{tok_name:20}: {mean_fertility} ± {std_fertility} tokens/{measurement_method[:-1]}")
         
         # Print token length results
         if 'token_length' in results:
@@ -803,9 +807,9 @@ class UnifiedTokenizerAnalyzer:
             for tok_name in self.tokenizer_names:
                 if tok_name in results['token_length']['per_tokenizer']:
                     char_stats = results['token_length']['per_tokenizer'][tok_name]['character_length']
-                    mean_length = char_stats.get('mean', 0.0)
-                    std_length = char_stats.get('std', 0.0)
-                    print(f"{tok_name:20}: {mean_length:.2f} ± {std_length:.2f} chars/token")
+                    mean_length = format_optional(char_stats.get('mean'), '.2f')
+                    std_length = format_optional(char_stats.get('std'), '.2f')
+                    print(f"{tok_name:20}: {mean_length} ± {std_length} chars/token")
         
         # Print vocabulary utilization
         if 'vocabulary_utilization' in results:

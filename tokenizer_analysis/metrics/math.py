@@ -1332,8 +1332,12 @@ class DigitBoundaryMetrics(BaseMetrics):
         # Coefficient of variation of mean fertility across buckets
         overall_mean = float(np.mean(mf_arr))
         overall_std = float(np.std(mf_arr))
+        # None, not 0.0, when the mean is zero: a coefficient of variation of
+        # 0.0 is a real measurement meaning every bucket has the same mean
+        # fertility, so it must not double as "undefined". Same convention as
+        # spearman_rho above.
         result["cv_of_mean_fertility"] = (
-            overall_std / overall_mean if overall_mean > 0 else 0.0
+            overall_std / overall_mean if overall_mean > 0 else None
         )
 
         # Linear fit: mean_tokens = slope * num_digits + intercept.
@@ -1351,7 +1355,11 @@ class DigitBoundaryMetrics(BaseMetrics):
         predicted = slope * mdl_arr + intercept
         ss_res = float(np.sum((mtc_arr - predicted) ** 2))
         ss_tot = float(np.sum((mtc_arr - np.mean(mtc_arr)) ** 2))
-        r_squared = 1.0 - ss_res / ss_tot if ss_tot > 0 else 1.0
+        # None, not 1.0, when the total sum of squares is zero. That happens
+        # when every bucket has the same mean token count, which leaves R^2
+        # undefined; publishing 1.0 reported a perfect fit for a fit that was
+        # never determined.
+        r_squared = 1.0 - ss_res / ss_tot if ss_tot > 0 else None
 
         result["linear_fit"] = {
             "slope": slope,
