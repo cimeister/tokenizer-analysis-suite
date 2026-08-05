@@ -5,7 +5,7 @@ description = "Comprehensive tokenizer analysis framework"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
-license-files = ["LICENSE", "NOTICE"]
+license-files = ["LICENSE"]
 authors = [
     { name = "Clara Meister" },
 ]

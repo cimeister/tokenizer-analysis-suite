@@ -22,5 +22,7 @@ SOFTWARE.
 
 ---
 
-The MIT license above covers the source code in this repository. Bundled data
-files carry their own licenses; see NOTICE.
+The MIT license above covers the source code in this repository. The
+evaluation corpora and the tokenizers named in the example configs are
+downloaded at run time under their own licenses and are not redistributed
+here; see the README for the FLORES+ terms.

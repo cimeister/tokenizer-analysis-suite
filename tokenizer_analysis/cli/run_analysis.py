@@ -963,8 +963,8 @@ def slim_results_for_json(results: Dict) -> Dict:
 # --- Deprecation shims for flags/choices removed in 1.0.0 ---
 # The standalone morphological boundary metric was removed; MorphScore replaces it.
 # These stubs make old command lines fail with a clear pointer instead of an opaque
-# argparse error. See MIGRATION.md.
-_MIGRATION_HINT = "See MIGRATION.md for the full list of changes."
+# argparse error. See CHANGELOG.md.
+_MIGRATION_HINT = "See CHANGELOG.md for the full list of changes."
 
 _REMOVED_FLAG_MESSAGES = {
     "--morphological-config": (

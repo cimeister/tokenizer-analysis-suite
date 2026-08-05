@@ -298,7 +298,7 @@ def main(argv=None) -> int:
     lines.append("")
     lines.append(
         "Every metric in the results file, including the ones no table above "
-        "shows, is defined in [METRICS.md](../../METRICS.md)."
+        "shows, is defined in [METRICS.md](../../docs/METRICS.md)."
     )
     lines.append("")
 

@@ -1,7 +1,7 @@
 """Errors for names removed between tokenizer-analysis-suite 0.x and 1.0.0.
 
 The CLI already fails removed flags with a message that names the replacement
-and points at MIGRATION.md (see ``cli/run_analysis.py``). Without this module the
+and points at CHANGELOG.md (see ``cli/run_analysis.py``). Without this module the
 Python API did not: ``from tokenizer_analysis import MorphologicalMetrics`` raised
 a bare ``ImportError`` with no indication that MorphScore replaced it, and
 ``from tokenizer_analysis.constants import DataProcessing`` gave no hint that the
@@ -29,7 +29,7 @@ normal ``AttributeError``, so ordinary introspection is unaffected.
 
 from typing import Dict, Iterable
 
-MIGRATION_DOC = "MIGRATION.md"
+MIGRATION_DOC = "CHANGELOG.md"
 REMOVED_IN = "1.0.0"
 
 # name -> what to use instead. Keep the replacement concrete enough to act on.

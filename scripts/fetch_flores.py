@@ -151,7 +151,7 @@ def main(argv=None) -> int:
 
     print(f"\nWrote {len(by_language)} language file(s) to {args.output_dir}.")
     print(f"Recorded the dataset revision in {manifest_path.relative_to(REPO_ROOT)}.")
-    print("FLORES+ is CC-BY-SA 4.0; see NOTICE for the attribution terms.")
+    print("FLORES+ is CC-BY-SA 4.0. Cite NLLB Team et al., Nature 630 (2024).")
     return 0
 
 

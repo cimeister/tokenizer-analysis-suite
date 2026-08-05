@@ -25,7 +25,7 @@ REMOVED_IMPORTS = [
 
 @pytest.mark.parametrize("module_name,attr", REMOVED_IMPORTS)
 def test_removed_name_points_at_migration_guide(module_name, attr):
-    """A removed name must fail with the replacement and a MIGRATION.md pointer.
+    """A removed name must fail with the replacement and a CHANGELOG.md pointer.
 
     The error has to survive ``from X import Y``, which catches AttributeError
     and substitutes its own message. That is why the shim raises ImportError.

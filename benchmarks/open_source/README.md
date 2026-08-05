@@ -27,7 +27,7 @@ bash benchmarks/open_source/run.sh
 `code_data/` is not committed. It holds 1500 files from The Stack, each under
 the license of the repository it came from, so it is fetched rather than
 redistributed. The FLORES+ corpus under `parallel/` is fetched for the same
-reason; see NOTICE.
+reason. FLORES+ is CC-BY-SA 4.0.
 
 Two of the nine tokenizers, `meta-llama/Meta-Llama-3-8B` and
 `google/gemma-2-9b`, are gated on the Hub and need an accepted license. Drop

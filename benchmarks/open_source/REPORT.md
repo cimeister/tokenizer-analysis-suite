@@ -90,4 +90,4 @@ CER is `n/a` for BERT base uncased, XLM-RoBERTa base. The character error rate i
 
 None of this makes the numbers wrong. It means a single ranking over them would be, so the report gives the columns and not a rank.
 
-Every metric in the results file, including the ones no table above shows, is defined in [METRICS.md](../../METRICS.md).
+Every metric in the results file, including the ones no table above shows, is defined in [METRICS.md](../../docs/METRICS.md).

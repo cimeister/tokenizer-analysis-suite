@@ -26,7 +26,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RESULTS = REPO_ROOT / "benchmarks" / "open_source" / "analysis_results.json"
-DOCS = ("README.md", "METRICS.md")
+DOCS = ("README.md", "docs/METRICS.md")
 
 # A backtick-quoted dotted path, e.g. `fertility.per_tokenizer.<tok>.global`.
 PATH_PATTERN = re.compile(r"`([a-z0-9_]+(?:\.[a-zA-Z0-9_<>]+)+)`")

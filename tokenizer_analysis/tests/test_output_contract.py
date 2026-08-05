@@ -542,7 +542,7 @@ def test_cer_skipped_survives_slimming():
 
     mean_cer and whitespace_fidelity are null both when the character error
     rate exceeded --cer-time-budget and when there was nothing to measure.
-    cer_skipped is the only field that separates the two, and METRICS.md and
+    cer_skipped is the only field that separates the two, and docs/METRICS.md
     the benchmark README both tell readers to consult it.
 
     It is written only when a tokenizer actually exceeds the budget, so a demo
