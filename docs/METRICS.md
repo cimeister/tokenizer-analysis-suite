@@ -224,7 +224,15 @@ This implementation deviates from the reference in four ways, listed in
 the normalizer: this metric divides by the context's own successor count, the
 reference divides by the corpus-wide accessor-domain size. The reference
 normalizer and the reference unweighted aggregation are computed alongside and
-written under `bigram_entropy.reference_definition`.
+written under `bigram_entropy.reference_definition`, both for the corpus at
+`.per_tokenizer.<tok>.bigram_entropy` and per language at
+`.per_tokenizer.<tok>.per_language.<lang>.bigram_entropy`.
+
+A per-language entry treats that language as its own corpus: it normalizes by
+the language's own accessor domain, published beside it as
+`accessor_domain_size`. Over six FLORES languages with gpt2 that divisor ranges
+from 104 to 1894, so two per-language values are not on a common scale. Compare
+one language across tokenizers, not two languages under one tokenizer.
 
 ### Trigram entropy (`trigram_entropy`)
 

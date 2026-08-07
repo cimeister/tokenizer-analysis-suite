@@ -109,9 +109,12 @@ the last splitting the pooled global into `prose`, `code` and `math`. Its
 The slimmed file omits `pairwise_comparisons`, `summary`, `per_category`
 breakdowns, and the derivable stat fields `sum`, `std_err`, `min` and `max`. The
 full results file adds `per_category` for the metrics that have category
-breakdowns (AST node types, operator types). `bigram_entropy` also holds a
+breakdowns (AST node types, operator types). `bigram_entropy` and `trigram_entropy` also hold a
 top-level `reference_definition` block with the same measurement under the
-reference normalizer and aggregation.
+reference normalizer and aggregation, per tokenizer and, inside that, per
+language. A per-language entry normalizes by that language's own accessor
+domain, published beside it as `accessor_domain_size`, so two languages there
+are not on a common scale.
 
 Since 1.0.2 the slim file is a strict projection of the full one: every leaf
 is at the same key path with the same value in both, and slimming only
