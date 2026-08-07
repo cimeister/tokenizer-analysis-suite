@@ -1931,3 +1931,564 @@ class TestPerTextOperatorsMatchComputeOperators:
         # '>=', so a change that made both paths count the '! =' as a compound
         # operator would not pass by agreeing with itself.
         assert per_text["n_compound_operators"] == 1
+
+
+# ======================================================================
+# Character map and operator scoring: the cheaper implementations
+# ======================================================================
+
+def _char_to_token_per_character(n_chars, offsets, keep_later_token_on_overlap=False):
+    """The map, assigned one character at a time.
+
+    ``_char_to_token_from_offsets`` writes a whole token range in one slice
+    assignment when the later token wins, which is what makes the metric
+    affordable on a large corpus. This is the definition that assignment has to
+    reproduce: iterate the tokens in order, and for each, walk its clamped range
+    character by character.
+    """
+    if not offsets:
+        return None
+    mapping = [None] * n_chars
+    for tok_idx, span in enumerate(offsets):
+        if not span:
+            continue
+        start, end = span
+        for ci in range(max(0, start), min(end, n_chars)):
+            if keep_later_token_on_overlap or mapping[ci] is None:
+                mapping[ci] = tok_idx
+    return mapping
+
+
+def _score_operators_via_reverse_map(text, offsets, char_to_token):
+    """Operator scores, from a token to character-set map over the whole text.
+
+    ``_iter_operator_scores`` scans each covering token's own offset span
+    instead, because building this map is one set allocation per token and one
+    insertion per character of the document to answer a question asked only
+    about the tokens that cover an operator. The two must agree on every text.
+    """
+    from collections import defaultdict
+
+    token_to_chars = defaultdict(set)
+    for ci, ti in enumerate(char_to_token):
+        if ti is not None:
+            token_to_chars[ti].add(ci)
+
+    out = []
+    for m in DigitBoundaryMetrics._OPERATOR_SPAN.finditer(text):
+        op_str = m.group()
+        category = DigitBoundaryMetrics._OPERATOR_TO_CATEGORY.get(op_str)
+        if category is None:
+            continue
+        op_start, op_end = m.start(), m.end()
+        op_token_indices = {
+            char_to_token[i]
+            for i in range(op_start, op_end)
+            if char_to_token[i] is not None
+        }
+        if not op_token_indices:
+            continue
+        op_char_set = set(range(op_start, op_end))
+        outside_non_ws = False
+        for ti in op_token_indices:
+            for ci in token_to_chars[ti]:
+                if ci in op_char_set:
+                    continue
+                if not text[ci].isspace():
+                    outside_non_ws = True
+                    break
+            if outside_non_ws:
+                break
+        is_compound = len(op_str) > 1
+        out.append((
+            category,
+            not outside_non_ws,
+            is_compound,
+            is_compound and len(op_token_indices) == 1,
+        ))
+    return out
+
+
+class TestCharToTokenMapSliceAssignment:
+    """The slice assignment reproduces the per-character assignment exactly."""
+
+    # Each case names the offset shape it covers. The clamping cases are the
+    # ones the slice assignment has to handle itself, since a slice does not
+    # clamp the way range() did.
+    CASES = [
+        ("plain, no overlap", 6, [(0, 2), (2, 4), (4, 6)]),
+        ("gap no token covers", 6, [(0, 2), (4, 6)]),
+        ("sentencepiece marker overlap", 7, [(0, 1), (0, 4), (4, 7)]),
+        ("end past the text", 5, [(0, 3), (3, 99)]),
+        ("negative start", 5, [(-2, 3), (3, 5)]),
+        ("zero-width span among real ones", 4, [(0, 2), (0, 0), (2, 4)]),
+        ("end before start", 4, [(3, 1), (0, 2)]),
+        # A negative end is the case that makes the `end <= start` guard
+        # load-bearing rather than decorative. `mapping[2:-1] = []` deletes
+        # elements, so without the guard the returned list is two entries
+        # shorter than the text and every later index reads the wrong token.
+        # The non-negative `(3, 1)` case above cannot show this: there the
+        # slice and the value are both empty and the assignment is a no-op.
+        ("negative end, positive start", 5, [(0, 5), (2, -1)]),
+        ("later token nested inside an earlier one", 6, [(0, 6), (2, 4)]),
+        # A wrapper may report no span for a special token. Both falsy forms
+        # have to be skipped rather than unpacked.
+        ("None among real spans", 4, [(0, 2), None, (2, 4)]),
+        ("empty tuple among real spans", 4, [(0, 2), (), (2, 4)]),
+    ]
+
+    @pytest.mark.parametrize("label,n_chars,offsets", CASES,
+                             ids=[c[0] for c in CASES])
+    def test_matches_per_character_assignment(self, label, n_chars, offsets):
+        for keep_later in (True, False):
+            assert DigitBoundaryMetrics._char_to_token_from_offsets(
+                n_chars, offsets, keep_later_token_on_overlap=keep_later
+            ) == _char_to_token_per_character(
+                n_chars, offsets, keep_later_token_on_overlap=keep_later
+            ), f"{label}, keep_later_token_on_overlap={keep_later}"
+
+    def test_the_two_overlap_rules_still_differ(self):
+        """Guards the parametrized test above from passing on identical inputs.
+
+        Both rules agreeing everywhere would make that test vacuous. On the
+        marker shape they disagree on character 0, which is the character the
+        overlap rule exists for.
+        """
+        offsets = [(0, 1), (0, 4), (4, 7)]
+        later = DigitBoundaryMetrics._char_to_token_from_offsets(
+            7, offsets, keep_later_token_on_overlap=True)
+        earlier = DigitBoundaryMetrics._char_to_token_from_offsets(
+            7, offsets, keep_later_token_on_overlap=False)
+        assert later[0] == 1
+        assert earlier[0] == 0
+
+    def test_no_offsets_returns_none(self):
+        assert DigitBoundaryMetrics._char_to_token_from_offsets(4, None) is None
+        assert DigitBoundaryMetrics._char_to_token_from_offsets(4, []) is None
+
+
+class TestOperatorIsolationTestsOwnershipNotCoverage:
+    """A covering token answers for the characters it owns, not the ones it spans.
+
+    Where two tokens claim a character the later one takes it. A token whose
+    offset span reaches over a character another token owns must not be judged
+    on that character: it is the later token that produced it.
+
+    Dropping the token to character-set map made this explicit rather than
+    implicit. The map held owned characters only, so the rule came for free;
+    scanning a token's offset span instead reaches characters it does not own,
+    and the equality test against the map is what excludes them. Without that
+    test this text scores 0.0 instead of 1.0.
+
+    The offsets here are constructed, not taken from a tokenizer. The shape
+    needs a token that covers an operator and is itself overlapped by a later
+    token, and over 27283 operators of FLORES, web text and the benchmark code
+    corpus that shape appeared for none of gpt2, xlm-roberta-base,
+    bert-base-uncased or a SuperBPE vocabulary. This is therefore a
+    specification test for the rule, not a regression test for an observed
+    disagreement.
+    """
+
+    TEXT = "=ab"
+    # token 0 spans the whole text, token 1 spans "ab" and so owns it.
+    OFFSETS = [(0, 3), (1, 3)]
+
+    def test_operator_token_reaching_over_a_later_token_is_isolated(self):
+        char_to_token = DigitBoundaryMetrics._char_to_token_from_offsets(
+            len(self.TEXT), self.OFFSETS, keep_later_token_on_overlap=True)
+        assert char_to_token == [0, 1, 1], "token 1 owns the operand"
+
+        scores = list(DigitBoundaryMetrics._iter_operator_scores(
+            self.TEXT, self.OFFSETS, char_to_token))
+        assert scores == [("assignment", True, False, False)]
+
+    def test_a_token_that_does_own_the_operand_is_not_isolated(self):
+        """The same shape with nothing to take the operand away scores 0.0."""
+        offsets = [(0, 3)]
+        char_to_token = DigitBoundaryMetrics._char_to_token_from_offsets(
+            len(self.TEXT), offsets, keep_later_token_on_overlap=True)
+        scores = list(DigitBoundaryMetrics._iter_operator_scores(
+            self.TEXT, offsets, char_to_token))
+        assert scores == [("assignment", False, False, False)]
+
+
+class TestAccumulatorGainsNoEmptyLanguageEntry:
+    """A text whose only operator characters have no category adds no key.
+
+    `_OPERATOR_SPAN` matches a bare '!', which `_OPERATOR_TO_CATEGORY` has no
+    entry for, so a text can pass the early return and score nothing. Indexing
+    `acc[tok_name][lang][category]` inside the loop is what keeps the
+    `defaultdict` untouched in that case; hoisting the language lookup out of
+    the loop, which is the obvious way to save a dict lookup per operator,
+    creates an empty entry the per-character version never created. Nothing
+    published moves either way, since `_build_operator_results` skips a
+    language with no operators, but the accumulator is this method's return
+    value and two callers read it.
+    """
+
+    TOK = "nocat_tok"
+
+    def test_only_languages_with_a_scored_operator_appear(self):
+        tok = _CharTokenizer()
+        metrics = DigitBoundaryMetrics(_MockProvider(self.TOK, tok))
+
+        def item(lang, text):
+            ids, offsets = tok.encode_with_offsets(text)
+            return TokenizedData(tokenizer_name=self.TOK, language=lang,
+                                 tokens=ids, text=text, offsets=offsets)
+
+        acc = metrics._accumulate_operators({self.TOK: [
+            item("scored", "a = b"),
+            item("uncategorised", "wow! amazing!"),
+            item("no_operator_at_all", "plain words"),
+        ]})
+
+        assert set(acc[self.TOK]) == {"scored"}
+        assert set(acc[self.TOK]["scored"]) == {"assignment"}
+
+
+class TestOperatorScoringClampsTheSpanItScans:
+    """A covering token's span is clamped to the text before it is scanned.
+
+    ``_iter_operator_scores`` reads ``text[ci]`` and ``char_to_token[ci]`` for
+    every character of a covering token's offset span, so a span reaching past
+    either end of the text has to be cut down first. Neither offset source in
+    ``TestOperatorScoresMatchReverseMapReference`` produces such a span, so
+    without these two cases both clamps can be deleted with the suite still
+    green. The version this replaced needed no clamp: it read a reverse map
+    built only from characters the text has.
+    """
+
+    def _score(self, text, offsets):
+        char_to_token = DigitBoundaryMetrics._char_to_token_from_offsets(
+            len(text), offsets, keep_later_token_on_overlap=True)
+        return list(DigitBoundaryMetrics._iter_operator_scores(
+            text, offsets, char_to_token))
+
+    def test_span_starting_before_the_text(self):
+        """Without the start clamp the scan runs from a negative index.
+
+        Python reads those from the end of the string, so the token is judged
+        on the text's own trailing characters and '=' is reported glued to an
+        operand it does not touch.
+        """
+        assert self._score("=abc", [(-4, 1)]) == [("assignment", True, False, False)]
+
+    def test_span_ending_past_the_text(self):
+        """Without the end clamp the scan indexes past the end and raises."""
+        assert self._score("=", [(0, 10)]) == [("assignment", True, False, False)]
+
+
+class TestOperatorScoresMatchReverseMapReference:
+    """The span scan and the whole-document reverse map agree, text by text.
+
+    The reverse map is the implementation the span scan replaced. Run over the
+    bundled corpora with a real tokenizer, this is the regression guard for the
+    rewrite: it compares the two on every operator of every text rather than on
+    a summary figure, so a disagreement on one operator fails it.
+    """
+
+    TEXTS = [
+        "0! = 1, 5! = 120, and 20 >= 3.",
+        "x=y",
+        "a ** b // c %% d",
+        "if (a<=b && c>=d) { return a<<2 | b>>1; }",
+        "no operators here at all",
+        "-42 + -3.5e-7 == -0.0",
+        "  =  ",
+        "réservé … naïve <= 3",   # multi-byte characters around an operator
+        "字符=值 and 数字 >= 10",
+        "a?:b, ~c, e^f, g!=h, i=>j",
+    ]
+
+    def _texts(self):
+        from tokenizer_analysis.utils.text_utils import (
+            load_math_data, BUILTIN_MATH_SAMPLES_PATH,
+        )
+        from tokenizer_analysis.loaders.code_data import CodeDataLoader
+
+        texts = list(self.TEXTS)
+        texts += load_math_data(BUILTIN_MATH_SAMPLES_PATH)
+        for snippets in CodeDataLoader.generate_synthetic_samples().values():
+            texts += snippets
+        return [t for t in texts if t and t.strip()]
+
+    @staticmethod
+    def _bundled_bpe_offsets():
+        from tokenizer_analysis.core.tokenizer_wrapper import create_tokenizer_wrapper
+
+        tokenizer = create_tokenizer_wrapper(
+            "bundled-bpe", {"class": "huggingface", "path": "tokenizers/bpe.json"}
+        )
+
+        def offsets_for(text):
+            _ids, offsets = tokenizer.encode_with_offsets(text)
+            assert offsets is not None, "the bundled BPE reports offsets"
+            return list(offsets)
+
+        return offsets_for
+
+    @staticmethod
+    def _marker_overlap_offsets():
+        """Offsets in the shape a SentencePiece vocabulary reports.
+
+        The bundled BPE does report characters that two tokens claim, 77 of
+        them over the corpus this class builds, but they are the multi-byte
+        splits its byte-level vocabulary makes: '상' at one text's character
+        869 is claimed by tokens 359, 360 and 361, all with span (869, 870).
+        Every one is a Hangul or Han character, and an operator is ASCII, so on
+        its offsets alone the overlap rule never decides an operator's
+        attribution.
+
+        The marker shape does. xlm-roberta-base encodes '1234567' as the
+        word-start marker plus '1234' and '567' with offsets (0,1), (0,4) and
+        (4,7), so the marker and the first content token both claim character
+        0, which is an ordinary ASCII character that can be or adjoin an
+        operator. This reproduces that shape without downloading a tokenizer: a
+        marker token covering the first character of every word-initial run,
+        then the run in pieces of three.
+        """
+        def offsets_for(text):
+            offsets = []
+            for m in re.finditer(r"\S+|\s+", text):
+                start, end = m.start(), m.end()
+                if not text[start].isspace():
+                    offsets.append((start, start + 1))
+                for piece in range(start, end, 3):
+                    offsets.append((piece, min(piece + 3, end)))
+            return offsets
+
+        return offsets_for
+
+    @pytest.mark.parametrize("source", ["bundled bpe", "marker overlap"])
+    def test_every_operator_scores_the_same_both_ways(self, source):
+        offsets_for = (
+            self._bundled_bpe_offsets() if source == "bundled bpe"
+            else self._marker_overlap_offsets()
+        )
+        texts = self._texts()
+        assert len(texts) > 20, "the bundled corpora supplied nothing to compare on"
+
+        n_operators = 0
+        n_texts_with_operators = 0
+        n_isolated = 0
+        n_overlapping_chars = 0
+        for text in texts:
+            offsets = offsets_for(text)
+            char_to_token = DigitBoundaryMetrics._char_to_token_from_offsets(
+                len(text), offsets, keep_later_token_on_overlap=True)
+
+            got = list(DigitBoundaryMetrics._iter_operator_scores(
+                text, offsets, char_to_token))
+            want = _score_operators_via_reverse_map(text, offsets, char_to_token)
+            assert got == want, f"disagreement on {text!r}"
+
+            n_operators += len(got)
+            n_texts_with_operators += bool(got)
+            n_isolated += sum(1 for s in got if s[1])
+            n_overlapping_chars += sum(
+                1 for ci in range(len(text))
+                if sum(1 for s, e in offsets if s <= ci < e) > 1
+            )
+
+        # Without these the test passes on a corpus that scores nothing, and on
+        # one where every operator lands on the same side of the isolation test.
+        assert n_texts_with_operators > 10
+        assert n_operators > 100
+        assert 0 < n_isolated < n_operators
+
+        if source == "marker overlap":
+            assert n_overlapping_chars > 0, (
+                "this source exists to exercise the overlap rule and reported "
+                "no character claimed by two tokens"
+            )
+
+
+class _RecordingTokenizer:
+    """Char-level tokenizer that records how it was asked to encode.
+
+    ``_tokenize_texts`` builds the code and math operator-isolation corpora. It
+    used to call ``encode_with_offsets`` once per text; the Rust backends encode
+    a batch across threads, so it now calls ``encode_batch_with_offsets`` once
+    per language.
+    """
+
+    def __init__(self, batch_raises=False, batch_returns_short=False):
+        self._batch_raises = batch_raises
+        self._batch_returns_short = batch_returns_short
+        self.batch_calls = []
+        self.single_calls = []
+
+    def can_encode(self):
+        return True
+
+    def encode(self, text):
+        return [ord(c) for c in text]
+
+    def encode_with_offsets(self, text):
+        self.single_calls.append(text)
+        return [ord(c) for c in text], [(i, i + 1) for i in range(len(text))]
+
+    def encode_batch_with_offsets(self, texts):
+        self.batch_calls.append(list(texts))
+        if self._batch_raises:
+            raise RuntimeError("no batch API here")
+        out = [
+            ([ord(c) for c in t], [(i, i + 1) for i in range(len(t))])
+            for t in texts
+        ]
+        return out[:-1] if self._batch_returns_short else out
+
+
+class TestTokenizeTextsBatchesTheDerivedCorpora:
+
+    TOK = "batch_tok"
+    CORPUS = {
+        "python": ["a = 1", "b = 2", "   ", "c = a + b"],
+        "rust": ["let x = 1;"],
+    }
+
+    def _metrics(self, tokenizer):
+        return DigitBoundaryMetrics(_MockProvider(self.TOK, tokenizer))
+
+    def test_one_batch_call_per_language(self):
+        tok = _RecordingTokenizer()
+        out = self._metrics(tok)._tokenize_texts(self.CORPUS)
+
+        assert tok.batch_calls == [["a = 1", "b = 2", "c = a + b"], ["let x = 1;"]], (
+            "one call per language, whitespace-only texts dropped before the call"
+        )
+        assert tok.single_calls == []
+        assert [item.text for item in out[self.TOK]] == [
+            "a = 1", "b = 2", "c = a + b", "let x = 1;"
+        ]
+        assert [item.language for item in out[self.TOK]] == [
+            "python", "python", "python", "rust"
+        ]
+
+    def test_a_failed_batch_call_falls_back_to_one_call_per_text(self):
+        """The plumbing of the fallback, not a claim about any tokenizer.
+
+        Both paths here run against the same stub, whose batch method returns
+        what its single method returns, so this checks that `_tokenize_texts`
+        assembles the same items either way. That a real tokenizer's batch
+        encoding equals its per-text encoding is a separate claim, checked in
+        `test_a_real_tokenizer_encodes_a_batch_as_it_encodes_each_text`.
+        """
+        batched = self._metrics(_RecordingTokenizer())._tokenize_texts(self.CORPUS)
+
+        per_text_tok = _RecordingTokenizer(batch_raises=True)
+        per_text = self._metrics(per_text_tok)._tokenize_texts(self.CORPUS)
+
+        assert per_text_tok.single_calls == [
+            "a = 1", "b = 2", "c = a + b", "let x = 1;"
+        ], "the batch failure falls back to one call per text"
+        assert [(i.text, i.language, i.tokens, i.offsets)
+                for i in batched[self.TOK]] == [
+            (i.text, i.language, i.tokens, i.offsets) for i in per_text[self.TOK]
+        ]
+
+    def test_a_real_tokenizer_encodes_a_batch_as_it_encodes_each_text(self):
+        """Switching to the batch API rests on this, and nothing checked it.
+
+        `C8` in the sanity checker compares the two, but on ids only, over 50
+        prose probes, and reports WARN rather than failing. This compares ids
+        and offsets on the corpus shape the batch call is used for.
+        """
+        from tokenizer_analysis.core.tokenizer_wrapper import create_tokenizer_wrapper
+
+        tokenizer = create_tokenizer_wrapper(
+            "bundled-bpe", {"class": "huggingface", "path": "tokenizers/bpe.json"}
+        )
+        texts = [t for texts in self.CORPUS.values() for t in texts if t.strip()]
+        texts += [
+            "def f(a, b): return a <= b and a != 0",
+            "résumé = naïve  # 字符 >= 10",
+            "x" * 500 + " == " + "y" * 500,
+        ]
+        batch = tokenizer.encode_batch_with_offsets(texts)
+        loop = [tokenizer.encode_with_offsets(t) for t in texts]
+
+        assert [ids for ids, _ in batch] == [ids for ids, _ in loop]
+        assert [list(offs) for _, offs in batch] == [list(offs) for _, offs in loop]
+        assert all(offs for _, offs in batch), "the bundled BPE reports offsets"
+
+    def test_a_tokenizer_without_the_batch_api_is_encoded_one_text_at_a_time(self):
+        class _NoBatch:
+            def can_encode(self):
+                return True
+
+            def encode(self, text):
+                return [ord(c) for c in text]
+
+            def encode_with_offsets(self, text):
+                return ([ord(c) for c in text],
+                        [(i, i + 1) for i in range(len(text))])
+
+        out = self._metrics(_NoBatch())._tokenize_texts(self.CORPUS)
+        assert [i.text for i in out[self.TOK]] == [
+            "a = 1", "b = 2", "c = a + b", "let x = 1;"
+        ]
+        assert all(i.offsets for i in out[self.TOK])
+
+    def test_a_tokenizer_with_neither_offset_method_yields_items_without_offsets(self):
+        """Ids but no offsets, so operator isolation skips it and says so.
+
+        The alternative would be to guess which token covers an operator, which
+        is what the reconstruction this metric moved off did.
+        """
+        class _IdsOnly:
+            def can_encode(self):
+                return True
+
+            def encode(self, text):
+                return [ord(c) for c in text]
+
+        out = self._metrics(_IdsOnly())._tokenize_texts(self.CORPUS)
+        assert [i.text for i in out[self.TOK]] == [
+            "a = 1", "b = 2", "c = a + b", "let x = 1;"
+        ]
+        assert all(i.offsets is None for i in out[self.TOK])
+        assert all(i.tokens for i in out[self.TOK])
+
+    def test_a_malformed_batch_return_falls_back_rather_than_raising(self):
+        """A backend returning something other than (ids, offsets) pairs.
+
+        Before this method encoded in batches, a bad return from
+        `encode_with_offsets` was caught and the text was encoded with
+        `encode()` instead. Unpacking inside the try keeps that: the batch
+        result is rejected and the per-text path runs.
+        """
+        class _BadBatch(_RecordingTokenizer):
+            def encode_batch_with_offsets(self, texts):
+                self.batch_calls.append(list(texts))
+                return [(self.encode(t), [], "extra") for t in texts]
+
+        tok = _BadBatch()
+        out = self._metrics(tok)._tokenize_texts(self.CORPUS)
+        assert tok.single_calls == ["a = 1", "b = 2", "c = a + b", "let x = 1;"]
+        assert [i.text for i in out[self.TOK]] == tok.single_calls
+
+    def test_a_short_batch_result_raises_rather_than_mispairing(self):
+        """Pairing by position would attach one text's offsets to another.
+
+        Silently zipping a short result drops the last text and shifts nothing,
+        but a backend that reorders or merges would misalign every pair after
+        the first, and the metric would then be computed against the wrong
+        source with no sign in the output.
+        """
+        tok = _RecordingTokenizer(batch_returns_short=True)
+        with pytest.raises(ValueError, match="encodings for the 3 'python' texts"):
+            self._metrics(tok)._tokenize_texts(self.CORPUS)
+
+    def test_a_tokenizer_that_cannot_encode_raw_text_is_left_out(self):
+        """Unchanged by the batching: no batch call is made for it either."""
+        class _PreTokenizedOnly:
+            def can_encode(self):
+                return False
+
+            def encode(self, text):
+                raise RuntimeError("pre-tokenized input carries ids, not text")
+
+        out = self._metrics(_PreTokenizedOnly())._tokenize_texts(self.CORPUS)
+        assert out == {}

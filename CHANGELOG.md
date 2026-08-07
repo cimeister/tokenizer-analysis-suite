@@ -158,6 +158,12 @@ conflicting flags.
   full file. `run_metadata` gained a timestamp, per-tokenizer Hub revisions and
   a corpus digest. Two sanity checks stopped reporting a passing score for
   checks that ran on nothing, and one could turn a FAIL into a PASS.
+  `operator_isolation_rate` costs less to compute. The phase that holds it and
+  the three digit metrics runs in 49.5 s against 454.8 s for the nine
+  tokenizers of `benchmarks/open_source/`, and scoring one tokenizer's
+  operators over 104.3 M characters of web text takes 16.3 s against 330.0 s.
+  Its code and math domains are encoded in one batch per language rather than
+  one call per text. Every published value is unchanged.
 - **1.0.1** A LaTeX table had an empty column. Tree-sitter `ERROR` spans
   were scored as AST leaves. The verbose printers rendered a `null` as `0.000`
   or raised. A directory of `vocab.json` and `merges.txt` could not load.

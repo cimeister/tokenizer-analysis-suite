@@ -770,23 +770,69 @@ class DigitBoundaryMetrics(BaseMetrics):
             # operators to tokens through offsets, so a derived corpus without
             # them would be skipped entirely and the code and math domains would
             # silently vanish from the results.
+            encode_batch = getattr(tokenizer_obj, "encode_batch_with_offsets", None)
             encode_offsets = getattr(tokenizer_obj, "encode_with_offsets", None)
             items: List[TokenizedData] = []
             for lang, texts in texts_by_lang.items():
-                for text in texts:
-                    if not text or not text.strip():
-                        continue
-                    offsets = None
-                    if callable(encode_offsets):
-                        try:
-                            ids, offsets = encode_offsets(text)
-                        except Exception as exc:
-                            logger.debug(
-                                "encode_with_offsets failed for %r: %s", tok_name, exc
-                            )
-                            ids = encode(text)
-                    else:
-                        ids = encode(text)
+                usable = [text for text in texts if text and text.strip()]
+                if not usable:
+                    continue
+                # One batch call per language rather than one call per text.
+                # The Rust backends encode a batch across threads, which the
+                # per-text loop this replaced gave up: 4.14 s against 0.98 s
+                # over 300 files of the benchmark code corpus with gpt2, for
+                # the same ids.
+                #
+                # A batch is paired with its texts by position, which is the
+                # batch API's contract and what InputProvider already relies on
+                # for the prose corpus. The count is checked below; a backend
+                # that returned the right number of encodings in the wrong
+                # order would not be caught here, and neither corpus checks for
+                # that today.
+                #
+                # The unpacking sits inside the try, so a backend that returns
+                # something other than (ids, offsets) pairs falls back to the
+                # per-text path rather than raising from the zip below. That is
+                # what the per-text path did with a bad return before this
+                # method encoded in batches.
+                encoded = None
+                if callable(encode_batch):
+                    try:
+                        encoded = [(ids, offsets)
+                                   for ids, offsets in encode_batch(usable)]
+                    except Exception as exc:
+                        logger.debug(
+                            "encode_batch_with_offsets failed for %r (%s); "
+                            "encoding one text at a time instead", tok_name, exc,
+                        )
+                        encoded = None
+                if encoded is None:
+                    encoded = []
+                    for text in usable:
+                        ids, offsets = None, None
+                        if callable(encode_offsets):
+                            try:
+                                ids, offsets = encode_offsets(text)
+                            except Exception as exc:
+                                logger.debug(
+                                    "encode_with_offsets failed for %r: %s",
+                                    tok_name, exc,
+                                )
+                                ids = None
+                        if ids is None:
+                            ids, offsets = encode(text), None
+                        encoded.append((ids, offsets))
+                if len(encoded) != len(usable):
+                    raise ValueError(
+                        f"Tokenizer {tok_name!r} returned {len(encoded)} "
+                        f"encodings for the {len(usable)} {lang!r} texts of the "
+                        "operator-isolation corpus. Pairing them by position "
+                        "would attach one text's offsets to another text, so "
+                        "the metric would be computed against the wrong source. "
+                        "Only the count is checked: a backend that reordered a "
+                        "batch of the right length would not be caught here."
+                    )
+                for text, (ids, offsets) in zip(usable, encoded):
                     items.append(
                         TokenizedData(
                             tokenizer_name=tok_name,
@@ -850,10 +896,118 @@ class DigitBoundaryMetrics(BaseMetrics):
             if not span:
                 continue
             start, end = span
-            for ci in range(max(0, start), min(end, n_chars)):
-                if keep_later_token_on_overlap or mapping[ci] is None:
-                    mapping[ci] = tok_idx
+            if start < 0:
+                start = 0
+            if end > n_chars:
+                end = n_chars
+            if end <= start:
+                continue
+            if keep_later_token_on_overlap:
+                # Every character of the range takes this token, so the range
+                # is written in one slice assignment rather than one Python
+                # loop iteration per character. Same list either way; the loop
+                # cost 1.09 s against 0.50 s for the assignment over 2.93 M
+                # characters of web text encoded with gpt2.
+                mapping[start:end] = [tok_idx] * (end - start)
+            else:
+                for ci in range(start, end):
+                    if mapping[ci] is None:
+                        mapping[ci] = tok_idx
         return mapping
+
+    @staticmethod
+    def _iter_operator_scores(
+        text: str,
+        offsets: List[Tuple[int, int]],
+        char_to_token: List[Optional[int]],
+    ):
+        """Score every operator in *text*, one 4-tuple per operator.
+
+        Yields ``(category, isolated, is_compound, compound_preserved)``.
+        *char_to_token* is ``_char_to_token_from_offsets(len(text), offsets,
+        keep_later_token_on_overlap=True)``.
+
+        ``_accumulate_operators`` and ``compute_per_text`` both call this, so
+        the corpus path and the per-document path score a given text
+        identically. They used to hold two copies of the body and a comment
+        asking the next reader to keep them in step.
+
+        Cost is proportional to the number of operators and to how many
+        characters the tokens covering them span, not to the length of the
+        text. The version this replaced built a dict from token index to a
+        Python set of character indices over the whole document, which is one
+        set allocation per token and one insertion per character, to answer a
+        question asked only about the tokens covering an operator. Over
+        8.4 M characters of web text the two together cost 10.67 s for gpt2
+        against 1.57 s, for the same counts.
+        """
+        n_chars = len(text)
+        for m in DigitBoundaryMetrics._OPERATOR_SPAN.finditer(text):
+            op_str = m.group()
+            category = DigitBoundaryMetrics._OPERATOR_TO_CATEGORY.get(op_str)
+            if category is None:
+                continue
+            op_start = m.start()
+            op_end = m.end()
+
+            op_token_indices = set()
+            for ci in range(op_start, op_end):
+                ti = char_to_token[ci]
+                if ti is not None:
+                    op_token_indices.add(ti)
+            if not op_token_indices:
+                continue
+
+            # Isolated = the covering tokens carry no non-whitespace character
+            # from outside the operator span, i.e. the operator is not glued to
+            # an operand.
+            #
+            # Whitespace is excluded from the test because these are source
+            # coordinates. A token such as 'G=' covers the space before the
+            # operator as well as the operator, and that token is still an
+            # isolated operator: the space is not an operand. The
+            # reconstruction-coordinate version this replaced got that for free
+            # by stripping whitespace before matching.
+            #
+            # A character a token owns lies inside that token's own offset
+            # span, so those spans are the only place to look. The equality
+            # test against char_to_token is what makes it ownership rather than
+            # coverage: where two tokens claim a character the later one takes
+            # it, and the earlier one is not answerable for it.
+            #
+            # That test is defensive. It fires only when a token covering an
+            # operator is itself overlapped by a later token, and over 27283
+            # operators of FLORES, web text and the benchmark code corpus it
+            # fired for none of gpt2, xlm-roberta-base, bert-base-uncased and
+            # a SuperBPE vocabulary. It is kept because it is one comparison
+            # and it makes this equivalent to the whole-document reverse map it
+            # replaced for any offset shape, rather than only for the shapes
+            # those four report.
+            outside_non_ws = False
+            for ti in op_token_indices:
+                start, end = offsets[ti]
+                if start < 0:
+                    start = 0
+                if end > n_chars:
+                    end = n_chars
+                for ci in range(start, end):
+                    if op_start <= ci < op_end:
+                        continue
+                    if char_to_token[ci] != ti:
+                        continue
+                    if not text[ci].isspace():
+                        outside_non_ws = True
+                        break
+                if outside_non_ws:
+                    break
+
+            is_compound = len(op_str) > 1
+            yield (
+                category,
+                not outside_non_ws,
+                is_compound,
+                is_compound and len(op_token_indices) == 1,
+            )
 
     def _accumulate_operators(
         self, tokenized_data: Dict[str, List[TokenizedData]]
@@ -915,61 +1069,25 @@ class DigitBoundaryMetrics(BaseMetrics):
                         skipped_no_offsets += 1
                         continue
 
-                    # Reverse map: token_index -> set of char positions
-                    token_to_chars: Dict[int, Set[int]] = defaultdict(set)
-                    for ci, ti in enumerate(char_to_token):
-                        if ti is not None:
-                            token_to_chars[ti].add(ci)
-
-                    for m in self._OPERATOR_SPAN.finditer(item.text):
-                        op_str = m.group()
-                        op_start = m.start()
-                        op_end = m.end()
-                        category = self._OPERATOR_TO_CATEGORY.get(op_str)
-                        if category is None:
-                            continue
-
-                        # Token indices covering this operator
-                        op_token_indices = set()
-                        for i in range(op_start, op_end):
-                            if i < len(char_to_token) and char_to_token[i] is not None:
-                                op_token_indices.add(char_to_token[i])
-
-                        if not op_token_indices:
-                            continue
-
+                    for category, isolated, is_compound, preserved in (
+                        self._iter_operator_scores(
+                            item.text, item.offsets, char_to_token
+                        )
+                    ):
+                        # Indexed here rather than hoisted out of the loop, so
+                        # a language whose only operator characters have no
+                        # category does not gain an empty entry that the
+                        # per-character version never created. '!' matches
+                        # _OPERATOR_SPAN and is in no category, so a corpus can
+                        # reach this loop and yield nothing.
                         cat_acc = acc[tok_name][lang][category]
                         cat_acc["total"] += 1
-
-                        # Isolated = the covering tokens carry no non-whitespace
-                        # character from outside the operator span, i.e. the
-                        # operator is not glued to an operand.
-                        #
-                        # Whitespace is excluded from the test because these are
-                        # source coordinates. A token such as 'G=' covers the
-                        # space before the operator as well as the operator, and
-                        # that token is still an isolated operator: the space is
-                        # not an operand. The previous reconstruction-coordinate
-                        # version got this for free by stripping whitespace
-                        # before matching.
-                        op_char_set = set(range(op_start, op_end))
-                        outside_non_ws = False
-                        for ti in op_token_indices:
-                            for ci in token_to_chars[ti]:
-                                if ci in op_char_set:
-                                    continue
-                                if not item.text[ci].isspace():
-                                    outside_non_ws = True
-                                    break
-                            if outside_non_ws:
-                                break
-                        if not outside_non_ws:
+                        if isolated:
                             cat_acc["isolated"] += 1
-
                         # Compound preservation: multi-char operator -> 1 token
-                        if len(op_str) > 1:
+                        if is_compound:
                             cat_acc["compound_total"] += 1
-                            if len(op_token_indices) == 1:
+                            if preserved:
                                 cat_acc["compound_ok"] += 1
 
         if skipped_no_offsets:
@@ -1965,9 +2083,9 @@ class DigitBoundaryMetrics(BaseMetrics):
 
         if has_operators:
             # Operators are located in the SOURCE and resolved to tokens
-            # through the same offsets the digit scoring above used. The
-            # body below is ``_accumulate_operators``'s per-text body, so
-            # this method and ``compute()`` score a given text identically.
+            # through the same offsets the digit scoring above used, by the
+            # same helper ``_accumulate_operators`` calls, so this method and
+            # ``compute()`` score a given text identically.
             #
             # This used to run the operator regex over a reconstruction
             # built by concatenating cleaned token strings, which
@@ -1980,50 +2098,13 @@ class DigitBoundaryMetrics(BaseMetrics):
             # as 'G=G' reconstructs with a trailing space, which defeated the
             # isolation test even though the token covers only '=' in the
             # source.
-            token_to_chars: Dict[int, Set[int]] = defaultdict(set)
-            for ci, ti in enumerate(source_char_to_token):
-                if ti is not None:
-                    token_to_chars[ti].add(ci)
-            for m in self._OPERATOR_SPAN.finditer(text):
-                op_str = m.group()
-                op_start = m.start()
-                op_end = m.end()
-                category = self._OPERATOR_TO_CATEGORY.get(op_str)
-                if category is None:
-                    continue
-                op_token_indices: Set[int] = set()
-                for i in range(op_start, op_end):
-                    if (
-                        i < len(source_char_to_token)
-                        and source_char_to_token[i] is not None
-                    ):
-                        op_token_indices.add(source_char_to_token[i])
-                if not op_token_indices:
-                    continue
-
-                # Isolated = the covering tokens carry no non-whitespace
-                # character from outside the operator span, i.e. the
-                # operator is not glued to an operand. Whitespace is
-                # excluded because these are source coordinates: a token
-                # such as 'G=' covers the space before the operator as well
-                # as the operator, and that token is still an isolated
-                # operator.
-                op_char_set = set(range(op_start, op_end))
-                outside_non_ws = False
-                for ti in op_token_indices:
-                    for ci in token_to_chars[ti]:
-                        if ci in op_char_set:
-                            continue
-                        if not text[ci].isspace():
-                            outside_non_ws = True
-                            break
-                    if outside_non_ws:
-                        break
-                isolated_flags.append(0.0 if outside_non_ws else 1.0)
-
-                if len(op_str) > 1:
+            for _category, isolated, is_compound, preserved in (
+                self._iter_operator_scores(text, enc_offsets, source_char_to_token)
+            ):
+                isolated_flags.append(1.0 if isolated else 0.0)
+                if is_compound:
                     compound_total += 1
-                    if len(op_token_indices) == 1:
+                    if preserved:
                         compound_ok += 1
 
         n_digit_spans = len(digit_f1s)
