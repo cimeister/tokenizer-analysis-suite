@@ -377,8 +377,14 @@ class InformationTheoreticMetrics(BaseMetrics):
                 token_to_rank = {token: rank + 1 for rank, token in enumerate(ranked_tokens)}
                 
                 lang_ranks = [token_to_rank[token] for token in lang_tokens]
-                avg_token_rank = np.mean(lang_ranks) if lang_ranks else 0.0
-                
+                # One rank per token, and lang_tokens is non-empty by the guard
+                # above, so there is no empty case to fall back from. This read
+                # `if lang_ranks else 0.0`, which is a rank no token can have,
+                # since ranks start at 1. The corpus-level value below publishes
+                # None for its empty case; that fallback is reachable, this one
+                # was not.
+                avg_token_rank = float(np.mean(lang_ranks))
+
                 per_lang_metrics[lang] = {
                     'unigram_entropy': unigram_entropy,
                     'avg_token_rank': avg_token_rank,

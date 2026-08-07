@@ -80,13 +80,16 @@ class DigitBoundaryMetrics(BaseMetrics):
     Worked examples: Digit Split Variability
     =================================================
 
+    The published ``entropy`` is Shannon entropy in bits, not normalized. These
+    examples used to quote a normalized value beside it, which no field carries.
+
     L=4, numbers ``["1234","5678","9012","3456"]`` all tokenized as
-    ``["X","XXX"]`` -> patterns: {(1,): 4}.  H = 0.0, normalised = 0.0
+    ``["X","XXX"]`` -> patterns: {(1,): 4}.  H = 0.0 bits
 
     L=4, ``"1234"`` -> ``(2,)``, ``"5678"`` -> ``(1,)``,
     ``"9012"`` -> ``(2,)``, ``"3456"`` -> ``(1,)``.
     Distribution: {(2,): 0.5, (1,): 0.5}.
-    H = 1.0 bit, normalised = 1.0
+    H = 1.0 bit
     """
 
     _DIGIT_SPAN = re.compile(r'\d+')
