@@ -52,7 +52,8 @@ class UnifiedTokenizerAnalyzer:
                  code_max_snippets_per_lang: Optional[int] = None,
                  code_max_snippet_chars: Optional[int] = None,
                  math_data_path: Optional[str] = None,
-                 use_builtin_math_data: bool = False):
+                 use_builtin_math_data: bool = False,
+                 include_prose_operators: bool = False):
         """
         Initialize unified analyzer.
 
@@ -82,6 +83,10 @@ class UnifiedTokenizerAnalyzer:
                 file; longer files are truncated. ``None`` uses
                 ``CodeDataLoader.MAX_SNIPPET_SIZE_CHARS`` (0, no cap, since
                 1.0.0).
+            include_prose_operators: Whether operator_isolation_rate scores the
+                main corpus as a prose domain. Off by default: an operator is a
+                code construct, and prose supplied 0.12% of the operator
+                occurrences on the nine-tokenizer benchmark.
             math_data_path: Optional path to math-rich text file for digit boundary metrics
             use_builtin_math_data: Whether to use the math samples bundled in
                 sample_data/math_samples.json as the math corpus for the digit
@@ -137,7 +142,7 @@ class UnifiedTokenizerAnalyzer:
             math_data_path=math_data_path,
             use_builtin_math_data=use_builtin_math_data,
         )
-        
+
         # Initialize information-theoretic metrics
         self.info_metrics = InformationTheoreticMetrics(
             input_provider, measurement_config=measurement_config, language_metadata=language_metadata
@@ -166,6 +171,7 @@ class UnifiedTokenizerAnalyzer:
             math_data_path=math_data_path,
             use_builtin_math_data=use_builtin_math_data,
             code_texts=code_texts,
+            include_prose_operators=include_prose_operators,
         )
 
         # Initialize UTF-8 integrity metrics (always available: no external data)

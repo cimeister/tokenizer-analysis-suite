@@ -193,9 +193,11 @@ def section_domain(results, rows):
         )
     lines.append("")
     lines.append(
-        "Operator isolation pools prose, code and math weighted by operator "
+        "Operator isolation pools the domains that ran, weighted by operator "
         "instances, so with this code corpus it sits close to the code rate; "
-        "`by_domain` in the results file splits the three."
+        "`by_domain` in the results file names them and splits the rates. "
+        "`run.sh` does not pass `--operator-prose-domain`, so a fresh run has "
+        "`code` and `math` there."
     )
     # Select on cer_skipped, not on mean_cer being None. A null mean_cer means
     # either that the edit distance exceeded the budget or that there was

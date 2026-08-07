@@ -122,8 +122,19 @@ class DigitBoundaryMetrics(BaseMetrics):
         math_data_path: Optional[str] = None,
         use_builtin_math_data: bool = False,
         code_texts: Optional[Dict[str, List[str]]] = None,
+        include_prose_operators: bool = False,
     ):
         super().__init__(input_provider)
+        # Whether the main corpus is scored as a domain of operator isolation.
+        #
+        # Off by default. An operator is a code construct, and the regex counts
+        # a hyphen, a slash and an exclamation mark, all of which are ordinary
+        # punctuation in prose. On the nine-tokenizer benchmark prose supplied
+        # 568 of 455558 operator occurrences, 0.12%, so it moved the pooled
+        # number by almost nothing while being the domain that costs the most to
+        # score: a web corpus is far larger than a code corpus and 78.5% of its
+        # documents contain at least one character the regex matches.
+        self._include_prose_operators = include_prose_operators
         self._math_data_path = math_data_path
         self._math_texts: List[str] = []
         if math_data_path:
@@ -166,10 +177,18 @@ class DigitBoundaryMetrics(BaseMetrics):
         self._encoded_corpus_cache: Dict[str, Dict[str, List[TokenizedData]]] = {}
         self._decode_table_cache: Dict[str, Any] = {}
 
-        logger.info(
-            "Operator isolation domains: prose=multilingual, math=%s, code=%s",
-            self._op_math_source, self._op_code_source,
-        )
+        if include_prose_operators:
+            logger.info(
+                "Operator isolation domains: prose=multilingual, math=%s, code=%s",
+                self._op_math_source, self._op_code_source,
+            )
+        else:
+            logger.info(
+                "Operator isolation domains: math=%s, code=%s. The prose domain "
+                "is off; pass --operator-prose-domain to score the main corpus "
+                "as well.",
+                self._op_math_source, self._op_code_source,
+            )
 
     @staticmethod
     def _corpus_stats(texts_by_lang: Dict[str, List[str]]) -> Dict[str, Any]:
@@ -392,9 +411,11 @@ class DigitBoundaryMetrics(BaseMetrics):
         metrics tokenize the loaded math texts and use that data **instead of**
         the ``tokenized_data`` parameter.
 
-        Operator isolation is reported separately for **prose**, **code** and
-        **math** under ``operator_isolation_rate["by_domain"]``; the top-level
-        ``summary`` pools all three. Each domain records the corpus it used.
+        Operator isolation is reported per domain under
+        ``operator_isolation_rate["by_domain"]``, and the top-level ``summary``
+        pools them. Each domain records the corpus it used. **code** and
+        **math** always run. **prose**, the main corpus, runs only when the
+        instance was built with ``include_prose_operators=True``.
 
         Returns a dict with four top-level keys:
         ``three_digit_boundary_alignment``, ``digit_split_variability``,
@@ -620,39 +641,48 @@ class DigitBoundaryMetrics(BaseMetrics):
                     tok_name, spans_not_covered,
                 )
 
-        # ---- operator isolation: prose / code / math, reported separately ----
-        domain_accs = {
-            "prose": self._accumulate_operators(prose_data),
-            "code": self._accumulate_operators(
-                self._tokenize_texts_cached("code", self._op_code_texts)
-            ),
-            "math": self._accumulate_operators(
-                self._tokenize_texts_cached("math", {"math": self._op_math_texts})
-            ),
-        }
+        # ---- operator isolation: code / math, and prose when asked for ----
+        # Prose is opt-in. See the constructor for why: it supplied 0.12% of the
+        # operator occurrences on the benchmark and most of the runtime on a web
+        # corpus. When it is off, nothing about the main corpus reaches this
+        # metric, so `by_domain` has two entries and the pooled figure is a
+        # code-and-math number.
+        domain_accs = {}
+        if self._include_prose_operators:
+            domain_accs["prose"] = self._accumulate_operators(prose_data)
+        domain_accs["code"] = self._accumulate_operators(
+            self._tokenize_texts_cached("code", self._op_code_texts)
+        )
+        domain_accs["math"] = self._accumulate_operators(
+            self._tokenize_texts_cached("math", {"math": self._op_math_texts})
+        )
         # Bundled paths are recorded relative to the package. They are derived
         # from __file__, so the absolute form bakes the author's checkout
         # directory into every results file, and a reader comparing two files
         # sees a difference that is only where the package was installed.
-        domain_sources = {
+        # Keyed on domain_accs, so a domain that did not run is described
+        # nowhere rather than being described with an empty result beside it.
+        all_sources = {
             "prose": "multilingual corpus",
             "code": _relative_to_package(self._op_code_source),
             "math": _relative_to_package(self._op_math_source),
         }
+        domain_sources = {d: all_sources[d] for d in domain_accs}
         # Size of each domain's corpus, so the pooled micro-average can be traced
         # back to which corpus supplied the operators.
-        domain_corpora = {
-            "prose": self._corpus_stats(self._texts_by_language(prose_data)),
-            "code": self._corpus_stats(self._op_code_texts),
-            "math": self._corpus_stats({"math": self._op_math_texts}),
+        all_corpora = {
+            "code": lambda: self._corpus_stats(self._op_code_texts),
+            "math": lambda: self._corpus_stats({"math": self._op_math_texts}),
+            "prose": lambda: self._corpus_stats(self._texts_by_language(prose_data)),
         }
+        domain_corpora = {d: all_corpora[d]() for d in domain_accs}
 
-        # The top-level per_tokenizer/summary pool all three domains, so the
-        # single-number view is no longer prose-only. The pool is a micro-average
-        # over operator instances, so it is weighted by how many operators each
-        # corpus contributes: with a real code dataset, code dominates. The
-        # per-domain denominators are published in ``domain_operator_counts`` so
-        # that weighting is visible rather than implicit.
+        # The top-level per_tokenizer/summary pool whichever domains ran. The
+        # pool is a micro-average over operator instances, so it is weighted by
+        # how many operators each corpus contributes: with a real code dataset,
+        # code dominates. The per-domain denominators are published in
+        # ``domain_operator_counts`` so that weighting is visible rather than
+        # implicit.
         operator_results = self._build_operator_results(
             self._merge_operator_accs(domain_accs)
         )
@@ -1615,8 +1645,9 @@ class DigitBoundaryMetrics(BaseMetrics):
             "metadata": {
                 "description": (
                     "How often a mathematical operator is a token of its own, "
-                    "pooled over prose, code and math, with the split kept in "
-                    "by_domain."
+                    "pooled over the domains that ran, with the split kept in "
+                    "by_domain. Code and math always run; prose runs only with "
+                    "--operator-prose-domain. Read by_domain to see which."
                 ),
                 "aggregation": AGGREGATION_MICRO_POOLED,
                 "count_unit": "operator occurrences",

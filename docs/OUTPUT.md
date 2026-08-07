@@ -102,9 +102,10 @@ Three metrics depart from that layout. All three still have `global` and
 | `reconstruction_fidelity` | `per_domain` in place of `per_language`, because it also runs on code and math |
 
 `operator_isolation_rate` holds `global`, `per_language` **and** `by_domain`,
-the last splitting the pooled global into `prose`, `code` and `math`. Its
-`per_language` keys natural languages (`arb_Arab`) and programming languages
-(`code:bash`) in one dict.
+the last splitting the pooled global by corpus. `by_domain` has `code` and
+`math`, plus `prose` when `--operator-prose-domain` was passed, and `global`
+pools whichever ran. Its `per_language` keys natural languages (`arb_Arab`) and
+programming languages (`code:bash`) in one dict.
 
 The slimmed file omits `pairwise_comparisons`, `summary`, `per_category`
 breakdowns, and the derivable stat fields `sum`, `std_err`, `min` and `max`. The

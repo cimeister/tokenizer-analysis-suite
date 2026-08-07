@@ -1286,6 +1286,18 @@ Examples:
              "Ignored if --math-data is also provided."
     )
     parser.add_argument(
+        "--operator-prose-domain",
+        action="store_true",
+        help="Score the main corpus as a prose domain of "
+             "operator_isolation_rate. Off by default: an operator is a code "
+             "construct, and the operator pattern matches a hyphen, a slash and "
+             "an exclamation mark, which are ordinary punctuation in prose. On "
+             "the nine-tokenizer benchmark prose supplied 568 of 455558 "
+             "operator occurrences, 0.12%%, while being the domain that costs "
+             "the most to score. With this flag, by_domain gains a 'prose' "
+             "entry and the pooled figure includes it."
+    )
+    parser.add_argument(
         "--code-ast-config",
         type=str,
         help="JSON file mapping programming languages to code file/directory paths for AST boundary analysis"
@@ -1871,7 +1883,8 @@ def run_from_args(args: argparse.Namespace):
             per_language_plots=args.per_language_plots,
             faceted_plots=args.faceted_plots,
             math_data_path=args.math_data,
-            use_builtin_math_data=args.use_builtin_math_data
+            use_builtin_math_data=args.use_builtin_math_data,
+            include_prose_operators=args.operator_prose_domain
         )
     else:
         # Raw tokenizer mode
@@ -1933,7 +1946,8 @@ def run_from_args(args: argparse.Namespace):
             per_language_plots=args.per_language_plots,
             faceted_plots=args.faceted_plots,
             math_data_path=args.math_data,
-            use_builtin_math_data=args.use_builtin_math_data
+            use_builtin_math_data=args.use_builtin_math_data,
+            include_prose_operators=args.operator_prose_domain
         )
     # Run analysis
     logger.info("Starting tokenizer analysis...")

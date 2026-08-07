@@ -1351,7 +1351,10 @@ class TestGoodVsBadTokenizer:
 
         id_to_token = {v: k for k, v in token_to_id.items()}
         provider = _MockProvider(tok_name, _MockTokenizer(id_to_token))
-        metrics = DigitBoundaryMetrics(provider)
+        # The corpus these fixtures build reaches the metric as prose, which is
+        # off by default, so it has to be turned on. What is under test is the
+        # isolation rule, not which domains run by default.
+        metrics = DigitBoundaryMetrics(provider, include_prose_operators=True)
 
         data_list = [
             TokenizedData(
@@ -1514,7 +1517,7 @@ class TestAdjacentNumbersNotMerged:
                     next_id += 1
         id_to_token = {v: k for k, v in token_to_id.items()}
         provider = _MockProvider(tok_name, _MockTokenizer(id_to_token))
-        metrics = DigitBoundaryMetrics(provider)
+        metrics = DigitBoundaryMetrics(provider, include_prose_operators=True)
         data_list = [
             TokenizedData(
                 tokenizer_name=tok_name,
@@ -1660,10 +1663,27 @@ class _CharTokenizer:
 
 
 class TestOperatorIsolationDomains:
-    """Operator isolation is reported separately for prose, code and math."""
+    """Operator isolation is reported per domain: code and math, prose on request.
+
+    Prose became opt-in because an operator is a code construct. The operator
+    pattern matches a hyphen, a slash and an exclamation mark, which are
+    ordinary punctuation in prose, and on the nine-tokenizer benchmark prose
+    supplied 568 of 455558 operator occurrences.
+    """
 
     TOK = "dom_tok"
     PROSE = "The total is 12 + 34 = 46 today."
+
+    def _metrics(self, tok, include_prose=True, **kw):
+        """Most of this class is about the prose/code/math split, so prose is on.
+
+        The default is exercised by the two tests that name it.
+        """
+        return DigitBoundaryMetrics(
+            _MockProvider(self.TOK, tok),
+            include_prose_operators=include_prose,
+            **kw,
+        )
 
     def _prose_data(self, tokenizer):
         ids, offsets = tokenizer.encode_with_offsets(self.PROSE)
@@ -1679,10 +1699,45 @@ class TestOperatorIsolationDomains:
             ]
         }
 
-    def test_reports_prose_code_and_math_each_with_its_corpus(self):
-        """All three domains appear, each recording the corpus it used."""
+    def test_prose_is_absent_by_default(self):
+        """The main corpus is not scored unless asked for.
+
+        Nothing about the input signals this: the same call with the same corpus
+        returns two domains or three depending only on the flag, so the domain
+        set is what a caller has to read.
+        """
         tok = _CharTokenizer()
         metrics = DigitBoundaryMetrics(_MockProvider(self.TOK, tok))
+        ops = metrics.compute(self._prose_data(tok))["operator_isolation_rate"]
+
+        assert set(ops["by_domain"]) == {"code", "math"}
+        assert set(ops["domain_operator_counts"][self.TOK]) == {"code", "math"}
+        # The prose corpus carries operators, so its absence is a choice rather
+        # than an empty result.
+        assert self._prose_data(tok)[self.TOK][0].text.count("+") == 1
+
+    def test_turning_prose_on_adds_it_and_raises_the_pooled_denominator(self):
+        tok = _CharTokenizer()
+        off = DigitBoundaryMetrics(
+            _MockProvider(self.TOK, tok)
+        ).compute(self._prose_data(tok))["operator_isolation_rate"]
+        on = self._metrics(tok).compute(
+            self._prose_data(tok))["operator_isolation_rate"]
+
+        assert set(on["by_domain"]) == {"prose", "code", "math"}
+        prose_ops = on["by_domain"]["prose"]["summary"][self.TOK]["total_operators"]
+        assert prose_ops > 0
+        assert (on["summary"][self.TOK]["total_operators"]
+                - off["summary"][self.TOK]["total_operators"]) == prose_ops
+        # Code and math are untouched by the flag.
+        for d in ("code", "math"):
+            assert (on["by_domain"][d]["summary"][self.TOK]["total_operators"]
+                    == off["by_domain"][d]["summary"][self.TOK]["total_operators"])
+
+    def test_reports_prose_code_and_math_each_with_its_corpus(self):
+        """With prose on, all three domains appear, each recording its corpus."""
+        tok = _CharTokenizer()
+        metrics = self._metrics(tok)
         ops = metrics.compute(self._prose_data(tok))["operator_isolation_rate"]
 
         assert set(ops["by_domain"]) == {"prose", "code", "math"}
@@ -1698,7 +1753,7 @@ class TestOperatorIsolationDomains:
     def test_pooled_summary_is_the_sum_of_the_domains(self):
         """The top-level summary pools prose+code+math rather than prose only."""
         tok = _CharTokenizer()
-        metrics = DigitBoundaryMetrics(_MockProvider(self.TOK, tok))
+        metrics = self._metrics(tok)
         ops = metrics.compute(self._prose_data(tok))["operator_isolation_rate"]
 
         pooled = ops["summary"][self.TOK]["total_operators"]
@@ -1739,7 +1794,9 @@ class TestOperatorIsolationDomains:
         assert not tokenizer.can_encode()
         assert callable(getattr(tokenizer, "encode", None))  # it exists, and raises
 
-        metrics = DigitBoundaryMetrics(_MockProvider(tok_name, tokenizer))
+        metrics = DigitBoundaryMetrics(
+            _MockProvider(tok_name, tokenizer), include_prose_operators=True
+        )
         data = {
             tok_name: [
                 TokenizedData(
@@ -1763,7 +1820,7 @@ class TestOperatorIsolationDomains:
     def test_pooled_by_language_namespaces_code_and_math(self):
         """Code/math rows must not silently merge into the prose language namespace."""
         tok = _CharTokenizer()
-        metrics = DigitBoundaryMetrics(_MockProvider(self.TOK, tok))
+        metrics = self._metrics(tok)
         ops = metrics.compute(self._prose_data(tok))["operator_isolation_rate"]
 
         langs = ops["per_tokenizer"][self.TOK]["by_language"]
@@ -1776,7 +1833,7 @@ class TestOperatorIsolationDomains:
     def test_domain_operator_counts_expose_the_pooled_weighting(self):
         """The pooled summary is a micro-average, so its denominators must be visible."""
         tok = _CharTokenizer()
-        metrics = DigitBoundaryMetrics(_MockProvider(self.TOK, tok))
+        metrics = self._metrics(tok)
         ops = metrics.compute(self._prose_data(tok))["operator_isolation_rate"]
 
         counts = ops["domain_operator_counts"][self.TOK]
@@ -1789,7 +1846,7 @@ class TestOperatorIsolationDomains:
         """Provenance: the pooled number is corpus-weighted, so each domain's size is reported."""
         tok = _CharTokenizer()
         code = {"python": ["x = a + b\n"], "javascript": ["const z = p !== q;\n"]}
-        metrics = DigitBoundaryMetrics(_MockProvider(self.TOK, tok), code_texts=code)
+        metrics = self._metrics(tok, code_texts=code)
         ops = metrics.compute(self._prose_data(tok))["operator_isolation_rate"]
 
         code_corpus = ops["by_domain"]["code"]["corpus"]
@@ -1857,7 +1914,8 @@ class TestOperatorOverlapKeepsLaterToken:
     def test_operator_glued_to_its_operand_is_not_isolated(self):
         id_to_token = dict(enumerate(self.TOKENS))
         metrics = DigitBoundaryMetrics(
-            _MockProvider(self.TOK, _MockTokenizer(id_to_token))
+            _MockProvider(self.TOK, _MockTokenizer(id_to_token)),
+            include_prose_operators=True,
         )
         results = metrics.compute({
             self.TOK: [
@@ -1905,7 +1963,9 @@ class TestPerTextOperatorsMatchComputeOperators:
         token_ids, offsets = tokenizer.encode_with_offsets(self.TEXT)
         assert offsets is not None, "the bundled BPE reports offsets"
 
-        metrics = DigitBoundaryMetrics(_MockProvider(self.TOK, tokenizer))
+        metrics = DigitBoundaryMetrics(
+            _MockProvider(self.TOK, tokenizer), include_prose_operators=True
+        )
         per_text = metrics.compute_per_text(tokenizer, self.TEXT)
         corpus = metrics.compute({
             self.TOK: [

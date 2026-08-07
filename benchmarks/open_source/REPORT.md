@@ -70,7 +70,7 @@ Bytes per token, higher meaning fewer tokens for the same text.
 | XLM-RoBERTa base | 0.874 | 0.652 | 0.677 | 0.638 | n/a |
 | Gemma 2 | 0.712 | 0.414 | 0.499 | 1.000 | 0.0000 |
 
-Operator isolation pools prose, code and math weighted by operator instances, so with this code corpus it sits close to the code rate; `by_domain` in the results file splits the three.
+Operator isolation pools the domains that ran, weighted by operator instances, so with this code corpus it sits close to the code rate; `by_domain` in the results file names them and splits the rates. `run.sh` does not pass `--operator-prose-domain`, so a fresh run has `code` and `math` there.
 
 CER is `n/a` for BERT base uncased, XLM-RoBERTa base. The character error rate is an edit distance, and a tokenizer that does not reconstruct its input has a large distance on every text, so the run projected past the 120.0-second budget and reported the value as null rather than spending the time, which `cer_skipped` records. The exact round-trip column carries the same information: a tokenizer at 0.031 exact matches is lossy by construction, in this case through lowercasing, accent stripping and unknown-token substitution.
 

@@ -34,6 +34,21 @@ Two of the nine tokenizers, `meta-llama/Meta-Llama-3-8B` and
 them from `tokenizers.json` to run without one: no other number changes, since
 every metric here is computed per tokenizer.
 
+## The committed results file predates the operator-isolation prose change
+
+`analysis_results.json` here was generated when `operator_isolation_rate` scored
+the main corpus as a `prose` domain. That domain is now off unless
+`--operator-prose-domain` is passed, and `run.sh` does not pass it, so a fresh
+run gives an `operator_isolation_rate` block with two domains where the
+committed file has three, and a pooled figure computed without prose. Prose
+supplied 568 of the 455558 operator occurrences behind the committed numbers,
+0.12 percent, so the pooled rates move in the fourth decimal. Every other metric
+is unaffected.
+
+Regeneration was deferred rather than run for this one change. Until it happens,
+read the `operator_isolation_rate` block here as a three-domain measurement and
+`by_domain.code` and `by_domain.math` as the two that a fresh run reproduces.
+
 ## What the committed results file leaves out
 
 `analysis_results.json` here is the output of `run.sh` with two fields removed:

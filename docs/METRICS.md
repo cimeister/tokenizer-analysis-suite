@@ -307,9 +307,10 @@ tokenization of numbers. Disable with `--no-digit-boundary`.
 > `tokenizer_analysis/sample_data/math_samples.json` when no flag names another
 > file, and its `code` domain always reads code snippets, the bundled
 > `sample_data/code_samples.json` when no `--code-ast-config` names a corpus.
-> Only its `prose` domain comes from the main corpus. Each run logs the three
-> sources on one line:
-> `Operator isolation domains: prose=multilingual, math=..., code=...`.
+> Its `prose` domain is the main corpus, and it is off by default. Pass
+> `--operator-prose-domain` to score it. Each run logs the domains it will use
+> on one line:
+> `Operator isolation domains: math=..., code=...`.
 >
 > `--no-code-ast` drops the three AST metrics without affecting this metric's `code`
 > domain running on the bundled samples. `--no-digit-boundary` drops
@@ -441,31 +442,36 @@ two tokens.
 Merging an operator with its operand puts the operation and the value in one
 embedding.
 
-**How the global is computed:** operators are counted in three domains, prose,
-code and math, and `global` pools all three, weighted by operator instances.
-On the bundled demo,
+**Which domains are counted.** Code and math always run. Prose, meaning the
+main corpus, runs only under `--operator-prose-domain`.
+
+Prose is off by default because an operator is a code construct. The pattern
+matches `-`, `/` and `!`, which are ordinary punctuation in prose, so a prose
+corpus contributes occurrences that are hyphens and slashes rather than
+operators. On the nine-tokenizer benchmark prose supplied 568 of 455558
+occurrences, 0.12 percent, so it moved the pooled figure by almost nothing while
+being the domain that cost the most to score: 78.5 percent of the documents of a
+web corpus contain at least one character the pattern matches.
+
+**How the global is computed:** `global` pools the domains that ran, weighted by
+operator instances. On the bundled demo,
 
 ```bash
 uv run tokenizer-analysis --use-sample-data
 ```
 
-`bpe` scores 0.7938 pooled over 3016 instances, against 0.6832 for code over
-1932 instances, 0.9886 for prose over 787 and 0.9966 for math over 297. The
-three domain rates are far apart, and the pooled figure is not close to any of
-them: code supplies 64 percent of the instances, and the pooled rate is 0.11
-above the code rate, because prose and math are both near 1.0. Quoting `global`
-alone therefore reports a number that describes no domain.
+`bpe` scores 0.7250 pooled over 2229 instances, against 0.6832 for code over
+1932 and 0.9966 for math over 297. Adding `--operator-prose-domain` gives 0.7938
+over 3016, with prose at 0.9886 over 787.
 
-The weights also move with the flags. `--samples-per-lang` changes the prose
-corpus while the code and math corpora stay fixed at 1932 and 297 instances, so
-the same tokenizer on the same demo scores 0.7285 pooled at
-`--samples-per-lang 20` (prose 1.0 over 29 instances) and 0.7938 at the default
-2000 (prose 0.9886 over 787). A `--code-ast-config` corpus changes the code
-domain, and `--math-data` changes the math domain.
+The domain rates are far apart and the pooled figure is not close to any of
+them, so quoting `global` alone reports a number that describes no domain. The
+weights also move with the flags: `--code-ast-config` changes the code domain,
+`--math-data` changes the math domain, and with prose on, `--samples-per-lang`
+changes the prose domain.
 
-`by_domain` holds the three rates and the three instance counts separately, and
-is written beside `global` for that reason. Read it before quoting the pooled
-number.
+`by_domain` holds each rate and each instance count separately, and is written
+beside `global` for that reason. Read it before quoting the pooled number.
 
 ## Reconstruction fidelity metrics (`reconstruction_fidelity`)
 
