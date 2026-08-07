@@ -146,3 +146,126 @@ def test_the_coefficient_is_the_same_on_every_run():
         )
         seen.add(out.stdout.decode().strip())
     assert len(seen) == 1, f"mean differed across hash seeds: {seen}"
+
+
+def _td_lines(tok, lang, n_tokens, n_lines, width=1):
+    """*n_lines* TokenizedData entries carrying *n_tokens* tokens between them.
+
+    The library's `lines` unit is LineCountingMethod.SINGLE: one text counts as
+    one line, whatever newlines it contains
+    (`config/text_measurement.py:40,178`). That is the parallel-corpus notion,
+    where each entry is one aligned segment, and it is how the FLORES loader
+    presents a corpus: one entry per sentence. So a language with ten lines is
+    ten entries, not one entry holding ten newlines.
+
+    *width* sets the byte length of each line, which is what makes the
+    configured-unit denominator differ from the line count.
+    """
+    per = n_tokens // n_lines
+    return [
+        TokenizedData(
+            tokenizer_name=tok, language=lang,
+            tokens=list(range(per + (n_tokens % n_lines if i == 0 else 0))),
+            text="x" * width,
+        )
+        for i in range(n_lines)
+    ]
+
+
+def _gini(costs):
+    """Reference Gini, written out rather than imported from the module.
+
+    Importing the implementation's own helper would make the assertions below
+    tautological.
+    """
+    n = len(costs)
+    mu = sum(costs) / n
+    return sum(abs(a - b) for a in costs for b in costs) / (2 * n * n * mu)
+
+
+class TestPerLineNormalization:
+    """The coefficient with each language's cost taken per line.
+
+    On a parallel corpus, line i of every language is the same sentence, so
+    tokens per line compares tokenizers on identical content. The configured
+    unit does not: under bytes a language whose script needs three bytes per
+    character is charged three times the denominator for the same sentence.
+    Over the nine tokenizers of `benchmarks/open_source` the two coefficients
+    rank at Spearman 0.650 and disagree on which tokenizer is fairest.
+    """
+
+    TOK = "tok"
+
+    def _compute(self, per_lang):
+        """per_lang: {language: (n_tokens, n_lines)}."""
+        metrics = TokenizerGiniMetrics(_SimpleProvider(self.TOK))
+        data = [td for lang, (t, n) in per_lang.items()
+                for td in _td_lines(self.TOK, lang, t, n)]
+        return metrics.compute_tokenizer_fairness_gini(
+            {self.TOK: data})["per_tokenizer"][self.TOK]
+
+    def test_equal_line_counts_publish_the_block(self):
+        out = self._compute({"a": (100, 10), "b": (200, 10), "c": (400, 10)})
+        pl = out["per_line_normalization"]
+
+        assert pl["lines_per_language"] == 10
+        assert pl["num_languages"] == 3
+        assert pl["language_costs"] == {"a": 10.0, "b": 20.0, "c": 40.0}
+        assert pl["gini_coefficient"] == pytest.approx(_gini([10.0, 20.0, 40.0]))
+        assert pl["cost_ratio"] == pytest.approx(4.0)
+
+    def test_it_differs_from_the_configured_unit_coefficient(self):
+        """Otherwise the block could be publishing the same number twice.
+
+        The two denominators are made to disagree: every language has 10 lines,
+        but the byte counts differ because the lines differ in width. Under
+        bytes 'c' looks cheaper per byte than it is per sentence.
+        """
+        metrics = TokenizerGiniMetrics(_SimpleProvider(self.TOK))
+        data = (_td_lines(self.TOK, "a", 100, 10, width=1)
+                + _td_lines(self.TOK, "b", 200, 10, width=2)
+                + _td_lines(self.TOK, "c", 400, 10, width=8))
+        out = metrics.compute_tokenizer_fairness_gini(
+            {self.TOK: data})["per_tokenizer"][self.TOK]
+
+        # bytes: 10 lines of width w gives 10w bytes per language
+        assert out["gini_coefficient"] == pytest.approx(
+            _gini([100 / 10, 200 / 20, 400 / 80]))
+        assert out["per_line_normalization"]["gini_coefficient"] == pytest.approx(
+            _gini([10.0, 20.0, 40.0]))
+        assert out["gini_coefficient"] != pytest.approx(
+            out["per_line_normalization"]["gini_coefficient"], abs=0.01)
+
+    def test_unequal_line_counts_publish_null(self):
+        """Lines are only comparable when every language has the same number.
+
+        Absent rather than wrong: with 10 lines against 5, tokens per line
+        would compare a language's cost for ten sentences against another's for
+        five, and the coefficient would be a number with no meaning.
+        """
+        out = self._compute({"a": (100, 10), "b": (200, 5), "c": (400, 10)})
+        assert out["per_line_normalization"] is None
+        assert out["gini_coefficient"] is not None, (
+            "only the per-line block is withheld; the configured-unit "
+            "coefficient is unaffected by line counts"
+        )
+
+    def test_one_language_publishes_null_for_both(self):
+        out = self._compute({"a": (100, 10)})
+        assert out["gini_coefficient"] is None
+        assert out["per_line_normalization"] is None
+
+    def test_metadata_states_the_condition_and_what_it_does_not_prove(self):
+        """Equal line counts are necessary for a parallel corpus, not sufficient.
+
+        A reader who takes the block as proof the corpus is parallel would
+        trust a number the library cannot vouch for, so the metadata has to say
+        which half it checked.
+        """
+        metrics = TokenizerGiniMetrics(_SimpleProvider(self.TOK))
+        data = [td for l in ("a", "b") for td in _td_lines(self.TOK, l, 100, 10)]
+        md = metrics.compute_tokenizer_fairness_gini({self.TOK: data})["metadata"]
+
+        text = md["per_line_normalization"]
+        assert "same line count" in text
+        assert "not sufficient" in text

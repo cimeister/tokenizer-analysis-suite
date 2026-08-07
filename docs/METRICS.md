@@ -835,12 +835,17 @@ which is why the bundled configs use it.
 uses one byte per Latin character, two for Cyrillic and Greek, three for most
 CJK and Devanagari. A tokenizer can therefore look cheaper on Chinese than on
 English purely because the denominator is larger, with no difference in how well
-it segments either. Two ways to read around it: compare the same tokenizer
-across languages only when you have accounted for that, or set
-`--measurement-config` to a lines config, where a parallel corpus gives every
-language the same denominator, one line per sentence, and the cost becomes
-tokens per sentence. The number under a lines config is not comparable with the
-number under the byte default.
+it segments either.
+
+Two ways to read around it: compare the same tokenizer across languages only
+when you have accounted for that, or set `--measurement-config` to a lines
+config, where a parallel corpus gives every language the same denominator, one
+line per sentence, and the cost becomes tokens per sentence.
+
+Setting `--measurement-config` to a lines config instead moves the primary
+coefficient onto lines, and also moves `compression_rate`. That is a different
+choice from reading `per_line_normalization`, and the number under a lines
+config is not comparable with the number under the byte default.
 
 The underlying Lorenz curve is written under
 `tokenizer_fairness_gini.per_tokenizer.<tok>.lorenz_curve`, from which
@@ -867,22 +872,5 @@ omitted from the plot. `per_language_mean` and `per_language_std` are beside
 it, and are `null` under the same condition, since a dispersion over fewer than
 two languages is undefined.
 
-### Cross-language token sharing
-
-Written as `avg_langs_per_token` under
-`vocabulary_utilization.per_tokenizer.<tok>` in `analysis_results_full.json`
-only. It is computed on every run but the slimming step does not select it, so
-`--save-full-results` is needed to read it. The metric's own `metadata`
-describes it, which is how the omission stayed invisible.
-
-For each learned merge token emitted at least once anywhere in the language
-set, the number of distinct languages it is emitted in; averaged over those
-tokens. A token counts for a language on any occurrence.
-
-Single-character base tokens and declared special or reserved tokens are
-excluded, so the value reflects learned sharing rather than the byte coverage
-every byte-level tokenizer has by construction. The range is 1 to the number of
-languages. Higher means more of the learned vocabulary is reused across
-languages rather than being specific to one.
 The comparison plot is written to `vocab_util_cross_lingual_cov_individual.svg`;
 that string is a plot filename, not a results key.

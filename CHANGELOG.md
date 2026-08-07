@@ -110,6 +110,20 @@ without a warning, producing a complete results file for tokenizers and a
 corpus the caller did not ask for. The combination is now an error naming the
 conflicting flags.
 
+### Removed
+
+- `avg_langs_per_token`, the cross-language token-sharing figure under
+  `vocabulary_utilization`. It was published only in
+  `analysis_results_full.json`, so no value in `analysis_results.json` changes.
+  It was removed rather than documented because it is close to a monotone
+  function of vocabulary size: over the nine tokenizers of
+  `benchmarks/open_source` on 13 FLORES languages it ranges 1.239 to 2.504
+  against a theoretical 1 to 13, with Spearman -0.950 against vocabulary size
+  and -0.933 against the number of token types observed. Read as its own
+  description invited, higher meaning more cross-language sharing, it ranked
+  bert-base-uncased, which is English-only and strips accents, as the most
+  multilingual of the nine, and put XLM-RoBERTa and Gemma 2 last.
+
 ### Added
 
 - `--input PATH` for a single corpus, taking a file or a directory, with
