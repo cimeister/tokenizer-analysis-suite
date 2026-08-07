@@ -109,6 +109,98 @@ def test_every_metric_has_a_per_tokenizer_block(demo_results):
         assert "per_tokenizer" in block, f"{name} has no per_tokenizer block"
 
 
+@pytest.fixture(scope="module")
+def full_and_slim_results(tmp_path_factory):
+    """Run the bundled demo with --save-full-results and return both files, parsed.
+
+    A separate run from demo_results above: that fixture never passes
+    --save-full-results, so it has no full file to compare against.
+    """
+    out = tmp_path_factory.mktemp("full_and_slim")
+    proc = subprocess.run(
+        [sys.executable, "-m", "tokenizer_analysis.cli.run_analysis",
+         "--use-sample-data", "--samples-per-lang", "10",
+         "--no-plots", "--no-code-ast", "--save-full-results",
+         "--output-dir", str(out)],
+        cwd=REPO_ROOT, capture_output=True, timeout=900,
+    )
+    if proc.returncode != 0:
+        pytest.fail(
+            "demo run failed with exit "
+            f"{proc.returncode}:\n{proc.stderr.decode(errors='replace')[-3000:]}"
+        )
+    slim = json.loads((out / "analysis_results.json").read_text())
+    full = json.loads((out / "analysis_results_full.json").read_text())
+    return slim, full
+
+
+def _leaf_paths(obj, prefix=()):
+    """Yield (key_path, value) for every leaf under obj, including empty dicts.
+
+    A key path is the tuple of keys walked to reach a value that is not
+    itself a dict, or is an empty dict (which has no further keys to walk
+    into but is still a value a consumer can read).
+    """
+    if isinstance(obj, dict):
+        if not obj:
+            yield prefix, {}
+        for key, value in obj.items():
+            yield from _leaf_paths(value, prefix + (key,))
+    elif isinstance(obj, list):
+        yield prefix, obj
+    else:
+        yield prefix, obj
+
+
+@requires_flores
+def test_slim_file_is_a_strict_projection_of_the_full_file(full_and_slim_results):
+    """Every value analysis_results.json publishes must exist, unchanged, at the
+    same key path in analysis_results_full.json.
+
+    This is the property normalize_results and select_results exist to
+    guarantee: normalize_results renames and pivots raw results to their
+    published key names without deleting anything, analysis_results_full.json
+    is written from that output directly, and select_results (used by
+    slim_results_for_json) only deletes keys from it to build
+    analysis_results.json. Because the second pass never renames, every path
+    the slim file publishes must already be present, under the same name and
+    with the same value, in the output of the first pass.
+
+    Before this split, a single function renamed keys while selecting them
+    (overall to global, by_language to per_language, and so on), so a value
+    read out of the slim file could not be looked up at the same path in the
+    full file: the full file still used the raw, pre-rename names. A demo run
+    measured 1022 slim paths with no counterpart in the full file. This test
+    asserts that count is zero, so a future change to either pass cannot
+    reintroduce a rename that only one of the two files sees.
+
+    run_metadata is provenance, added to the slim file only, after both files
+    are written from the same normalized results, and is excluded from the
+    comparison for that reason.
+    """
+    slim, full = full_and_slim_results
+
+    full_paths = dict(_leaf_paths(full))
+    slim_paths = {
+        path: value for path, value in _leaf_paths(slim) if path[0] != "run_metadata"
+    }
+
+    missing = [path for path in slim_paths if path not in full_paths]
+    differing = [
+        path for path in slim_paths
+        if path in full_paths and full_paths[path] != slim_paths[path]
+    ]
+
+    assert not missing, (
+        f"{len(missing)} slim path(s) have no counterpart in the full file, "
+        f"starting with {missing[:5]}"
+    )
+    assert not differing, (
+        f"{len(differing)} slim path(s) differ in value from the full file, "
+        f"starting with {differing[:5]}"
+    )
+
+
 def test_merge_is_a_no_op_when_the_secondary_is_absent():
     """A run that disabled a metric family must not trip the merge step."""
     results = {"compression_rate": {"per_tokenizer": {"t": {"global": {}}}}}
@@ -443,3 +535,187 @@ def test_the_serializer_converts_any_non_finite_float_to_null():
         "d": [1.0, None], "e": {"f": None}, "g": 0.5,
     }
     json.dumps(converted, allow_nan=False)
+
+
+def test_cer_skipped_survives_slimming():
+    """A null mean_cer is ambiguous without the flag that explains it.
+
+    mean_cer and whitespace_fidelity are null both when the character error
+    rate exceeded --cer-time-budget and when there was nothing to measure.
+    cer_skipped is the only field that separates the two, and docs/METRICS.md
+    the benchmark README both tell readers to consult it.
+
+    It is written only when a tokenizer actually exceeds the budget, so a demo
+    corpus small enough to finish never produces it. That is why this is a
+    unit test over a hand-built results dict rather than an assertion on a demo
+    run: a comparison against demo output cannot see this field at all, which
+    is how the 1.0.2 schema refactor dropped it without any gate noticing.
+    """
+    from tokenizer_analysis.cli.run_analysis import slim_results_for_json
+
+    results = {
+        "reconstruction_fidelity": {
+            "per_tokenizer": {
+                "tok": {
+                    "overall": {
+                        "exact_match_rate": 0.03,
+                        "mean_cer": None,
+                        "whitespace_fidelity": None,
+                        "count": 10,
+                        "total_tokens": 100,
+                    },
+                    "by_domain": {},
+                    "cer_skipped": True,
+                }
+            },
+            "metadata": {"aggregation": "micro_pooled"},
+        }
+    }
+
+    slimmed = slim_results_for_json(results)
+    entry = slimmed["reconstruction_fidelity"]["per_tokenizer"]["tok"]
+    assert entry.get("cer_skipped") is True, (
+        "cer_skipped was dropped, so a reader cannot tell a skipped "
+        "mean_cer from one that had nothing to measure"
+    )
+    assert entry["global"]["mean_cer"] is None
+
+
+@pytest.fixture(scope="module")
+def degenerate_run(tmp_path_factory):
+    """A corpus too small for most metrics to have anything to measure.
+
+    One short document and two tokenizers.  Bigram and trigram contexts do not
+    clear their occurrence thresholds, there is one language so cross-language
+    dispersion is undefined, and several counts are zero.  This is the shape
+    that produced the 1.0.2 defects: a value that could not be computed was
+    published as 0.0 or 1.0, and one path raised TypeError instead.
+    """
+    work = tmp_path_factory.mktemp("degenerate")
+    corpus = work / "tiny.txt"
+    corpus.write_text("The cat sat.\n", encoding="utf-8")
+
+    toks = work / "toks.json"
+    toks.write_text(json.dumps({
+        "bpe": {"class": "huggingface", "path": "tokenizers/bpe.json"},
+        "unigramlm": {"class": "huggingface", "path": "tokenizers/unigramlm.json"},
+    }), encoding="utf-8")
+
+    out = work / "out"
+    proc = subprocess.run(
+        [sys.executable, "-m", "tokenizer_analysis.cli.run_analysis",
+         "--tokenizer-config", str(toks), "--input", str(corpus),
+         "--no-plots", "--no-code-ast", "--output-dir", str(out)],
+        cwd=REPO_ROOT, capture_output=True, timeout=900,
+    )
+    if proc.returncode != 0:
+        pytest.fail(
+            "a corpus with nothing to measure must still complete; exit "
+            f"{proc.returncode}:\n{proc.stderr.decode(errors='replace')[-3000:]}"
+        )
+    return json.loads((out / "analysis_results.json").read_text())
+
+
+def test_a_corpus_with_nothing_to_measure_publishes_null_not_a_number(degenerate_run):
+    """A count of zero may not sit beside a number that reads as a measurement.
+
+    This is the invariant behind every 1.0.2 metric fix.  Where a global block
+    reports it measured nothing, every rate and mean in that block has to be
+    null: a bigram entropy of 0.0 means every context has exactly one
+    successor, a compression rate of 1.0 means one unit per token, and a
+    completeness rate of 1.0 means every token was well formed.  None of those
+    may stand in for "there was nothing to measure".
+
+    Fields that count things (count, total_tokens, used_tokens and the like)
+    stay numeric: zero of something is a true statement about the sample.
+    """
+    # A field whose zero means "there was nothing to measure". Not every
+    # counter qualifies: trailing_incomplete of 0 means no token was truncated,
+    # a real finding, and gating on it would have flagged a completeness rate
+    # of 1.0 measured over four sound tokens.
+    denominators = (
+        "count", "total_tokens", "total_units", "total_content_tokens",
+        "total_bigrams", "total_trigrams", "total_operators",
+        "total_indented_lines", "num_samples", "num_languages", "vocab_size",
+        # Zero qualifying context types is the entropy metrics' way of saying
+        # nothing was measured; their total_bigrams stays non-zero.
+        "types_evaluated",
+    )
+    offenders = []
+    inspected = []
+
+    for name, block in _metrics(degenerate_run).items():
+        for tok, entry in (block.get("per_tokenizer") or {}).items():
+            glob = (entry or {}).get("global")
+            if not isinstance(glob, dict):
+                continue
+            # Gating on `count == 0` alone skipped seven metric families that
+            # put no count in their global at all, including every one this
+            # docstring names.
+            if not any(glob.get(k) == 0 for k in denominators if k in glob):
+                continue
+            inspected.append(f"{name}.{tok}")
+            for field, value in glob.items():
+                # Counts are integers and a zero count is a true statement
+                # about the sample. Rates, means and correlations are floats,
+                # and those are what must not be invented.
+                if isinstance(value, float):
+                    offenders.append(
+                        f"{name}.{tok}.global.{field} = {value}, "
+                        f"beside a zero denominator"
+                    )
+
+    # Without this the test can silently inspect nothing, which is how its
+    # first version passed while skipping every metric it named.
+    assert inspected, (
+        "this test inspected no block with a zero denominator, so it asserted "
+        "nothing; make the corpus smaller or widen `denominators`"
+    )
+    assert not offenders, (
+        "a measured-looking number published beside a zero denominator:\n  "
+        + "\n  ".join(sorted(offenders))
+    )
+
+
+def test_run_metadata_records_the_inputs_that_decide_the_numbers(degenerate_run):
+    """Provenance the 1.0.1 file did not carry.
+
+    A results file has to say which corpus and which tokenizers produced it,
+    not only which config named them.  Two runs over different snapshots of a
+    corpus under one config were previously indistinguishable, and a Hub-side
+    retokenization would move every number with nothing recording it.
+    """
+    meta = degenerate_run["run_metadata"]
+
+    assert meta.get("timestamp_utc"), "no timestamp, so two runs of one commit are indistinguishable"
+    assert meta["timestamp_utc"].endswith("+00:00"), "timestamp is not UTC"
+
+    for name, entry in meta["tokenizers"].items():
+        assert entry.get("sha256_16") or entry.get("hub_revision"), (
+            f"tokenizer {name} is recorded by path alone, so a change to it "
+            "would move every number with nothing saying so"
+        )
+
+    digest = meta["corpus"]["digest"]
+    assert digest.get("n_languages"), "no corpus digest"
+    for lang, entry in digest["files"].items():
+        assert entry.get("sha256_16"), f"corpus {lang} has no hash"
+        assert entry.get("bytes"), f"corpus {lang} has no byte count"
+
+
+@requires_flores
+def test_corpus_paths_under_the_working_directory_are_recorded_relative(demo_results):
+    """So a committed results file does not name whoever produced it.
+
+    The digest records a path per language. A corpus inside the working
+    directory is recorded relative to it; one outside keeps its absolute path,
+    because there is nothing to make it relative to. The benchmark reads
+    parallel/ from the repository root, so its committed results file must
+    carry short paths rather than a home directory.
+    """
+    files = demo_results["run_metadata"]["corpus"]["digest"]["files"]
+    absolute = {lang: e["path"] for lang, e in files.items() if e["path"].startswith("/")}
+    assert not absolute, (
+        "corpus paths under the working directory recorded as absolute: "
+        + ", ".join(f"{k} -> {v}" for k, v in sorted(absolute.items()))
+    )

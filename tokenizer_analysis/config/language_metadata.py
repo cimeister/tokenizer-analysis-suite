@@ -235,19 +235,6 @@ class LanguageMetadata:
         return paths
 
 
-def load_language_metadata(config_path: str) -> LanguageMetadata:
-    """
-    Convenience function to load language metadata.
-    
-    Args:
-        config_path: Path to the language metadata configuration file
-        
-    Returns:
-        LanguageMetadata instance
-    """
-    return LanguageMetadata(config_path)
-
-
 # Nothing in the package reads this. LanguageMetadata requires a config file
 # path and raises FileNotFoundError when the file is absent; it never falls
 # back to this dict or to any other default. It is kept as a written record of

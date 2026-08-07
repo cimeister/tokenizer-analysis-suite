@@ -97,7 +97,7 @@ class TestRemovedFlagsFailLoudly:
         assert proc.returncode != 0
         message = proc.stderr.decode(errors="replace")
         assert "--morphscore" in message
-        assert "MIGRATION.md" in message
+        assert "CHANGELOG.md" in message
 
     def test_removed_latex_table_type_lists_the_valid_ones(self):
         proc = self._run("--latex-table-types", "morphological")

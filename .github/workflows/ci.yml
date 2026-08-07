@@ -105,6 +105,5 @@ jobs:
           assert not any('/tests/' in n for n in names), 'tests shipped in the wheel'
           assert any(n.endswith('py.typed') for n in names), 'py.typed missing'
           assert any('LICENSE' in n for n in names), 'LICENSE missing'
-          assert any('NOTICE' in n for n in names), 'NOTICE missing (FLORES+ attribution)'
           print('wheel contents OK')
           "

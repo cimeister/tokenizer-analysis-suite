@@ -59,12 +59,33 @@ EXTENSIONS = {
 DEFAULT_FILES_PER_LANGUAGE = 100
 
 
+def _revision_from_cache_path(path) -> "str | None":
+    """The commit sha in a huggingface_hub cache path, when there is one.
+
+    Downloads land at ``.../snapshots/<sha>/<file>``, so the component after
+    ``snapshots`` names the revision that was read. Returns None for any other
+    layout rather than guessing.
+    """
+    parts = Path(path).parts
+    if "snapshots" in parts:
+        index = parts.index("snapshots")
+        if index + 1 < len(parts):
+            return parts[index + 1]
+    return None
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--output-dir", type=Path, default=OUTPUT_DIR)
     parser.add_argument("--files-per-language", type=int,
                         default=DEFAULT_FILES_PER_LANGUAGE)
+    parser.add_argument(
+        "--revision", default=None,
+        help="Dataset revision to fetch (branch, tag or commit sha). Defaults "
+             "to the Hub's current default branch. Whichever is used is "
+             "recorded in the manifest this script writes.",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -75,11 +96,18 @@ def main(argv=None) -> int:
         return 1
 
     written = {}
+    resolved_revision = None
     for stack_name, tokeval_name in LANGUAGES.items():
         try:
             path = hf_hub_download(
                 DATASET, f"data/{stack_name}/data.json", repo_type="dataset",
+                revision=args.revision,
             )
+            # hf_hub_download caches under .../snapshots/<sha>/..., so the
+            # resolved commit is in the path it returns. Recorded below,
+            # because which snapshot of the corpus was read decides every code
+            # metric in the benchmark.
+            resolved_revision = _revision_from_cache_path(path) or resolved_revision
         except Exception as e:
             print(f"  {tokeval_name:12s} could not be fetched: "
                   f"{type(e).__name__}: {e}", file=sys.stderr)
@@ -107,9 +135,22 @@ def main(argv=None) -> int:
         print(f"  {tokeval_name:12s} {count:4d} files -> "
               f"{out_dir.relative_to(BENCHMARK_DIR.parent.parent)}")
 
+    manifest = {
+        "dataset": DATASET,
+        "revision_requested": args.revision,
+        "revision_resolved": resolved_revision,
+        "files_per_language": args.files_per_language,
+        "files_written": written,
+    }
+    manifest_path = args.output_dir / "corpus_manifest.json"
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+
     total = sum(written.values())
     print(f"\nWrote {total} files across {len(written)} languages to "
           f"{args.output_dir}.")
+    print(f"Recorded the dataset revision in {manifest_path}.")
     print(f"Source: https://huggingface.co/datasets/{DATASET}. Each file keeps "
           "the license of the repository it came from; see that dataset card.")
     return 0

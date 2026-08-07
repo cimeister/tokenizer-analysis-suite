@@ -13,7 +13,7 @@ from .core.input_types import TokenizedData, InputSpecification
 from .core.input_providers import InputProvider, create_input_provider
 from .core.input_utils import create_simple_specifications, InputValidator
 from .core.tokenizer_wrapper import create_tokenizer_wrapper
-from .metrics.base import BaseMetrics
+from .metrics.base import BaseMetrics, format_optional
 from .metrics.basic import BasicTokenizationMetrics
 from .metrics.information_theoretic import InformationTheoreticMetrics
 from .metrics.gini import TokenizerGiniMetrics
@@ -354,7 +354,7 @@ class UnifiedTokenizerAnalyzer:
         # Generate plots
         if save_plots:
             logger.info("Generating plots...")
-            self.visualizer.generate_all_plots(results, print_pairwise=False)
+            self.visualizer.generate_all_plots(results)
         
         logger.info("Analysis completed successfully!")
         return results
@@ -363,7 +363,6 @@ class UnifiedTokenizerAnalyzer:
                            group_by: Optional[Union[str, List[str]]] = None,
                            save_plots: bool = True,
                            base_results: Optional[Dict[str, Any]] = None,
-                           reference_line_method: str = 'macro',
                            include_reconstruction: bool = True,
                            cer_time_budget_s: float = DEFAULT_CER_TIME_BUDGET_S) -> Dict[str, Dict[str, Any]]:
         """
@@ -378,7 +377,6 @@ class UnifiedTokenizerAnalyzer:
                 both and an empty result.
             save_plots: Whether to generate grouped plots
             base_results: Optional pre-computed results to filter instead of recomputing
-            reference_line_method: Method for reference lines ('macro' for average across groups, 'micro' for overall global)
             include_reconstruction: Whether to include reconstruction fidelity analysis
             cer_time_budget_s: Max seconds for CER computation per tokenizer (0 disables budget)
 
@@ -496,7 +494,7 @@ class UnifiedTokenizerAnalyzer:
         # Generate grouped plots
         if save_plots and grouped_results:
             logger.info("Generating grouped plots...")
-            self.visualizer.plot_grouped_analysis(grouped_results, reference_line_method=reference_line_method)
+            self.visualizer.plot_grouped_analysis(grouped_results)
         
         return grouped_results
     
@@ -793,9 +791,13 @@ class UnifiedTokenizerAnalyzer:
             for tok_name in self.tokenizer_names:
                 if tok_name in fertility_data['per_tokenizer']:
                     global_stats = fertility_data['per_tokenizer'][tok_name]['global']
-                    mean_fertility = global_stats.get('mean', 0.0)
-                    std_fertility = global_stats.get('std', 0.0)
-                    print(f"{tok_name:20}: {mean_fertility:.3f} ± {std_fertility:.3f} tokens/{measurement_method[:-1]}")
+                    # empty_stats() stores None under 'mean', so the 0.0
+                    # default never fires and a plain :.3f raises TypeError.
+                    # format_optional prints 'n/a' for a value that was never
+                    # measured.
+                    mean_fertility = format_optional(global_stats.get('mean'), '.3f')
+                    std_fertility = format_optional(global_stats.get('std'), '.3f')
+                    print(f"{tok_name:20}: {mean_fertility} ± {std_fertility} tokens/{measurement_method[:-1]}")
         
         # Print token length results
         if 'token_length' in results:
@@ -805,9 +807,9 @@ class UnifiedTokenizerAnalyzer:
             for tok_name in self.tokenizer_names:
                 if tok_name in results['token_length']['per_tokenizer']:
                     char_stats = results['token_length']['per_tokenizer'][tok_name]['character_length']
-                    mean_length = char_stats.get('mean', 0.0)
-                    std_length = char_stats.get('std', 0.0)
-                    print(f"{tok_name:20}: {mean_length:.2f} ± {std_length:.2f} chars/token")
+                    mean_length = format_optional(char_stats.get('mean'), '.2f')
+                    std_length = format_optional(char_stats.get('std'), '.2f')
+                    print(f"{tok_name:20}: {mean_length} ± {std_length} chars/token")
         
         # Print vocabulary utilization
         if 'vocabulary_utilization' in results:
@@ -820,7 +822,8 @@ class UnifiedTokenizerAnalyzer:
                     utilization = util_data.get('global_utilization', 0.0)
                     used_tokens = util_data.get('global_used_tokens', 0)
                     vocab_size = util_data.get('global_vocab_size', 0)
-                    print(f"{tok_name:20}: {utilization:.1%} ({used_tokens:,}/{vocab_size:,} tokens)")
+                    print(f"{tok_name:20}: {format_optional(utilization, '.1%')} "
+                          f"({used_tokens:,}/{vocab_size:,} tokens)")
         
         # Print type-token ratio
         if 'type_token_ratio' in results:
@@ -833,7 +836,8 @@ class UnifiedTokenizerAnalyzer:
                     ttr = ttr_data.get('global_ttr', 0.0)
                     types = ttr_data.get('global_types', 0)
                     tokens = ttr_data.get('global_tokens', 0)
-                    print(f"{tok_name:20}: {ttr:.4f} ({types:,} types / {tokens:,} tokens)")
+                    print(f"{tok_name:20}: {format_optional(ttr, '.4f')} "
+                          f"({types:,} types / {tokens:,} tokens)")
 
         # Print reconstruction fidelity
         if 'reconstruction_fidelity' in results:
@@ -855,20 +859,6 @@ class UnifiedTokenizerAnalyzer:
                         print(f"{tok_name:20}: EM={em:.3f}  CER={cer_str}  UNK={unk:.4f}  WS={ws_str}  ({n} texts)")
 
         print("\n" + "="*60)
-    
-    def get_analysis_summary(self) -> Dict[str, Any]:
-        """Get summary of analysis configuration and capabilities."""
-        return {
-            'tokenizer_names': self.tokenizer_names,
-            'num_tokenizers': len(self.tokenizer_names),
-            'languages': self.input_provider.get_languages(),
-            'num_languages': len(self.input_provider.get_languages()),
-            'vocab_sizes': {name: self.input_provider.get_vocab_size(name) for name in self.tokenizer_names},
-            'measurement_method': self.measurement_config.method.value,
-            'has_language_metadata': self.language_metadata is not None,
-            'analysis_groups': list(self.language_metadata.analysis_groups.keys()) if self.language_metadata else [],
-            'plot_save_dir': self.plot_save_dir
-        }
     
     def generate_latex_tables(self, 
                              results: Dict[str, Any],
@@ -1182,17 +1172,3 @@ def create_analyzer_from_tokenized_data(tokenized_data: Dict[str, List[Tokenized
     input_provider = create_input_provider(specifications)
     return UnifiedTokenizerAnalyzer(input_provider, **kwargs)
 
-
-def create_analyzer_from_input_provider(input_provider: InputProvider,
-                                       **kwargs) -> UnifiedTokenizerAnalyzer:
-    """
-    Create analyzer from existing InputProvider.
-    
-    Args:
-        input_provider: InputProvider instance
-        **kwargs: Additional arguments for UnifiedTokenizerAnalyzer
-        
-    Returns:
-        UnifiedTokenizerAnalyzer instance
-    """
-    return UnifiedTokenizerAnalyzer(input_provider, **kwargs)

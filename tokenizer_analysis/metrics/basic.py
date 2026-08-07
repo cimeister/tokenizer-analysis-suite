@@ -11,7 +11,7 @@ import unicodedata
 
 import numpy as np
 
-from .base import BaseMetrics, TokenizedDataProcessor
+from .base import BaseMetrics, TokenizedDataProcessor, format_optional
 from ..core.input_types import TokenizedData
 from ..core.input_providers import InputProvider
 from ..config import TextMeasurementConfig, TextMeasurer, DEFAULT_TEXT_MEASUREMENT_CONFIG, DEFAULT_WORD_MEASUREMENT_CONFIG
@@ -156,7 +156,6 @@ class BasicTokenizationMetrics(BaseMetrics):
             'fertility': {
                 'per_tokenizer': {},
                 'per_language': {},
-                'pairwise_comparisons': {},
                 'metadata': {
                     'normalization_method': normalization_unit,
                     'description': f'Average number of tokens per {normalization_unit[:-1]}',
@@ -166,8 +165,6 @@ class BasicTokenizationMetrics(BaseMetrics):
                 }
             }
         }
-        
-        global_values = {}
         
         for tok_name in self.tokenizer_names:
             if tok_name not in tokenized_data:
@@ -198,15 +195,7 @@ class BasicTokenizationMetrics(BaseMetrics):
                 'global': global_fertility,
                 'per_language': per_lang_fertility
             }
-            
-            global_values[tok_name] = global_fertility.get('mean', 0.0)
-        
-        # Compute pairwise comparisons
-        if len(global_values) >= 2:
-            results['fertility']['pairwise_comparisons'] = self.compute_pairwise_comparisons(
-                global_values, 'fertility'
-            )
-        
+
         return results
     
     def _compute_fertility_stats(self, tokenized_data: List[TokenizedData], 
@@ -366,7 +355,10 @@ class BasicTokenizationMetrics(BaseMetrics):
                 per_lang_used_ids[language] = unique
                 used = len(unique)
                 per_lang_util[language] = {
-                    'utilization': self.safe_divide(used, vocab_size, 0.0),
+                    # None for a zero-size vocabulary, matching the global
+                    # sibling below, which answers the same question. The two
+                    # gave different answers in the same run.
+                    'utilization': self.safe_divide(used, vocab_size),
                     'used_tokens': used,
                     'vocab_size': vocab_size,
                     'unused_tokens': vocab_size - used,
@@ -380,15 +372,27 @@ class BasicTokenizationMetrics(BaseMetrics):
             # Cross-language dispersion of the utilization ratio. Computed on
             # the ratio (not used_tokens) so it stays comparable across
             # tokenizers with different vocab sizes.
-            util_ratios = [stats['utilization'] for stats in per_lang_util.values()]
+            # None entries are dropped rather than counted as zero: a
+            # language whose utilization is undefined must not pull the mean
+            # or the dispersion toward it.
+            util_ratios = [
+                stats['utilization'] for stats in per_lang_util.values()
+                if stats['utilization'] is not None
+            ]
             n = len(util_ratios)
             if n >= 2:
                 util_mean = float(np.mean(util_ratios))
                 util_std = float(np.std(util_ratios, ddof=1))
                 util_cov = util_std / util_mean if util_mean > 0 else None
             else:
-                util_mean = float(util_ratios[0]) if n == 1 else 0.0
-                util_std = 0.0
+                # A dispersion over fewer than two languages is undefined, not
+                # zero.  Publishing 0.0 here read as "the same utilization in
+                # every language" on a single-corpus run, which the --input
+                # route makes an ordinary case rather than an edge one.  This
+                # matches tokenizer_fairness_gini, which already returns None
+                # below MIN_LANGUAGES_FOR_GINI.
+                util_mean = float(util_ratios[0]) if n == 1 else None
+                util_std = None
                 util_cov = None
 
             avg_langs = self._compute_avg_langs_per_token(tok_name, per_lang_used_ids)
@@ -454,7 +458,10 @@ class BasicTokenizationMetrics(BaseMetrics):
         used_tokens = len(unique_tokens)
         
         return {
-            'utilization': self.safe_divide(used_tokens, vocab_size, 0.0),
+            # A zero vocabulary size leaves utilization undefined rather than
+            # zero. With a real vocabulary this is an ordinary division, and an
+            # empty corpus gives a true 0 of N.
+            'utilization': self.safe_divide(used_tokens, vocab_size),
             'used_tokens': used_tokens,
             'vocab_size': vocab_size,
             'unused_tokens': vocab_size - used_tokens
@@ -530,7 +537,11 @@ class BasicTokenizationMetrics(BaseMetrics):
         unique_count = len(unique_tokens)
         
         return {
-            'ttr': self.safe_divide(unique_count, total_tokens, 0.0),
+            # None, not 0.0, when no token was emitted. A type-token ratio of
+            # 0.0 cannot be measured (it would need types to be zero while
+            # tokens is not), so it can only mean "nothing was tokenized", and
+            # the 'tokens' field beside it says that plainly.
+            'ttr': self.safe_divide(unique_count, total_tokens),
             'types': unique_count,
             'tokens': total_tokens
         }
@@ -930,7 +941,8 @@ class BasicTokenizationMetrics(BaseMetrics):
             }
             if cer_skipped:
                 results['reconstruction_fidelity']['summary'][tok_name]['cer_skipped'] = True
-            cer_msg = "SKIPPED" if cer_skipped else f"{tok_result['overall']['mean_cer']:.4f}"
+            cer_msg = ("SKIPPED" if cer_skipped
+                       else format_optional(tok_result['overall']['mean_cer'], '.4f'))
             logger.info(
                 "Reconstruction fidelity: %s done, %d texts decoded, "
                 "exact_match=%.3f, mean_cer=%s",

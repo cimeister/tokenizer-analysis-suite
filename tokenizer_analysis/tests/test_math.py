@@ -876,10 +876,16 @@ class TestComputeFertilityScaling:
         ]
 
     def test_empty_input(self):
+        """Nothing to measure, so every scaling field is null.
+
+        cv_of_mean_fertility used to be 0.0 here while its three siblings in
+        the same branch were None, which said the buckets have no dispersion
+        when there were no buckets.
+        """
         result = DigitBoundaryMetrics._compute_fertility_scaling({})
         assert result["per_bucket"] == {}
         assert result["spearman_rho"] is None
-        assert result["cv_of_mean_fertility"] == 0.0
+        assert result["cv_of_mean_fertility"] is None
         assert result["linear_fit"] is None
 
     def test_single_bucket(self):
@@ -1796,7 +1802,15 @@ class TestOperatorIsolationDomains:
             assert ops["by_domain"][domain]["corpus"]["n_texts"] > 0
 
     def test_derived_corpora_are_encoded_once_across_compute_calls(self):
-        """compute() runs once per language group; the code/math corpora must not be re-encoded."""
+        """compute() runs once per language group; the code/math corpora must not be re-encoded.
+
+        Counts ``encode_with_offsets``, which is what _build_derived_corpora
+        actually calls.  This test previously counted ``encode`` and passed for
+        the wrong reason: the only caller of ``encode`` on this path was the
+        four-probe character-decode-table build inside _set_tokenizer_context,
+        whose result no metric read.  Removing that dead call dropped the count
+        to zero and exposed the mismatch.
+        """
         tok = _CharTokenizer()
         metrics = DigitBoundaryMetrics(_MockProvider(self.TOK, tok))
         # build the prose corpus once: _prose_data() itself encodes, and we only
@@ -1804,13 +1818,13 @@ class TestOperatorIsolationDomains:
         prose = self._prose_data(tok)
 
         calls = {"n": 0}
-        original = tok.encode
+        original = tok.encode_with_offsets
 
         def counting(text):
             calls["n"] += 1
             return original(text)
 
-        tok.encode = counting
+        tok.encode_with_offsets = counting
         metrics.compute(prose)
         after_first = calls["n"]
         assert after_first > 0, "the code/math corpora should have been encoded once"

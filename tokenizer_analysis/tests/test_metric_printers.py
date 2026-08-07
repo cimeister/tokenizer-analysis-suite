@@ -117,3 +117,81 @@ class TestNullsPrintAsAbsent:
         assert entry['gini_coefficient'] is None
         assert entry['cost_ratio'] is None
         assert MISSING_VALUE_DISPLAY in caplog.text
+
+
+def test_no_printer_formats_a_nullable_field_with_a_numeric_spec():
+    """A field a metric can publish as null must not reach a numeric format.
+
+    ``format(None, '.3f')`` raises TypeError and takes the run's summary down,
+    and the usual guard ``d.get(key, 0.0)`` does not help, because the default
+    never fires when the key is present holding None.
+
+    This is checked over the source rather than by calling each printer,
+    because reaching every branch of every print_results needs a corpus shaped
+    to make each metric measure nothing, and the sites that broke were exactly
+    the ones no ordinary corpus reaches. Two rounds of fixes were applied one
+    site at a time and each missed some: the 1.0.1 pass missed two in main.py,
+    and making UTF-8 integrity nullable in 1.0.2 broke two more in
+    utf8_integrity.py that were correct until that moment.
+
+    When a metric starts publishing null for a field, add the field here.
+    """
+    import re
+    from pathlib import Path
+
+    # Fields the metrics publish as None when there was nothing to measure.
+    nullable = [
+        "completeness_rate", "boundary_crossing_rate",
+        "compression_rate", "bigram_entropy", "trigram_entropy",
+        "global_avg_token_rank", "avg_token_rank",
+        "per_language_mean", "per_language_std", "per_language_cov",
+        "r_squared", "linear_r_squared", "cv_of_mean_fertility",
+        "spearman_rho", "spearman_p", "ttr", "utilization",
+        "entropy_long", "entropy_short", "mean_cer", "whitespace_fidelity",
+        "gini_coefficient", "mean_cost", "std_cost", "cost_ratio",
+        "isolation_rate", "compound_preservation_rate",
+        "depth_proportionality_correlation",
+    ]
+    # Every key empty_stats() publishes as None. These are read through
+    # .get(key, <number>) more often than they are named in an f-string, and
+    # that shape is itself the bug: the default cannot fire, because the key is
+    # present holding None.
+    stats_keys = ["mean", "median", "std", "std_err", "min", "max"]
+
+    patterns = [
+        # An f-string replacement field naming a nullable value and ending in a
+        # numeric presentation type.
+        re.compile(
+            r"\{[^{}]*\b(" + "|".join(nullable) + r")\b[^{}]*:[^{}]*[bcdeEfFgGn%]\}"
+        ),
+        # .get('<nullable key>', <number>). Catches the shape where the value
+        # is bound to a local first and formatted on a later line, which a
+        # line-by-line f-string scan cannot see. Both sites the 1.0.1 pass
+        # missed in main.py had exactly this shape.
+        re.compile(
+            r"\.get\(\s*['\"](" + "|".join(nullable + stats_keys)
+            + r")['\"]\s*,\s*-?\d"
+        ),
+    ]
+
+    root = Path(__file__).resolve().parents[1]
+    offenders = []
+    for path in sorted(root.rglob("*.py")):
+        if "tests" in path.parts:
+            continue
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if "format_optional" in line:
+                continue
+            for pattern in patterns:
+                match = pattern.search(line)
+                if match:
+                    rel = path.relative_to(root.parent)
+                    offenders.append(
+                        f"{rel}:{lineno} uses {match.group(1)} as a number: {line.strip()}"
+                    )
+                    break
+
+    assert not offenders, (
+        "a nullable field formatted with a numeric spec; use format_optional:\n  "
+        + "\n  ".join(offenders)
+    )

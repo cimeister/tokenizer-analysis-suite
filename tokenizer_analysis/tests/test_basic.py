@@ -443,15 +443,22 @@ class TestWhitespaceFidelity:
 
 class TestVocabUtilDispersion:
 
-    def test_dispersion_zero_when_one_language(self):
-        """Single language → SD == 0.0, CoV is None."""
+    def test_dispersion_undefined_when_one_language(self):
+        """One language: SD and CoV are both None, the mean is the one value.
+
+        A dispersion over a single value is undefined.  Publishing 0.0 for the
+        SD read as "the same utilization in every language", which is the
+        defect tokenizer_fairness_gini already avoids by returning None below
+        MIN_LANGUAGES_FOR_GINI.  The --input single-corpus route makes this the
+        ordinary case rather than an edge one.
+        """
         tok = "t"
         provider = _SimpleProvider(tok, vocab_size=100)
         metrics = BasicTokenizationMetrics(provider)
         td = {tok: [_make_td(tok, "x", [1, 2, 3, 4, 5], lang="eng_Latn")]}
         out = metrics.compute_vocabulary_utilization_analysis(td)
         per_tok = out["vocabulary_utilization"]["per_tokenizer"][tok]
-        assert per_tok["per_language_std"] == 0.0
+        assert per_tok["per_language_std"] is None
         assert per_tok["per_language_cov"] is None
         assert per_tok["per_language_mean"] == pytest.approx(0.05)  # 5/100
 

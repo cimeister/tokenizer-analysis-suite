@@ -32,9 +32,20 @@ The pairs, with the measurement that justifies each:
     so its independent variation is mostly that artifact.
 
 ``unigram_distribution_metrics`` into ``renyi_efficiency``
-    ``renyi_1.0 * log2(observed types) == unigram_entropy`` to zero relative
-    error over all 37 tokenizers: the unnormalized numerator of a value the
-    Renyi block already publishes.
+    ``renyi_1.0 * log2(declared vocabulary size) == unigram_entropy`` to zero
+    relative error over all 37 tokenizers: the unnormalized numerator of a
+    value the Renyi block already publishes. Measured on gpt2 in the
+    open-source benchmark: 0.5826525136289539 times log2(50257) gives
+    9.099305825198964, which is the published ``global_unigram_entropy`` to the
+    last digit.
+
+    This said "observed types" until 1.0.2, which was left over from the
+    pre-1.0 normalization. Renyi divides by the declared vocabulary size
+    following Zouhar et al. 2023, as ``renyi_efficiency.metadata.normalizer``
+    states; the observed-types variant is published separately under
+    ``observed_normalization``. With observed types the same product gives
+    7.503, so the sentence justified the merge with an identity that does not
+    hold for the value being merged.
 
 ``utf8_char_split`` into ``utf8_token_integrity``
     ``total_splits`` reproduces ``trailing_incomplete`` to within 4% for 35 of

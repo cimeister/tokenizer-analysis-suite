@@ -401,16 +401,18 @@ def load_single_file(file_path: str, max_texts: int) -> List[str]:
             texts = load_from_json(file_path, max_texts)
             if texts:
                 return texts
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("%s did not read as JSON (%s: %s); trying plain text",
+                         file_path, type(exc).__name__, exc)
         
         # Try text file
         try:
             texts = load_from_text(file_path, max_texts)
             if texts:
                 return texts
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("%s did not read as text either (%s: %s)",
+                         file_path, type(exc).__name__, exc)
         
         logger.warning(f"Could not determine format for file: {file_path}")
         return []

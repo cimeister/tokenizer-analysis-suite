@@ -67,7 +67,7 @@ class TestCompressionRateRatioOfMeans:
         rate = results["per_tokenizer"][tok]["global"]["compression_rate"]
         # Ratio-of-means: (10 + 2) / (2 + 4) = 12 / 6 = 2.0
         assert rate == pytest.approx(2.0)
-        # Mean-of-ratios would give (5.0 + 0.5) / 2 = 2.75 — verify it's NOT that
+        # Mean-of-ratios would give (5.0 + 0.5) / 2 = 2.75. Verify it is not that.
         assert rate != pytest.approx(2.75)
 
     def test_totals_reported(self):
@@ -175,13 +175,17 @@ class TestBigramEntropy:
         assert eta == pytest.approx(0.0)
 
     def test_below_threshold(self):
-        """[1,2,3] has 2 bigrams, both types have <3 occurrences → all filtered."""
+        """[1,2,3] has 2 bigrams, both types have <3 occurrences, so all are
+        filtered and nothing is measured.  The pooled value is None, not 0.0:
+        an entropy of 0.0 is a real measurement meaning every context has
+        exactly one successor.
+        """
         tok = "tok"
         m = self._make_metrics(tok)
         td = {tok: [_make_td_tokens(tok, [1, 2, 3])]}
         results = m.compute_bigram_entropy(td)
         r = results['per_tokenizer'][tok]
-        assert r['global_bigram_entropy'] == pytest.approx(0.0)
+        assert r['global_bigram_entropy'] is None
         assert r['global_types_evaluated'] == 0
 
     def test_per_language_separation(self):
@@ -222,7 +226,6 @@ class TestBigramEntropy:
 
         assert 'per_tokenizer' in results
         assert 'per_language' in results
-        assert 'pairwise_comparisons' in results
         assert 'metadata' in results
 
         tok_r = results['per_tokenizer'][tok]
@@ -233,7 +236,8 @@ class TestBigramEntropy:
         assert 'per_language' in tok_r
 
     def test_no_bigrams_single_token_docs(self):
-        """Single-token documents produce no bigrams → η = 0.0."""
+        """Single-token documents produce no bigrams, so the pooled value is
+        None rather than 0.0."""
         tok = "tok"
         m = self._make_metrics(tok)
         td = {tok: [
@@ -242,7 +246,7 @@ class TestBigramEntropy:
         ]}
         results = m.compute_bigram_entropy(td)
         r = results['per_tokenizer'][tok]
-        assert r['global_bigram_entropy'] == pytest.approx(0.0)
+        assert r['global_bigram_entropy'] is None
         assert r['global_total_bigrams'] == 0
 
     def test_bigram_entropy_in_compute(self):
@@ -329,13 +333,14 @@ class TestTrigramEntropy:
         assert eta == pytest.approx(0.0)
 
     def test_below_threshold(self):
-        """[1,2,3,4] has 2 trigrams, both contexts have <3 occurrences → all filtered."""
+        """[1,2,3,4] has 2 trigrams, both contexts have <3 occurrences, so all
+        are filtered and the pooled value is None rather than 0.0."""
         tok = "tok"
         m = self._make_metrics(tok)
         td = {tok: [_make_td_tokens(tok, [1, 2, 3, 4])]}
         results = m.compute_trigram_entropy(td)
         r = results['per_tokenizer'][tok]
-        assert r['global_trigram_entropy'] == pytest.approx(0.0)
+        assert r['global_trigram_entropy'] is None
         assert r['global_types_evaluated'] == 0
 
     def test_per_language_separation(self):
@@ -361,7 +366,8 @@ class TestTrigramEntropy:
         assert uniform_eta > skewed_eta
 
     def test_no_trigrams_short_docs(self):
-        """Documents with ≤2 tokens produce no trigrams → η = 0.0."""
+        """Documents with <=2 tokens produce no trigrams, so the pooled value
+        is None rather than 0.0."""
         tok = "tok"
         m = self._make_metrics(tok)
         td = {tok: [
@@ -370,7 +376,7 @@ class TestTrigramEntropy:
         ]}
         results = m.compute_trigram_entropy(td)
         r = results['per_tokenizer'][tok]
-        assert r['global_trigram_entropy'] == pytest.approx(0.0)
+        assert r['global_trigram_entropy'] is None
         assert r['global_total_trigrams'] == 0
 
     def test_schema_keys_present(self):
@@ -386,7 +392,6 @@ class TestTrigramEntropy:
 
         assert 'per_tokenizer' in results
         assert 'per_language' in results
-        assert 'pairwise_comparisons' in results
         assert 'metadata' in results
 
         tok_r = results['per_tokenizer'][tok]

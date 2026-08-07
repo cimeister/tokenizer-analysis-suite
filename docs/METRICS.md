@@ -1,13 +1,110 @@
 # Metrics
 
-Definitions for every metric TokEval computes. For the JSON key each metric is
-written under, and the path to its headline value, see
-[Metric names and results keys](README.md#metric-names-and-results-keys) in the
-README. For which flag supplies the data a metric needs, see
-[Metric families and the data they need](README.md#metric-families-and-the-data-they-need).
+Definitions for every metric TokEval computes, and the results key each is
+written under. For which flag supplies the data a metric needs, see
+[Metric families and the data they need](CONFIGURATION.md#metric-families-and-the-data-they-need).
+For what the surrounding JSON looks like, see [OUTPUT.md](OUTPUT.md).
 
 Section headings below give the top-level results key in backticks. Where a
-value sits deeper in the file, the path is written out.
+value is deeper in the file, the path is written out.
+
+## Numbers from tokenizer-analysis-suite are not comparable
+
+Seven metrics changed what they compute between `tokenizer-analysis-suite` and
+this package, not just where they are written. Each affected section below
+includes a note. The full table with measured effects is in
+[CHANGELOG.md](../CHANGELOG.md).
+
+Separately, a field that reads `null` here and `0.0` in an older run reflects a
+convention change rather than a different measurement: a value that could not
+be computed is now `null`, because `0.0` is a legal value for most of these
+metrics and a zero was indistinguishable from a measurement.
+
+Some caveats below quote figures from a 37-tokenizer development run. That run
+is not in this repository, so those specific numbers cannot be regenerated from
+anything here: the largest run committed is the nine tokenizers of
+`benchmarks/open_source`. They are quoted because the effect they describe is
+the reason for the caveat, and the direction and rough size are what a reader
+needs. Any figure attributed to `benchmarks/open_source` is reproducible with
+`bash benchmarks/open_source/run.sh`.
+
+## Metric names and results keys
+
+Every metric, the top-level key it is written under in `analysis_results.json`,
+and the path to its headline value. `<tok>` is a tokenizer name from your
+config; `<lang>` is a language code.
+
+The identifiers in this table are the results keys. The LaTeX table generator
+uses its own row ids (`three_digit_boundary_f1`, `operator_isolation`,
+`ast_full_alignment`, `ident_fragmentation`, `indent_depth_corr`,
+`utf8_boundary_crossing`, `avg_token_rank`, `utf8_char_split`), and
+`vocab_util_cross_lingual_cov` is a plot filename. None of those strings appears
+in the results file.
+
+| Metric | Top-level key | Path to the headline value | Direction |
+|---|---|---|---|
+| Compression rate | `compression_rate` | `.per_tokenizer.<tok>.global.compression_rate` | higher |
+| Tokens per line | (under `compression_rate`) | `.per_tokenizer.<tok>.tokens_per_line.global_avg` | lower |
+| Fertility | `fertility` | `.per_tokenizer.<tok>.global.mean` | lower |
+| Token length | `token_length` | `.per_tokenizer.<tok>.global.mean` | neither |
+| Vocabulary utilization | `vocabulary_utilization` | `.per_tokenizer.<tok>.global.utilization` | higher |
+| Type-token ratio | (under `vocabulary_utilization`) | `.per_tokenizer.<tok>.type_token_ratio.global_ttr` | neither |
+| Cross-lingual vocabulary-utilization CoV | (under `vocabulary_utilization`) | `.per_tokenizer.<tok>.per_language_cov` | lower |
+| Rényi efficiency | `renyi_efficiency` | `.per_tokenizer.<tok>.global.renyi_<alpha>`, one field per alpha in 1.0, 2.0, 2.5, 3.0 | higher |
+| Average token rank | (under `renyi_efficiency`) | `.per_tokenizer.<tok>.unigram_distribution.global_avg_token_rank` | neither |
+| Bigram entropy | `bigram_entropy` | `.per_tokenizer.<tok>.global.bigram_entropy` | higher |
+| Trigram entropy | `trigram_entropy` | `.per_tokenizer.<tok>.global.trigram_entropy` | higher |
+| MorphScore | `morphscore` | `.per_tokenizer.<tok>.global.avg_morphscore_recall` and `.avg_morphscore_precision` | higher |
+| Three-digit boundary alignment | `three_digit_boundary_alignment` | `.per_tokenizer.<tok>.global.mean_f1` | higher |
+| Digit split variability | (under `three_digit_boundary_alignment`) | `.per_tokenizer.<tok>.split_variability.by_digit_length.<n>.<lang>.entropy` | lower |
+| Numeric magnitude consistency | `numeric_magnitude_consistency` | `.per_tokenizer.<tok>.global.mean_fertility` | lower |
+| Operator isolation rate | `operator_isolation_rate` | `.per_tokenizer.<tok>.global.overall_isolation_rate` | higher |
+| Compound operator preservation | (under `operator_isolation_rate`) | `.per_tokenizer.<tok>.global.overall_compound_preservation_rate` | higher |
+| Round-trip exact match rate | `reconstruction_fidelity` | `.per_tokenizer.<tok>.global.exact_match_rate` | higher |
+| Character error rate | (under `reconstruction_fidelity`) | `.per_tokenizer.<tok>.global.mean_cer` | lower |
+| UNK token rate | (under `reconstruction_fidelity`) | `.per_tokenizer.<tok>.global.unk_token_rate` | lower |
+| Whitespace fidelity | (under `reconstruction_fidelity`) | `.per_tokenizer.<tok>.global.whitespace_fidelity` | higher |
+| Token UTF-8 completeness rate | `utf8_token_integrity` | `.per_tokenizer.<tok>.global.completeness_rate` | higher |
+| Character boundary crossing rate | (under `utf8_token_integrity`) | `.per_tokenizer.<tok>.global.boundary_crossing_rate` | lower |
+| Character boundary split rate | (under `utf8_token_integrity`) | `.per_tokenizer.<tok>.char_split.global.split_rate` | lower |
+| AST leaf-node boundary alignment | `ast_boundary_alignment` | `.per_tokenizer.<tok>.global.full_alignment_rate` | higher |
+| Identifier fragmentation | `identifier_fragmentation` | `.per_tokenizer.<tok>.global.fragmentation_rate` | lower |
+| Indentation depth correlation | `indentation_consistency` | `.per_tokenizer.<tok>.global.depth_proportionality_correlation` | higher |
+| Tokenizer fairness Gini | `tokenizer_fairness_gini` | `.per_tokenizer.<tok>.global.gini_coefficient` | lower |
+| Lorenz curve | (under `tokenizer_fairness_gini`) | `.per_tokenizer.<tok>.lorenz_curve` | n/a, a curve |
+| Encoding speed | `encoding_speed` | `.per_tokenizer.<tok>.global.mean_ms` | lower |
+
+"Direction" gives the better direction for the quantity as defined.
+"neither" marks a metric that describes a tokenizer without ranking it: a longer
+mean token or a higher type-token ratio is not better or worse on its own. Plot
+titles show an arrow for the subset of metrics listed in
+`METRIC_BETTER_DIRECTION` (`tokenizer_analysis/visualization/plots.py`); metrics
+absent from that map get no arrow.
+
+Two more top-level keys are not metrics. `run_metadata` is described under
+[Provenance](OUTPUT.md#provenance). `grouped_analysis` is written when
+`--run-grouped-analysis` is passed, and holds the metrics recomputed within each
+language group: `grouped_analysis.<group type>.<group name>.<metric>`. In
+`analysis_results.json` it is written as an empty object, because the slimming
+step matches only per-metric shapes; the populated version is in
+`analysis_results_full.json`, so pass `--save-full-results` to read it.
+
+## Metrics reported under another metric
+
+Six metrics restate a measurement another metric already publishes, four of them
+as exact algebraic identities. They are written as a field of the metric that
+owns the measurement rather than as separate top-level keys, so the file does not
+present one number twice as if it were two pieces of evidence. Each primary
+records the merge and its evidence under `metadata.merged_metrics`.
+
+| Reported under | Field | Relationship |
+|---|---|---|
+| `compression_rate` | `tokens_per_line` | product is exactly 1 |
+| `vocabulary_utilization` | `type_token_ratio` | TTR is utilization rescaled by vocab size over token count |
+| `renyi_efficiency` | `unigram_distribution` | unigram entropy is the unnormalized numerator of `renyi_1.0` |
+| `utf8_token_integrity` | `char_split` | the same events counted from the character side |
+| `tokenizer_fairness_gini` | `lorenz_curve` | `1 - 2*area(lorenz)` is the Gini coefficient |
+| `three_digit_boundary_alignment` | `split_variability` | Spearman -0.992 between pooled `entropy_short` and `avg_f1` |
 
 ## Basic tokenization metrics
 
@@ -20,17 +117,51 @@ value sits deeper in the file, the path is written out.
 - **Type-token ratio**: unique tokens divided by total tokens. Written under
   `vocabulary_utilization.per_tokenizer.<tok>.type_token_ratio`, because it is
   that metric rescaled by vocabulary size over token count (see
-  [Metrics reported under another metric](README.md#metrics-reported-under-another-metric)).
+  [Metrics reported under another metric](#metrics-reported-under-another-metric)).
 - **Vocabulary utilization** (`vocabulary_utilization`): the fraction of the
   declared vocabulary that the corpus used.
+
+**Compression rate and measurement method.** Under the `lines` measurement
+method, `compression_rate` and `avg_tokens_per_line` (reported under
+`compression_rate.per_tokenizer.<tok>.tokens_per_line`) are exact reciprocals:
+their product is 1.000000 for every tokenizer. Under every measurement method the
+two correlate at Spearman -1.000, because a higher token count always lowers
+`compression_rate` and raises `avg_tokens_per_line`, whichever unit
+`compression_rate` divides by.
+
+Within a single run, `compression_rate` computed under the `characters`,
+`bytes` and `lines` methods correlates at exactly 1.0000 between every pair.
+The numerator (the character, byte or line count of the corpus) is fixed once
+the corpus is fixed and does not depend on the tokenizer; only the token count
+in the denominator varies by tokenizer. Changing `--measurement-config`
+therefore rescales `compression_rate` but does not change the ranking of
+tokenizers within a run.
+
+**Fertility and whitespace word counting.** The default word counting splits
+text on whitespace. On FLORES+, 96.2% of Japanese lines and 69.3% of Chinese
+lines hold exactly one whitespace-delimited token, so for those languages
+`fertility` measures tokens per sentence rather than tokens per word. Median
+per-language fertility runs from 1.261 (eng) to 38.195 (jpn), and the pooled
+value across the FLORES+ languages correlates with fertility over the other 11
+languages at Spearman 0.401. A pooled `fertility` computed over a corpus
+containing CJK text reflects the language mix as much as the tokenizer.
+
+**Vocabulary utilization and unreachable tokens.** The denominator is the
+declared vocabulary size, which includes special and added tokens that
+encoding with `add_special_tokens=False` can never emit. The unreachable count
+is tokenizer-dependent: 1000 of 131072 vocabulary entries for one tokenizer in
+a 37-tokenizer run, 4 for most of the others. For a tokenizer with a large
+unreachable count, the maximum `vocabulary_utilization` can reach is capped
+below 1.0 by that margin.
 
 ### Encoding speed (`encoding_speed`)
 
 Wall-clock time spent encoding, per tokenizer:
 `encoding_speed.per_tokenizer.<tok>` holds `mean_ms` (mean milliseconds per
-sample), `total_s` (total seconds) and `num_samples`. It measures the run, not
-the tokenizer's quality, so it has no `global` block and no per-language
-breakdown. Use it to size a larger run from a small one.
+sample), `total_s` (total seconds) and `num_samples`, plus a `global` block that
+repeats the same three fields. It measures the run, not the tokenizer's quality,
+so it has no per-language breakdown. Use it to size a larger run from a small
+one.
 
 ## Information-theoretic metrics
 
@@ -45,10 +176,36 @@ the corpus, is still written under the top-level
 0.678 over 37 tokenizers, so they are not interchangeable.
 
 **Average token rank** is written under
-`renyi_efficiency.per_tokenizer.<tok>.unigram_distribution.global_avg_token_rank`:
-the mean position of the corpus tokens within the frequency-ordered vocabulary.
-The same block holds `global_unigram_entropy`, which is the unnormalized
-numerator of `renyi_1.0`.
+`renyi_efficiency.per_tokenizer.<tok>.unigram_distribution.global_avg_token_rank`.
+The token types observed in the corpus are ordered by descending frequency and
+numbered from 1; the metric is the mean of those rank numbers over every token
+occurrence. The ordering runs over the types this corpus produced, not over the
+declared vocabulary.
+
+> **Only compare tokenizers whose vocabularies are the same size.** The rank
+> can never exceed the number of distinct types observed, and that count can
+> never exceed the declared vocabulary size, so a small-vocabulary tokenizer is
+> structurally prevented from reporting a large mean rank however unevenly it
+> uses its vocabulary. On the nine tokenizers of `benchmarks/open_source` the
+> mean rank runs from 475.9 for `bert-base` (vocabulary 30522, 6369 types
+> observed) to 4521.8 for `gemma-2` (vocabulary 256000, 26490 types observed),
+> correlating with the observed type count at Spearman 0.983 and with the
+> vocabulary size at 0.917. It also correlates with total token count at
+> Spearman -0.977 over a 37-tokenizer run, so it is not comparable across runs
+> of different corpus size either.
+>
+> **TODO:** give this metric a scale-free definition. Dividing by the number of
+> observed types, or reporting the mean rank quantile instead of the mean rank,
+> would both remove the vocabulary-size ceiling. Until then it is a diagnostic
+> for one vocabulary size at a time rather than a comparison across
+> tokenizers.
+
+The same block holds `global_unigram_entropy`. `renyi_1.0` multiplied by
+`log2` of the declared vocabulary size reproduces `global_unigram_entropy` to
+zero relative error: `global_unigram_entropy` is the unnormalized numerator of
+`renyi_1.0`, not merely correlated with it. Checked on the nine tokenizers of
+`benchmarks/open_source/analysis_results.json`, where the largest relative
+error is 1.6e-16.
 
 ### Bigram entropy (`bigram_entropy`)
 
@@ -76,9 +233,8 @@ the distribution of tokens that follow it. Poelman et al. define only the bigram
 form, so there is no published value to compare this against. Token contexts
 occurring fewer than 3 times (`min_trigram_occurrences`) are excluded.
 
-The value sits in flat fields rather than a `global` block:
-`trigram_entropy.per_tokenizer.<tok>.global_trigram_entropy`, beside
-`global_total_trigrams`, `global_types_evaluated` and `global_types_excluded`.
+The value is in `trigram_entropy.per_tokenizer.<tok>.global`, which holds
+`trigram_entropy`, `total_trigrams`, `types_evaluated` and `types_excluded`.
 
 The default threshold discards 89 to 90 percent of context types and a median 70
 percent of occurrences, and the ranking moves with it: Spearman 0.728 between
@@ -87,10 +243,35 @@ entropy at the same settings. Treat a trigram ranking as threshold-dependent.
 
 ## Morphological metrics
 
-**MorphScore V2** (`morphscore_recall`, `morphscore_precision`): morphological
-evaluation following [Arnett et al. 2025](https://arxiv.org/abs/2507.06378).
-Enable with `--morphscore` or `--morphscore-config`. Requires raw tokenization
-and the MorphScore submodule.
+### MorphScore (`morphscore`)
+
+Whether a tokenizer's boundaries fall where a word's morpheme boundaries do,
+following [Arnett et al. 2025](https://arxiv.org/abs/2507.06378). Enable with
+`--morphscore` or `--morphscore-config`. Requires raw tokenization and the
+MorphScore submodule.
+
+`morphscore.per_tokenizer.<tok>.global` holds four averages over the languages
+that had data, with `languages_evaluated` and `total_samples` beside them:
+
+| Field | What it is |
+|---|---|
+| `avg_morphscore_recall` | of the morpheme boundaries a word has, the share the tokenizer also placed a token boundary at |
+| `avg_morphscore_precision` | of the token boundaries the tokenizer placed inside a word, the share that fall on a morpheme boundary |
+| `avg_micro_f1` | F1 pooled over samples, so a language with more words counts for more |
+| `avg_macro_f1` | F1 averaged over languages, so every language counts the same |
+
+All four are `null` when no language produced a usable result, with
+`languages_evaluated` at 0 rather than four zeros that read as scores.
+
+Three options change what is measured, and each is recorded in the metric's
+`metadata`: `by_split` evaluates the train, validation and test splits
+separately rather than together; `freq_scale` weights a word by its frequency,
+and is on by default; `exclude_single_tok` drops words the tokenizer emitted as
+a single token, which have no internal boundary to score.
+
+The scoring itself is the submodule's, not this package's. It has not been
+audited against the paper here, so treat these numbers as MorphScore's output
+rather than as an independent reimplementation.
 
 ## Mathematical content metrics
 
@@ -122,14 +303,19 @@ tokenization of numbers. Disable with `--no-digit-boundary`.
 > sources on one line:
 > `Operator isolation domains: prose=multilingual, math=..., code=...`.
 >
-> `--no-code-ast` drops the three AST metrics but leaves this metric's `code`
+> `--no-code-ast` drops the three AST metrics without affecting this metric's `code`
 > domain running on the bundled samples. `--no-digit-boundary` drops
 > `operator_isolation_rate` along with the three digit metrics.
 >
-> See [the full evaluation command](README.md#full-evaluation) for the invocation
+> See [the fuller invocation](../README.md#three-defaults-to-change-before-publishing-a-number) for the invocation
 > that supplies math data.
 
 ### Three-digit place-value boundary alignment (`three_digit_boundary_alignment`)
+
+> **Not comparable with `tokenizer-analysis-suite`.** Source spans now map to
+> tokens through the tokenizer's own character offsets. They were previously
+> matched against a string rebuilt from token surfaces, which under-counted
+> spans for any language with non-ASCII text.
 
 Whether numbers are tokenized with right-aligned 3-digit groupings matching
 place-value structure (units, thousands, millions).
@@ -158,10 +344,15 @@ Written under
 `three_digit_boundary_alignment.per_tokenizer.<tok>.split_variability`. For
 numbers of the same digit length, the Shannon entropy of the distribution of
 boundary patterns. Low entropy means one splitting scheme is used consistently;
-high entropy means the scheme varies from number to number. Entropy is computed
-on patterns pooled across languages, not averaged per language. Reports entropy
-in bits, the dominant pattern and its frequency, per digit-length bucket
-(`by_digit_length`) and per short/long bucket (`by_bucket`).
+high entropy means the scheme varies from number to number. Reports entropy in
+bits, the dominant pattern and its frequency, keyed by digit-length bucket and
+then by language (`by_digit_length.<n>.<lang>`) and by short/long bucket and
+then by language (`by_bucket.<short|long>.<lang>`).
+
+Every published entropy is per language. There is no cross-language pooled
+entropy in either results file: the code computes one, but the merge into
+`three_digit_boundary_alignment` keeps only the two per-language blocks, so the
+pooled value is never written.
 
 **Example:** a corpus holds three 5-digit numbers. If all three are split
 `XX|XXX`, that bucket has one pattern and entropy 0.0 bits. If they are split
@@ -176,7 +367,7 @@ means no single scheme is being applied.
 
 ### Numeric magnitude consistency (`numeric_magnitude_consistency`)
 
-How tokens-per-digit varies across digit lengths. Everything sits under
+How tokens-per-digit varies across digit lengths. Everything is under
 `numeric_magnitude_consistency.per_tokenizer.<tok>.scaling`:
 
 - `per_bucket.<digits>` holds `mean_fertility` (mean tokens per digit),
@@ -208,6 +399,12 @@ small numbers and split larger numbers in ways that vary with the number, which
 is what the per-bucket fertility values show.
 
 ### Operator isolation rate (`operator_isolation_rate`)
+
+> **Not comparable with `tokenizer-analysis-suite`.** Two changes: spans map
+> through encoder offsets rather than a rebuilt string, and a character
+> claimed by two token ranges is assigned to the later token. The second
+> alone moved XLM-RoBERTa's pooled isolation rate from 0.6948 to 0.6770 and
+> its compound preservation from 0.7222 to 0.8443, over 454693 operators.
 
 The fraction of mathematical operators tokenized as standalone tokens rather
 than merged with adjacent content. Operators are located in the source text by
@@ -247,7 +444,7 @@ uv run tokenizer-analysis --use-sample-data
 `bpe` scores 0.7938 pooled over 3016 instances, against 0.6832 for code over
 1932 instances, 0.9886 for prose over 787 and 0.9966 for math over 297. The
 three domain rates are far apart, and the pooled figure is not close to any of
-them: code supplies 64 percent of the instances but the pooled rate sits 0.11
+them: code supplies 64 percent of the instances, and the pooled rate is 0.11
 above the code rate, because prose and math are both near 1.0. Quoting `global`
 alone therefore reports a number that describes no domain.
 
@@ -305,25 +502,48 @@ per tokenizer. When the budget is exceeded, `mean_cer` and `whitespace_fidelity`
 are `null` for that tokenizer and the run logs the projection that triggered the
 skip. `--cer-time-budget 0` disables the cap.
 
+Which tokenizers report `mean_cer` therefore depends on how fast the machine
+running the analysis is: a tokenizer skipped at a given `--cer-time-budget` on a
+slow machine can complete at the same budget on a faster one.
+`per_tokenizer.<tok>.cer_skipped` is `true` when the budget was exceeded for
+that tokenizer, distinguishing a skipped value from a measured one.
+`exact_match_rate` does not run the Levenshtein computation and is unaffected.
+
 ### UNK token rate (`unk_token_rate`)
 
 The fraction of encoded tokens equal to the tokenizer's UNK token id: how much
-of the input the tokenizer has no representation for. 0.0 means no unknown
-tokens were produced.
+of the input the tokenizer has no representation for. 0.0 means either no
+unknown tokens were produced or the tokenizer reports no UNK token id at all,
+in which case the count of UNK tokens is zero by construction rather than by
+measurement. The two cases are not distinguishable from `unk_token_rate` alone.
 
 **Example:** encoding `"𝕳𝖊𝖑𝖑𝖔"` to `[UNK, UNK, UNK, UNK, UNK]` gives UNK rate
 1.0. Encoding `"Hello"` to `[15496]` gives 0.0.
 
 ### Whitespace fidelity (`whitespace_fidelity`)
 
+> **Not comparable with `tokenizer-analysis-suite`.** Whitespace was widened
+> from ASCII space, tab, newline and carriage return to those plus every
+> Unicode `Zs` separator, so any corpus containing NBSP, thin space or
+> ideographic space scores differently.
+
 The fraction of whitespace characters (spaces, tabs, newlines, plus the Unicode
 Zs category) in the original text preserved through the round trip. Characters
-are paired by a greedy forward scan.
+are paired by a greedy forward scan. 1.0 means either every whitespace
+character round-tripped or the evaluated text held no whitespace at all, in
+which case fidelity is 1.0 by convention rather than by measurement. The two
+cases are not distinguishable from `whitespace_fidelity` alone.
 
 **Example:** original `"a b\tc"` decoded as `"a b c"`, the tab replaced by a
 space, preserves 1 of 2 whitespace characters, fidelity 0.5.
 
 ## UTF-8 character boundary metrics (`utf8_token_integrity`)
+
+> **Not comparable with `tokenizer-analysis-suite`.** Byte-level detection no
+> longer requires 50 of the 68 GPT-2 marker characters to be present in the
+> vocabulary. A byte-level tokenizer below that threshold was misread as
+> non-byte-level and reported a perfect 1.0: gpt4o-english-bpe read 1.0000,
+> best of 37 tokenizers, where the true value is 0.6688, worst of 37.
 
 How byte-level tokenizers handle multi-byte UTF-8 characters at token
 boundaries. Runs on any text data with no extra configuration. Disable with
@@ -370,7 +590,7 @@ and one embedding stands for both partial characters at once.
 `utf8_token_integrity.per_tokenizer.<tok>.char_split`. How many multi-byte
 characters in the source text have their bytes spread across more than one
 token. Each token's bytes are reconstructed and aligned to the source text to
-decide this. `split_rate` is splits divided by aligned multi-byte characters;
+determine this. `split_rate` is splits divided by aligned multi-byte characters;
 `splits_per_1k_multibyte` and `splits_per_1k_tokens` are also reported, along
 with a `per_byte_width` breakdown for 2-, 3- and 4-byte characters.
 
@@ -434,6 +654,12 @@ exceed the default and be dropped from a run that would otherwise measure it.
 
 ### AST leaf-node boundary alignment (`ast_boundary_alignment`)
 
+> **Not comparable with `tokenizer-analysis-suite`.** Source spans now map to
+> tokens through the tokenizer's own character offsets, where they were
+> previously matched against a string rebuilt from token surfaces. That
+> reconstruction lost synchronisation after any multi-space token. Llama 3's
+> `full_alignment_rate` moved from 0.127 to 0.519.
+
 Source code is parsed with tree-sitter, leaf-node spans are extracted, and the
 fraction whose boundaries coincide with token boundaries is measured. Five
 categories are tracked separately: identifiers, keywords, operators, literals
@@ -451,7 +677,7 @@ The correspondence between source characters and tokens comes from the
 tokenizer's own offsets, not from decoding the tokens and matching the result
 back against the source. One word-start space is dropped from each token's
 range first, because `trim_offsets` is a ByteLevel post-processor flag that
-changes the reported offsets without changing the tokenization: GPT-2 ships it
+changes the reported offsets without changing the tokenization: GPT-2 sets it
 false and GPT-NeoX true, and reading the raw offsets scored GPT-2 at 0.433
 against GPT-NeoX at 0.770 on token ids that were byte-identical.
 
@@ -481,6 +707,15 @@ manual annotation. A tokenizer that splits `return` into `ret` and `urn` splits
 a syntactically atomic unit.
 
 ### Identifier fragmentation rate (`identifier_fragmentation`)
+
+> **Not comparable with `tokenizer-analysis-suite`.** The same move to encoder
+> offsets, which took Llama 3's unmappable identifier count from 119560 to 0,
+> and `avg_tokens_per_identifier` no longer counts unmappable spans with a
+> `-1` sentinel, which had biased it low and made it negative for C#.
+>
+> `identifiers_unmappable` counts identifier spans no token covers. It is
+> reported so a low fragmentation rate measured over few spans is visible as
+> such.
 
 The fraction of programmer-defined identifiers split into more than one token,
 plus the average number of tokens per identifier. Computed occurrence-weighted
@@ -580,10 +815,10 @@ Then the **Tokenizer Fairness Gini** with equal weights is
 **This is a fair comparison only on a parallel corpus.** The cost is tokens per
 unit of text, so if the texts in two languages say different things, the ratio
 between their costs is partly the ratio of what they say. FLORES+ is parallel,
-which is why the shipped configs use it.
+which is why the bundled configs use it.
 
 **Even on a parallel corpus, the byte unit is not neutral across scripts.** UTF-8
-spends one byte per Latin character, two for Cyrillic and Greek, three for most
+uses one byte per Latin character, two for Cyrillic and Greek, three for most
 CJK and Devanagari. A tokenizer can therefore look cheaper on Chinese than on
 English purely because the denominator is larger, with no difference in how well
 it segments either. Two ways to read around it: compare the same tokenizer
@@ -614,6 +849,26 @@ per-language *vocabulary coverage*.
 
 Requires at least 2 languages with mean utilization above 0. For a
 single-language corpus it is `null` rather than a fabricated `0`, and it is
-omitted from the plot. `per_language_mean` and `per_language_std` sit beside it.
+omitted from the plot. `per_language_mean` and `per_language_std` are beside
+it, and are `null` under the same condition, since a dispersion over fewer than
+two languages is undefined.
+
+### Cross-language token sharing
+
+Written as `avg_langs_per_token` under
+`vocabulary_utilization.per_tokenizer.<tok>` in `analysis_results_full.json`
+only. It is computed on every run but the slimming step does not select it, so
+`--save-full-results` is needed to read it. The metric's own `metadata`
+describes it, which is how the omission stayed invisible.
+
+For each learned merge token emitted at least once anywhere in the language
+set, the number of distinct languages it is emitted in; averaged over those
+tokens. A token counts for a language on any occurrence.
+
+Single-character base tokens and declared special or reserved tokens are
+excluded, so the value reflects learned sharing rather than the byte coverage
+every byte-level tokenizer has by construction. The range is 1 to the number of
+languages. Higher means more of the learned vocabulary is reused across
+languages rather than being specific to one.
 The comparison plot is written to `vocab_util_cross_lingual_cov_individual.svg`;
 that string is a plot filename, not a results key.

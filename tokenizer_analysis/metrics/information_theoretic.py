@@ -113,7 +113,6 @@ class InformationTheoreticMetrics(BaseMetrics):
         results = {
             'per_tokenizer': {},
             'per_language': {},
-            'pairwise_comparisons': {},
             'observed_normalization': {'per_tokenizer': {}},
             'metadata': {
                 'definition': 'Eff_alpha = H_alpha(token distribution) / log2(|V|)',
@@ -237,14 +236,6 @@ class InformationTheoreticMetrics(BaseMetrics):
                         lang in results['per_tokenizer'][tok_name][alpha_key]):
                         results['per_language'][alpha_key][lang][tok_name] = results['per_tokenizer'][tok_name][alpha_key][lang]
         
-        # Compute pairwise comparisons for Shannon entropy (alpha=1.0)
-        if 1.0 in self.renyi_alphas:
-            shannon_entropies = {name: results['per_tokenizer'][name]['renyi_1.0']['overall'] 
-                               for name in self.tokenizer_names}
-            results['pairwise_comparisons']['shannon'] = self.compute_pairwise_comparisons(
-                shannon_entropies, 'shannon_entropy'
-            )
-        
         return results
 
     def compute_compression_rate(self, tokenized_data: Dict[str, List[TokenizedData]]) -> Dict[str, Any]:
@@ -264,7 +255,6 @@ class InformationTheoreticMetrics(BaseMetrics):
         results = {
             'per_tokenizer': {},
             'per_language': {},
-            'pairwise_comparisons': {}
         }
 
         for tok_name in self.tokenizer_names:
@@ -305,11 +295,14 @@ class InformationTheoreticMetrics(BaseMetrics):
                     total_units += lang_units
                     total_tokens += lang_tokens
 
-            # Global compression: ratio of totals
+            # Global compression: ratio of totals.  None, not 1.0, when no
+            # token was emitted: a compression rate of 1.0 is a real
+            # measurement (one unit per token) and must not stand in for
+            # "there was nothing to measure".
             if total_tokens > 0:
                 global_rate = total_units / total_tokens
             else:
-                global_rate = 1.0  # Default compression rate
+                global_rate = None
 
             results['per_tokenizer'][tok_name] = {
                 'global': {
@@ -327,13 +320,6 @@ class InformationTheoreticMetrics(BaseMetrics):
             'aggregation': AGGREGATION_RATIO_OF_SUMS,
             'count_unit': 'measurement units',
         }
-
-        # Compute pairwise comparisons
-        global_ratios = {name: results['per_tokenizer'][name]['global']['compression_rate']
-                        for name in self.tokenizer_names if name in results['per_tokenizer']}
-        results['pairwise_comparisons'] = self.compute_pairwise_comparisons(
-            global_ratios, 'compression_rate'
-        )
 
         return results
         
@@ -353,8 +339,8 @@ class InformationTheoreticMetrics(BaseMetrics):
             tokenized_data: Dict mapping tokenizer names to TokenizedData lists
     
         Returns:
-            A dictionary containing the computed metrics, structured by tokenizer and language,
-            including global metrics and pairwise comparisons.
+            A dictionary containing the computed metrics, structured by tokenizer
+            and language.
         """
         
         results = {
@@ -363,7 +349,6 @@ class InformationTheoreticMetrics(BaseMetrics):
                 'unigram_entropy': {},
                 'avg_token_rank': {}
             },
-            'pairwise_comparisons': {}
         }
     
         for tok_name in self.tokenizer_names:
@@ -408,13 +393,15 @@ class InformationTheoreticMetrics(BaseMetrics):
             # 2. Compute global metrics for the tokenizer
             global_unigram_entropy = self.compute_renyi_entropy(global_token_counts, alpha=1.0)
             
-            global_avg_token_rank = 0.0
+            global_avg_token_rank = None
             if global_token_counts:
                 globally_ranked_tokens = [token for token, count in global_token_counts.most_common()]
                 global_token_to_rank = {token: rank + 1 for rank, token in enumerate(globally_ranked_tokens)}
                 
                 all_global_ranks = [global_token_to_rank[token] for seq in all_token_sequences for token in seq]
-                global_avg_token_rank = np.mean(all_global_ranks) if all_global_ranks else 0.0
+                # Ranks start at 1, so 0.0 could never be measured; None says
+                # "not measured" without inventing an impossible rank.
+                global_avg_token_rank = float(np.mean(all_global_ranks)) if all_global_ranks else None
     
             results['per_tokenizer'][tok_name] = {
                 'global_unigram_entropy': global_unigram_entropy,
@@ -435,17 +422,6 @@ class InformationTheoreticMetrics(BaseMetrics):
                 if lang_stats:
                     results['per_language']['unigram_entropy'][lang][tok_name] = lang_stats['unigram_entropy']
                     results['per_language']['avg_token_rank'][lang][tok_name] = lang_stats['avg_token_rank']
-    
-        # 4. Compute pairwise comparisons for global metrics
-        global_entropies = {name: res['global_unigram_entropy'] for name, res in results['per_tokenizer'].items()}
-        global_ranks = {name: res['global_avg_token_rank'] for name, res in results['per_tokenizer'].items()}
-        
-        results['pairwise_comparisons']['global_unigram_entropy'] = self.compute_pairwise_comparisons(
-            global_entropies, 'global_unigram_entropy'
-        )
-        results['pairwise_comparisons']['global_avg_token_rank'] = self.compute_pairwise_comparisons(
-            global_ranks, 'global_avg_token_rank'
-        )
     
         return results
 
@@ -537,7 +513,13 @@ class InformationTheoreticMetrics(BaseMetrics):
             weight_total += weight
             types_evaluated += 1
 
-        entropy = weighted_sum / weight_total if weight_total else 0.0
+        # None, not 0.0, when no context type cleared the occurrence
+        # threshold.  An entropy of 0.0 is a real and extreme measurement
+        # (every context has exactly one successor), so it must not double as
+        # "nothing qualified".  eta above keeps its 0.0: max_h == 0 means the
+        # context has exactly one distinct successor, which genuinely is zero
+        # evenness.
+        entropy = weighted_sum / weight_total if weight_total else None
         return {
             'entropy': entropy,
             'total_ngrams': total_ngrams,
@@ -564,7 +546,6 @@ class InformationTheoreticMetrics(BaseMetrics):
         results = {
             'per_tokenizer': {},
             'per_language': {},
-            'pairwise_comparisons': {},
             'metadata': {
                 'description': 'Bigram Entropy: frequency-weighted normalized Shannon entropy of right-accessor distributions',
                 'reference': 'Poelman et al. 2025, EMNLP (Shannon efficiency η)',
@@ -669,14 +650,6 @@ class InformationTheoreticMetrics(BaseMetrics):
                     if lang_data:
                         results['per_language'][lang][tok_name] = lang_data['bigram_entropy']
 
-        # Pairwise comparisons on global bigram entropy
-        global_entropies = {
-            name: res['global_bigram_entropy']
-            for name, res in results['per_tokenizer'].items()
-        }
-        results['pairwise_comparisons'] = self.compute_pairwise_comparisons(
-            global_entropies, 'bigram_entropy'
-        )
         results['reference_definition'] = {
             'per_tokenizer': faithful_by_lang,
             'metadata': {
@@ -723,7 +696,6 @@ class InformationTheoreticMetrics(BaseMetrics):
         results = {
             'per_tokenizer': {},
             'per_language': {},
-            'pairwise_comparisons': {},
             'metadata': {
                 'description': 'Trigram Entropy: frequency-weighted normalized Shannon entropy of right-accessor distributions conditioned on bigram context',
                 'reference': 'Extension of Poelman et al. 2025 (Shannon efficiency η) to trigram contexts',
@@ -824,14 +796,6 @@ class InformationTheoreticMetrics(BaseMetrics):
                     if lang_data:
                         results['per_language'][lang][tok_name] = lang_data['trigram_entropy']
 
-        # Pairwise comparisons on global trigram entropy
-        global_entropies = {
-            name: res['global_trigram_entropy']
-            for name, res in results['per_tokenizer'].items()
-        }
-        results['pairwise_comparisons'] = self.compute_pairwise_comparisons(
-            global_entropies, 'trigram_entropy'
-        )
         results['reference_definition'] = {
             'per_tokenizer': faithful_by_tok,
             'metadata': {

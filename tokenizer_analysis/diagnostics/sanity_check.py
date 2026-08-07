@@ -36,6 +36,7 @@ from ..constants import (
     SANITY_MAX_UNREPRESENTABLE_BYTES_WARN,
     SANITY_PRETOK_CONSERVATION_FAIL_FRAC,
     SANITY_ROUNDTRIP_BUG_FAIL_FRAC,
+    SANITY_ROUNDTRIP_BUG_WARN_FRAC,
     SANITY_ROUNDTRIP_CLEAN_PASS_FRAC,
     SANITY_UNK_SCRIPT_WARN_RATE,
     SANITY_VOCAB_UNREACHABLE_WARN_COUNT,
@@ -552,7 +553,18 @@ class TokenizerSanityChecker:
                 bare.append(cleaned)
             elif _is_mark(cleaned[0]):
                 leading += 1
-        lead_frac = (leading / considered) if considered else 0.0
+        if not considered:
+            # No vocabulary entry could be examined, so there is no fraction to
+            # report. 0.0 here was a PASS derived from zero tokens, which is
+            # what a pretokenized config with no vocab_dict produces.
+            # check_byte_coverage already skips that case explicitly.
+            return _mk(name, "static", Severity.NOT_APPLICABLE, "no vocab examined",
+                       SANITY_MARK_LEADING_TOKEN_WARN_FRAC,
+                       "no vocabulary entry was available to examine, so the "
+                       "combining-mark share is not reported",
+                       "a fraction over zero examined tokens is not a "
+                       "measurement; reporting 0.0 would be a silent pass")
+        lead_frac = leading / considered
         if bare:
             return _mk(name, "static", Severity.FAIL, len(bare), 0,
                        f"{len(bare)} vocab token(s) are bare combining marks",
@@ -615,8 +627,16 @@ class TokenizerSanityChecker:
                 blob.extend(tb)
             if ok and _classify_malformation(bytes(blob)) is not None:
                 return "byte_bug"
-        except Exception:
-            pass
+        except Exception as exc:
+            # The probe still gets classified below, most likely as
+            # merge_or_decode_bug. C3 then reports a real defect under the
+            # wrong root cause, which points whoever reads it at the wrong
+            # part of the tokenizer.
+            logger.warning(
+                "C3: byte-level classification failed for a probe (%s: %s); "
+                "its root cause bucket may be wrong",
+                type(exc).__name__, exc,
+            )
         # Casing
         if d.casefold() == text.casefold():
             return ("casing_loss_expected" if self.lowercasing_normalizer
@@ -667,7 +687,8 @@ class TokenizerSanityChecker:
                        "ASCII text must always roundtrip", ex)
         if bd["bug_frac"] >= SANITY_ROUNDTRIP_BUG_FAIL_FRAC:
             sev = Severity.FAIL
-        elif bd["bug_frac"] > 0 or bd["clean_frac"] < SANITY_ROUNDTRIP_CLEAN_PASS_FRAC:
+        elif (bd["bug_frac"] > SANITY_ROUNDTRIP_BUG_WARN_FRAC
+              or bd["clean_frac"] < SANITY_ROUNDTRIP_CLEAN_PASS_FRAC):
             sev = Severity.WARN
         elif bd["unverifiable"] > 0:
             sev = Severity.UNVERIFIABLE
@@ -831,6 +852,24 @@ class TokenizerSanityChecker:
                     directions["other"] = directions.get("other", 0) + 1
         ent = DigitBoundaryMetrics._compute_pattern_entropy(patterns)
         npat = ent["num_patterns"]
+        if npat == 0:
+            # Nothing was measured, so there is no consistency to report.
+            # Reporting 1.0 here was a perfect score computed from zero digit
+            # spans: every probe above is skipped by `if not offsets`, and
+            # TokenizerWrapper.encode_with_offsets returns (ids, None) by
+            # default, which _ScriptTokTokenizer (ScriptBPE, MinGram) and
+            # PreTokenizedDataTokenizer inherit unchanged. Measured on the
+            # bundled bpe.json: WARN at 0.3769 with offsets, PASS at 1.0000
+            # with the same tokenizer once offsets are removed. This follows
+            # check_byte_coverage, which skips explicitly rather than passing
+            # silently.
+            return _mk(name, "behavioral", Severity.NOT_APPLICABLE, "no digit spans",
+                       SANITY_DIGIT_CONSISTENCY_PASS,
+                       "no digit span could be measured, so consistency is not "
+                       "reported",
+                       "the tokenizer reported no character offsets, or no "
+                       "probe contained a number; a score computed from zero "
+                       "spans would be a perfect one")
         if npat > 1:
             norm_ent = ent["entropy"] / math.log2(npat)
         else:
@@ -904,8 +943,16 @@ class TokenizerSanityChecker:
                     if self._encode(surface) != [sid]:
                         issues.append(f"{label} surface {surface!r} not atomic")
                         sev = Severity.FAIL
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # Without this the check reports "special tokens
+                    # consistent" for a token whose atomicity was never
+                    # verified, which reads as a clean result rather than an
+                    # unchecked one.
+                    logger.warning(
+                        "C7: could not re-encode %s surface %r (%s: %s); its "
+                        "atomicity is unverified, not confirmed",
+                        label, surface, type(exc).__name__, exc,
+                    )
         if not has_unk and self.byte_enc["style"] is None:
             issues.append("no UNK token for a non-byte-level tokenizer")
             sev = Severity.WARN if sev == Severity.PASS else sev
@@ -1155,6 +1202,13 @@ class TokenizerSanityChecker:
                         if dec:
                             example = dec
                     except Exception:
+                        # Deliberately silent, and the only one left in this
+                        # package. example already holds the cleaned surface,
+                        # so a failure here costs readability in one report
+                        # line and changes no count and no severity. Every
+                        # TokenizerWrapper.decode() already catches and logs
+                        # its own errors and returns None rather than raising,
+                        # so this cannot currently fire at all.
                         pass
                 outliers.append(example[:80])
         sev = Severity.WARN if outliers else Severity.PASS
@@ -1314,8 +1368,22 @@ class TokenizerSanityChecker:
                         if len(dead_examples) < MAX_EXAMPLE_DISPLAY_COUNT:
                             dead_examples.append(surface[:40])
                         continue
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # Falling through to non_self_reproducing hid a FAIL: that
+                    # bucket feeds no severity, while normalization_unreachable
+                    # above it drives FAIL. A normalizer that raises on the
+                    # surfaces of genuinely dead vocabulary therefore turned a
+                    # FAIL into a PASS, over a loop that covers the whole
+                    # vocabulary. unverifiable forces at least WARN, which is
+                    # what this module's docstring says an undecidable case
+                    # must do.
+                    logger.warning(
+                        "C16: normalizer raised on vocab surface %r (%s: %s); "
+                        "counted as unverifiable rather than assumed benign",
+                        surface[:40], type(exc).__name__, exc,
+                    )
+                    buckets["unverifiable"] += 1
+                    continue
                 buckets["non_self_reproducing"] += 1
             else:
                 buckets["unverifiable"] += 1

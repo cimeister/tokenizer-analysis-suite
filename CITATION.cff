@@ -13,7 +13,7 @@ authors:
     given-names: Clara
 repository-code: "https://github.com/cimeister/tokenizer-intrinsic-evals"
 license: MIT
-version: 1.0.1
+version: 1.0.2
 date-released: "2026-08-04"
 keywords:
   - tokenization
