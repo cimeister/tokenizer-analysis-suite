@@ -169,14 +169,60 @@ def section_headline(results, rows):
         "The same holds for the two Gini columns. Gini per byte is "
         "`tokenizer_fairness_gini.per_tokenizer.<tok>.global.gini_coefficient`; "
         "Gini per line is `.per_line_normalization.gini_coefficient`, which is "
-        "`n/a` unless every language has the same line count. **The two rank "
-        "the tokenizers differently**, at Spearman 0.650 over these nine: "
-        "XLM-RoBERTa is 0.0976 per byte and 0.0494 per line, Llama 3 is 0.0772 "
-        "per byte and 0.0926 per line, so which of the two is the more equitable "
-        "across languages depends on the unit. On this corpus, which is "
-        "parallel, read the per-line column."
+        "`n/a` unless every language has the same line count."
     )
+    lines.extend(_gini_disagreement_sentences(results, rows))
     return lines
+
+
+def _gini_disagreement_sentences(results, rows):
+    """The comparison of the two Gini columns, computed from the results.
+
+    These numbers were typed into this file until 1.0.3, which made them the
+    only figures in the report that a regeneration could leave disagreeing with
+    the table above them. The module docstring already promised nothing was
+    transcribed by hand.
+    """
+    pairs = []
+    for key, name, _repo, _algo in rows:
+        by_byte = get(results, "tokenizer_fairness_gini", "per_tokenizer", key,
+                      "global", "gini_coefficient")
+        by_line = get(results, "tokenizer_fairness_gini", "per_tokenizer", key,
+                      "per_line_normalization", "gini_coefficient")
+        if isinstance(by_byte, (int, float)) and isinstance(by_line, (int, float)):
+            pairs.append((name, by_byte, by_line))
+
+    # Two points are the minimum for a rank correlation, and the per-line block
+    # is absent on any corpus that is not line-parallel, so this is the ordinary
+    # case rather than a degenerate one.
+    if len(pairs) < 2:
+        return ["", f"{len(pairs)} of the {len(rows)} tokenizers here have a "
+                    "coefficient under both units, so the two columns cannot be "
+                    "compared on this run."]
+
+    from scipy.stats import spearmanr
+    rho = spearmanr([p[1] for p in pairs], [p[2] for p in pairs]).statistic
+
+    lowest_byte = min(pairs, key=lambda p: p[1])
+    lowest_line = min(pairs, key=lambda p: p[2])
+    out = ["", f"Over the {len(pairs)} tokenizers with both, the two columns "
+               f"rank at Spearman {rho:.3f}."]
+    if lowest_byte[0] == lowest_line[0]:
+        out.append(
+            f"{lowest_byte[0]} has the lowest coefficient under both units, "
+            f"{lowest_byte[1]:.4f} per byte and {lowest_byte[2]:.4f} per line."
+        )
+    else:
+        out.append(
+            f"**They disagree on which tokenizer is the most equitable across "
+            f"languages**: {lowest_byte[0]} is lowest per byte at "
+            f"{lowest_byte[1]:.4f}, against {lowest_byte[2]:.4f} per line, while "
+            f"{lowest_line[0]} is lowest per line at {lowest_line[2]:.4f}, "
+            f"against {lowest_line[1]:.4f} per byte. Which one is lower depends "
+            "on the unit."
+        )
+    out.append("On this corpus, which is parallel, read the per-line column.")
+    return out
 
 
 def section_per_language(results, rows):
@@ -233,7 +279,7 @@ def section_domain(results, rows):
     # Selecting on the null and then asserting the budget explanation was right
     # by luck on this corpus, not by construction.
     skipped = [
-        name for key, name, _repo, _algo in rows
+        (key, name) for key, name, _repo, _algo in rows
         if get(results, "reconstruction_fidelity", "per_tokenizer", key,
                "cer_skipped") is True
     ]
@@ -242,16 +288,30 @@ def section_domain(results, rows):
     if skipped:
         lines.append("")
         lines.append(
-            "CER is `n/a` for " + ", ".join(skipped) + ". The character error "
+            "CER is `n/a` for " + ", ".join(name for _key, name in skipped)
+            + ". The character error "
             "rate is an edit distance, and a tokenizer that does not "
             "reconstruct its input has a large distance on every text, so the "
             f"run projected past the {budget}-second budget and reported the "
             "value as null rather than spending the time, which "
-            "`cer_skipped` records. The exact round-trip column "
-            "carries the same information: a tokenizer at 0.031 exact matches "
-            "is lossy by construction, in this case through lowercasing, "
-            "accent stripping and unknown-token substitution."
+            "`cer_skipped` records."
         )
+        # The rate was typed as 0.031 until 1.0.3, which tied the sentence to
+        # one tokenizer on one corpus. Reading the worst of the skipped ones
+        # keeps it true whichever tokenizers a run skips.
+        rates = [
+            (name, get(results, "reconstruction_fidelity", "per_tokenizer", key,
+                       "global", "exact_match_rate"))
+            for key, name in skipped
+        ]
+        rates = [(n, r) for n, r in rates if isinstance(r, (int, float))]
+        if rates:
+            worst_name, worst_rate = min(rates, key=lambda p: p[1])
+            lines.append(
+                "The exact round-trip column carries the same information: "
+                f"{worst_name} reconstructs {worst_rate:.3f} of its texts "
+                "exactly, so it is lossy on nearly every one of them."
+            )
     return lines
 
 

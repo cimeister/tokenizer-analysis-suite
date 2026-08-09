@@ -209,3 +209,102 @@ class TestHealthMatrix:
             render.main(["--results", str(results_path),
                          "--output", str(tmp_path / "REPORT.md"),
                          "--sanity", str(tmp_path / "nope.json")])
+
+
+def _render_custom(render, tmp_path, results, name="custom"):
+    """Render an arbitrary results dict, for prose that reads more than one row."""
+    results_path = tmp_path / f"{name}_results.json"
+    results_path.write_text(json.dumps(results), encoding="utf-8")
+    out = tmp_path / f"{name}_REPORT.md"
+    assert render.main(["--results", str(results_path), "--output", str(out)]) == 0
+    return out.read_text(encoding="utf-8")
+
+
+class TestGiniProseIsComputed:
+    """The Gini comparison was typed into the renderer until 1.0.3.
+
+    Spearman 0.650 and four coefficients sat in a string literal, so a
+    regeneration on different data would have left the sentence contradicting
+    the table directly above it, and the module docstring already promised that
+    nothing in the report is transcribed by hand.
+    """
+
+    def _two_tokenizers(self, gini_a, line_a, gini_b, line_b):
+        """gpt2 and xlm-roberta with the two coefficients set independently."""
+        results = _results()
+        block = results["tokenizer_fairness_gini"]["per_tokenizer"]
+        block["gpt2"]["global"]["gini_coefficient"] = gini_a
+        block["gpt2"]["per_line_normalization"] = {"gini_coefficient": line_a}
+        block["xlm-roberta"]["global"]["gini_coefficient"] = gini_b
+        block["xlm-roberta"]["per_line_normalization"] = {"gini_coefficient": line_b}
+        return results
+
+    def test_the_two_units_disagreeing_names_both_tokenizers_and_both_numbers(
+            self, render, tmp_path):
+        # gpt2 is lower per byte, xlm-roberta is lower per line.
+        report = _render_custom(
+            render, tmp_path,
+            self._two_tokenizers(0.1000, 0.4000, 0.3000, 0.2000), "disagree")
+        assert "They disagree on which tokenizer is the most equitable" in report
+        assert "GPT-2 is lowest per byte at 0.1000" in report
+        assert "XLM-RoBERTa base is lowest per line at 0.2000" in report
+        assert "against 0.4000 per line" in report
+        assert "against 0.3000 per byte" in report
+
+    def test_the_two_units_agreeing_says_so_instead(self, render, tmp_path):
+        """The disagreement claim must not be printed when there is none."""
+        report = _render_custom(
+            render, tmp_path,
+            self._two_tokenizers(0.1000, 0.2000, 0.3000, 0.4000), "agree")
+        assert "They disagree" not in report
+        assert "GPT-2 has the lowest coefficient under both units" in report
+
+    def test_the_correlation_is_recomputed_rather_than_quoted(
+            self, render, tmp_path):
+        """Two orderings, opposite correlations, from the same code path."""
+        same = _render_custom(
+            render, tmp_path,
+            self._two_tokenizers(0.1000, 0.2000, 0.3000, 0.4000), "rho_pos")
+        flipped = _render_custom(
+            render, tmp_path,
+            self._two_tokenizers(0.1000, 0.4000, 0.3000, 0.2000), "rho_neg")
+        assert "Spearman 1.000" in same, same
+        assert "Spearman -1.000" in flipped, flipped
+        # The figure the renderer used to hardcode must not appear for data
+        # that does not produce it.
+        assert "0.650" not in same and "0.650" not in flipped
+
+    def test_fewer_than_two_pairs_makes_no_claim(self, render, tmp_path):
+        """The shipped fixture has one per-line value, which is this case."""
+        report = _render(render, tmp_path)
+        assert "Spearman" not in report
+        assert "1 of the 2 tokenizers here" in report
+
+
+class TestRoundTripProseIsComputed:
+    def _with_skipped_cer(self, rate_a, rate_b):
+        results = _results()
+        results["reconstruction_fidelity"] = {
+            "per_tokenizer": {
+                "gpt2": {"global": {"exact_match_rate": rate_a, "mean_cer": None},
+                         "cer_skipped": True},
+                "xlm-roberta": {"global": {"exact_match_rate": rate_b,
+                                           "mean_cer": None},
+                                "cer_skipped": True},
+            }
+        }
+        return results
+
+    def test_the_worst_skipped_tokenizer_is_named_with_its_rate(
+            self, render, tmp_path):
+        """The rate was the literal 0.031, tying the sentence to one corpus."""
+        report = _render_custom(render, tmp_path,
+                                self._with_skipped_cer(0.5000, 0.0125), "cer")
+        assert "XLM-RoBERTa base reconstructs 0.013 of its texts exactly" in report
+        assert "0.031" not in report
+
+    def test_the_named_tokenizer_follows_the_data(self, render, tmp_path):
+        """Swap which one is worse; the sentence has to follow."""
+        report = _render_custom(render, tmp_path,
+                                self._with_skipped_cer(0.0125, 0.5000), "cer2")
+        assert "GPT-2 reconstructs 0.013 of its texts exactly" in report

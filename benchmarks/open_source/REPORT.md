@@ -42,7 +42,11 @@ Every column is a value the results file publishes, and nothing in this table is
 
 **Two compression columns, two Gini columns.** Bytes per token is `compression_rate.per_tokenizer.<tok>.global.compression_rate`. Tokens per line is `.tokens_per_line.global_avg`, and on a parallel corpus it is the cross-language-comparable one: line *i* is the same sentence in every language, so the same content is being counted. Bytes are not neutral across scripts, since UTF-8 spends one byte on a Latin character and three on most CJK and Devanagari.
 
-The same holds for the two Gini columns. Gini per byte is `tokenizer_fairness_gini.per_tokenizer.<tok>.global.gini_coefficient`; Gini per line is `.per_line_normalization.gini_coefficient`, which is `n/a` unless every language has the same line count. **The two rank the tokenizers differently**, at Spearman 0.650 over these nine: XLM-RoBERTa is 0.0976 per byte and 0.0494 per line, Llama 3 is 0.0772 per byte and 0.0926 per line, so which of the two is the more equitable across languages depends on the unit. On this corpus, which is parallel, read the per-line column.
+The same holds for the two Gini columns. Gini per byte is `tokenizer_fairness_gini.per_tokenizer.<tok>.global.gini_coefficient`; Gini per line is `.per_line_normalization.gini_coefficient`, which is `n/a` unless every language has the same line count.
+
+Over the 9 tokenizers with both, the two columns rank at Spearman 0.650.
+**They disagree on which tokenizer is the most equitable across languages**: Llama 3 is lowest per byte at 0.0772, against 0.0926 per line, while XLM-RoBERTa base is lowest per line at 0.0494, against 0.0976 per byte. Which one is lower depends on the unit.
+On this corpus, which is parallel, read the per-line column.
 
 ## Compression by language
 
@@ -76,7 +80,8 @@ Bytes per token, higher meaning fewer tokens for the same text.
 
 Operator isolation pools the domains that ran, weighted by operator instances, so with this code corpus it sits close to the code rate; `by_domain` in the results file names them and splits the rates. `run.sh` does not pass `--operator-prose-domain`, so a fresh run has `code` and `math` there.
 
-CER is `n/a` for BERT base uncased, XLM-RoBERTa base. The character error rate is an edit distance, and a tokenizer that does not reconstruct its input has a large distance on every text, so the run projected past the 120.0-second budget and reported the value as null rather than spending the time, which `cer_skipped` records. The exact round-trip column carries the same information: a tokenizer at 0.031 exact matches is lossy by construction, in this case through lowercasing, accent stripping and unknown-token substitution.
+CER is `n/a` for BERT base uncased, XLM-RoBERTa base. The character error rate is an edit distance, and a tokenizer that does not reconstruct its input has a large distance on every text, so the run projected past the 120.0-second budget and reported the value as null rather than spending the time, which `cer_skipped` records.
+The exact round-trip column carries the same information: BERT base uncased reconstructs 0.031 of its texts exactly, so it is lossy on nearly every one of them.
 
 ## Tokenizer health
 
