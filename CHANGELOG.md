@@ -189,7 +189,20 @@ conflicting flags.
   tokenizer as the most multilingual of the nine. It reached
   `analysis_results_full.json` only, so no published value changes. The prose
   corpus is checked for batch-length mismatch, which it was not before.
-  `docs/SANITY_CHECKS.md` and `docs/VISUALIZATION.md` are new.
+  Running `tokenizer-sanity-check` twice over the same tokenizers now writes the
+  same file: `get_vocab()` returns its dict in an order seeded per process, and
+  three checks drew their `examples` from it, so regenerating
+  `benchmarks/open_source/sanity_results.json` changed 8 example lists, 7 of
+  them to a different set of tokens. No severity, observed value or summary
+  count changes. `SANITY_MAX_UNREPRESENTABLE_BYTES_WARN` is removed: no check
+  read it, and it was published under `metadata.thresholds` as though it
+  governed a result. `--per-language-plots` writes
+  `tokenizer_fairness_gini_per_language.svg`, which it never wrote before, and
+  the combined per-language figure gains its Gini panel; both read the Gini's
+  per-language costs under the name the metric emits them under.
+  `docs/OUTPUT.md` now lists which fields the slimmed file omits and where each
+  omitted value is still readable. `docs/SANITY_CHECKS.md` and
+  `docs/VISUALIZATION.md` are new.
 - **1.0.2** Fifteen fields that published a number where nothing was measured
   now publish `null`. `analysis_results.json` became a strict projection of the
   full file. `run_metadata` gained a timestamp, per-tokenizer Hub revisions and
