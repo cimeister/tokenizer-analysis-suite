@@ -581,6 +581,136 @@ def test_cer_skipped_survives_slimming():
     assert entry["global"]["mean_cer"] is None
 
 
+class TestProseBatchPairing:
+    """A short batch must not silently shrink the prose corpus.
+
+    RawTokenizationProvider pairs a batch with its texts through ``zip``, which
+    stops at the shorter side. A backend returning fewer encodings than it was
+    given therefore drops the trailing texts, and every metric downstream is
+    computed over a corpus smaller than the one the run declared, with nothing
+    in the output saying so. Nothing else in the repository covers this
+    provider.
+    """
+
+    class _ShortBatch:
+        """Encodes correctly, but returns one fewer result than it was given."""
+
+        def __init__(self, drop=1):
+            self._drop = drop
+
+        def can_encode(self):
+            return True
+
+        def encode(self, text):
+            return list(range(len(text.split())))
+
+        def encode_with_offsets(self, text):
+            return self.encode(text), None
+
+        def encode_batch_with_offsets(self, texts):
+            kept = list(texts)[: len(texts) - self._drop]
+            return [(self.encode(t), None) for t in kept]
+
+        def get_vocab_size(self):
+            return 100
+
+    def _provider(self, tokenizer):
+        from tokenizer_analysis.core.input_providers import RawTokenizationProvider
+        from tokenizer_analysis.core.input_types import InputSpecification
+
+        return RawTokenizationProvider({
+            "tok": InputSpecification(
+                tokenizer=tokenizer,
+                texts={"eng_Latn": ["one two", "three four", "five six"]},
+            )
+        })
+
+    def test_a_short_batch_raises_naming_both_counts(self):
+        with pytest.raises(ValueError) as excinfo:
+            self._provider(self._ShortBatch()).get_tokenized_data()
+        message = str(excinfo.value)
+        assert "2 encodings" in message and "3 'eng_Latn' texts" in message
+        assert "prose corpus" in message
+
+    def test_a_complete_batch_still_pairs_every_text(self):
+        """The guard must not reject a correct batch."""
+        data = self._provider(self._ShortBatch(drop=0)).get_tokenized_data()
+        assert [d.text for d in data["tok"]] == ["one two", "three four", "five six"]
+
+
+def _gini_entry(per_line):
+    """One tokenizer's raw tokenizer_fairness_gini entry, before normalizing."""
+    return {
+        "tokenizer_fairness_gini": {
+            "per_tokenizer": {
+                "tok": {
+                    "gini_coefficient": 0.0976,
+                    "mean_cost": 0.31,
+                    "std_cost": 0.04,
+                    "min_cost": 0.26,
+                    "max_cost": 0.38,
+                    "cost_ratio": 1.46,
+                    "num_languages": 2,
+                    "language_costs": {"eng_Latn": 0.26, "zho_Hans": 0.38},
+                    "most_efficient_language": ["eng_Latn", 0.26],
+                    "least_efficient_language": ["zho_Hans", 0.38],
+                    "sorted_language_costs": [["eng_Latn", 0.26], ["zho_Hans", 0.38]],
+                    "per_line_normalization": per_line,
+                }
+            },
+            "metadata": {"aggregation": "macro_languages"},
+        }
+    }
+
+
+class TestPerLineGiniSurvivesSlimming:
+    """The per-line coefficient has to reach the file everything reads.
+
+    render_report.py opens analysis_results.json, and
+    test_docs_match_results.py resolves documented key paths against it, so a
+    field that only reaches analysis_results_full.json is unreadable by both.
+    The selection branch for this metric enumerates its fields rather than
+    passing the entry through, so a new field is dropped unless it is added
+    there. test_slim_file_is_a_strict_projection_of_the_full_file cannot catch
+    that: deleting a key is exactly what slimming is allowed to do.
+    """
+
+    def test_the_block_reaches_the_slim_file_intact(self):
+        from tokenizer_analysis.cli.run_analysis import slim_results_for_json
+
+        per_line = {
+            "gini_coefficient": 0.0494,
+            "lines_per_language": {"eng_Latn": 250, "zho_Hans": 250},
+            "mean_cost": 47.2,
+            "cost_ratio": 1.21,
+            "language_costs": {"eng_Latn": 42.8, "zho_Hans": 51.6},
+            "num_languages": 2,
+        }
+        slimmed = slim_results_for_json(_gini_entry(per_line))
+        entry = slimmed["tokenizer_fairness_gini"]["per_tokenizer"]["tok"]
+
+        assert entry.get("per_line_normalization") == per_line
+        # The two coefficients differ, so a test cannot pass by finding the
+        # per-byte number under the per-line key.
+        assert entry["global"]["gini_coefficient"] == 0.0976
+        assert entry["per_line_normalization"]["gini_coefficient"] == 0.0494
+
+    def test_an_absent_block_is_published_as_null_not_omitted(self):
+        """Unequal line counts are a result, not a missing measurement.
+
+        The metric writes None rather than skipping the key, so a consumer can
+        tell "this corpus is not line-parallel" from "this file predates the
+        field".
+        """
+        from tokenizer_analysis.cli.run_analysis import slim_results_for_json
+
+        slimmed = slim_results_for_json(_gini_entry(None))
+        entry = slimmed["tokenizer_fairness_gini"]["per_tokenizer"]["tok"]
+
+        assert "per_line_normalization" in entry
+        assert entry["per_line_normalization"] is None
+
+
 @pytest.fixture(scope="module")
 def degenerate_run(tmp_path_factory):
     """A corpus too small for most metrics to have anything to measure.

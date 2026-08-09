@@ -461,7 +461,10 @@ def _normalize_tokenizer_entry(
     # 'global' and rename language_costs to per_language. The remaining
     # fields (most_efficient_language, least_efficient_language,
     # sorted_language_costs) have no canonical published name, so they stay
-    # where they are. ---
+    # where they are. lorenz_curve and per_line_normalization are already at
+    # their published names; _move below is top-level only, so the
+    # language_costs nested inside per_line_normalization is not renamed and
+    # keeps that name in both output files. ---
     elif metric_name == 'tokenizer_fairness_gini':
         gini_global_fields = (
             'gini_coefficient', 'mean_cost', 'std_cost', 'min_cost',
@@ -733,6 +736,14 @@ def _select_tokenizer_entry(
             out['global']['warning'] = global_full['warning']
         if 'per_language' in tok_data:
             out['per_language'] = tok_data['per_language']
+        # The whole per-line block, including its own language_costs, rather
+        # than the coefficient alone: on a parallel corpus this is the
+        # coefficient to read, and a reader checking it by hand needs the
+        # per-language costs it was computed from. The key is written whether
+        # or not the block exists, because the metric writes None when the
+        # languages have unequal line counts and that absence is a result.
+        if 'per_line_normalization' in tok_data:
+            out['per_line_normalization'] = tok_data['per_line_normalization']
 
     elif metric_name == 'lorenz_curve_data':
         for key, value in tok_data.items():
