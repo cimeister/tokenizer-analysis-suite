@@ -33,7 +33,6 @@ from ..constants import (
     SANITY_MARK_LEADING_TOKEN_FAIL_FRAC,
     SANITY_MARK_LEADING_TOKEN_WARN_FRAC,
     SANITY_MAX_REASONABLE_TOKEN_CHARS,
-    SANITY_MAX_UNREPRESENTABLE_BYTES_WARN,
     SANITY_PRETOK_CONSERVATION_FAIL_FRAC,
     SANITY_ROUNDTRIP_BUG_FAIL_FRAC,
     SANITY_ROUNDTRIP_BUG_WARN_FRAC,
@@ -318,7 +317,19 @@ class TokenizerSanityChecker:
     def __post_init__(self):
         if not self.name:
             self.name = self.wrapper.get_name()
-        self.vocab = self.wrapper.get_vocab() or {}
+        # Sorted by token string, because the order this arrives in is not
+        # stable across processes and three checks publish examples drawn from
+        # it. tokenizers.Tokenizer.get_vocab() builds its dict from a Rust
+        # HashMap, which is seeded randomly per process, so C2, C15 and C16
+        # reported a different 20 of the same tokens on every run, and
+        # PYTHONHASHSEED does not pin it. Measured on gpt2 before this line:
+        # two runs of the same command differed in C15's examples. That made
+        # benchmarks/open_source/sanity_results.json impossible to regenerate
+        # without a diff, which hides a real change among the noise. Sorting
+        # here rather than at each check also fixes C16, which stops collecting
+        # at MAX_EXAMPLE_DISPLAY_COUNT and so was choosing which examples to
+        # keep, not only their order.
+        self.vocab = dict(sorted((self.wrapper.get_vocab() or {}).items()))
         self._id_to_tok = {v: k for k, v in self.vocab.items()}
         self.vocab_size = self.wrapper.get_vocab_size()
         # Resolved once here so the fallback warning fires once per tokenizer
@@ -857,8 +868,9 @@ class TokenizerSanityChecker:
             # Reporting 1.0 here was a perfect score computed from zero digit
             # spans: every probe above is skipped by `if not offsets`, and
             # TokenizerWrapper.encode_with_offsets returns (ids, None) by
-            # default, which _ScriptTokTokenizer (ScriptBPE, MinGram) and
-            # PreTokenizedDataTokenizer inherit unchanged. Measured on the
+            # default, which PreTokenizedDataTokenizer inherits unchanged
+            # (_ScriptTokTokenizer overrides it and does report offsets).
+            # Measured on the
             # bundled bpe.json: WARN at 0.3769 with offsets, PASS at 1.0000
             # with the same tokenizer once offsets are removed. This follows
             # check_byte_coverage, which skips explicitly rather than passing

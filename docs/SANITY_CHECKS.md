@@ -48,7 +48,7 @@ uv run tokenizer-sanity-check \
 
 ## Severities and the overall verdict
 
-Five severities, defined at `tokenizer_analysis/diagnostics/sanity_check.py:88-93`:
+Five severities, defined at `tokenizer_analysis/diagnostics/sanity_check.py:87-92`:
 
 | Severity | Meaning |
 |---|---|
@@ -58,7 +58,7 @@ Five severities, defined at `tokenizer_analysis/diagnostics/sanity_check.py:88-9
 | `not_applicable` | The check does not apply. A non-byte-level tokenizer cannot fail a byte-coverage check |
 | `unverifiable` | The check could not run, because the tokenizer does not expose what it needs |
 
-The overall verdict is the worst of the 16, under the rank map at lines 95-97:
+The overall verdict is the worst of the 16, under the rank map at lines 94-96:
 `pass` and `not_applicable` rank 0, `warn` and `unverifiable` rank 1, `fail`
 ranks 2. Two consequences follow from that map. An `unverifiable` check forces
 the overall verdict to at least `warn`, so a check that could not run is never
@@ -66,7 +66,7 @@ reported as one that passed. An `unverifiable` check can never on its own
 produce `fail`, because nothing was measured to fail.
 
 `summary.<tok>.n_warn` counts `warn` and `unverifiable` together, matching the
-rank map (lines 1478-1479).
+rank map (lines 1477-1478).
 
 ## Exit codes
 
@@ -113,7 +113,7 @@ one-character breaker strings of its own.
 ## The checks
 
 There is no C9. Each entry below is read from the check's implementation. Every
-threshold is a named constant in `tokenizer_analysis/constants.py:145-206`, and
+threshold is a named constant in `tokenizer_analysis/constants.py:145-211`, and
 all of them are echoed into `metadata.thresholds` of the results file, so a
 report can be read against the values that produced it.
 
@@ -122,7 +122,7 @@ other seven cannot, and each entry says so.
 
 ### C1 byte-level 256-coverage
 
-`check_byte_coverage`, lines 412-478. Category `behavioral` when a decoder is
+`check_byte_coverage`, lines 411-477. Category `behavioral` when a decoder is
 available, `static` otherwise.
 
 Whether a byte-level tokenizer can carry all 256 byte values without loss. With
@@ -139,7 +139,7 @@ standalone vocabulary key, which is the weaker question that C17 asks in full.
 
 ### C17 strict byte-alphabet vocab presence
 
-`check_byte_alphabet_strict`, lines 491-535. Category `static`. Vocabulary only.
+`check_byte_alphabet_strict`, lines 490-534. Category `static`. Vocabulary only.
 
 The strict form of C1: whether all 256 bytes are present as their own
 single-token vocabulary entries, rather than merely reachable through a
@@ -155,7 +155,7 @@ supplementary Unicode planes.
 
 ### C2 combining-mark mishandling
 
-`check_combining_marks`, lines 541-587. Category `static`. Vocabulary only.
+`check_combining_marks`, lines 540-586. Category `static`. Vocabulary only.
 
 Counts vocabulary tokens that are made of nothing but combining marks, and the
 fraction of tokens whose first character is a combining mark. A token that is
@@ -172,7 +172,7 @@ built without regard for grapheme boundaries.
 
 ### C3 lossy-text root-cause
 
-`check_roundtrip`, lines 680-704. Category `behavioral`. Reads every probe.
+`check_roundtrip`, lines 679-703. Category `behavioral`. Reads every probe.
 
 Encodes and decodes each probe and sorts the outcome into a bucket, which is
 what separates loss the tokenizer's own normalizer causes from loss that is a
@@ -193,7 +193,7 @@ flags. `clean_frac` sums the first four buckets, `bug_frac` sums the red flags.
 
 ### C4 faithful-pipeline conformance
 
-`check_faithful_pipeline`, lines 710-741. Category `static` when unverifiable,
+`check_faithful_pipeline`, lines 709-740. Category `static` when unverifiable,
 `behavioral` otherwise. Reads `NFC_NFD_PAIRS`.
 
 Whether `encode()` applies the normalizer the tokenizer declares. For each pair
@@ -209,7 +209,7 @@ different pipeline from the one the tokenizer advertises.
 
 ### C5 whitespace handling
 
-`check_whitespace`, lines 747-800. Category `behavioral`. Reads the 12
+`check_whitespace`, lines 746-799. Category `behavioral`. Reads the 12
 `whitespace` probes.
 
 Whitespace round-trip fidelity, as the fraction of whitespace characters
@@ -225,7 +225,7 @@ whitespace-only is reported beside it and is not scored.
 
 ### C6 digit handling
 
-`check_digits`, lines 806-893. Category `behavioral`. Reads the `digits` probes
+`check_digits`, lines 805-892. Category `behavioral`. Reads the `digits` probes
 and, with `--use-builtin-math-data`, the `math` probes.
 
 How consistently the tokenizer splits numbers. It resolves each digit span to
@@ -243,7 +243,7 @@ run are reported and not scored.
 
 ### C7 special-token sanity
 
-`check_special_tokens`, lines 911-962. Category `static`. Vocabulary and the
+`check_special_tokens`, lines 910-961. Category `static`. Vocabulary and the
 tokenizer's declared special ids. No probes.
 
 Reads the declared BOS, EOS, PAD and UNK ids and checks three things: that they
@@ -260,7 +260,7 @@ special token's surface string returns exactly that one id.
 
 ### C8 determinism/idempotency
 
-`check_determinism`, lines 968-992. Category `behavioral`. Reads the first 50
+`check_determinism`, lines 967-991. Category `behavioral`. Reads the first 50
 probes.
 
 Encodes each probe twice and compares, then compares a batch encode against a
@@ -273,7 +273,7 @@ every other tool irreproducible.
 
 ### C10 pretokenizer char conservation
 
-`check_pretok_conservation`, lines 998-1068. Category `behavioral`. Reads every
+`check_pretok_conservation`, lines 997-1067. Category `behavioral`. Reads every
 probe except the `control_chars` ones, which a normalizer may legitimately drop.
 
 The fraction of non-whitespace source characters covered by the spans the
@@ -288,7 +288,7 @@ drops them before the model ever sees them.
 
 ### C11 NFC/NFD roundtrip
 
-`check_nfc_nfd`, lines 1074-1096. Category `behavioral`. Reads `NFC_NFD_PAIRS`.
+`check_nfc_nfd`, lines 1073-1095. Category `behavioral`. Reads `NFC_NFD_PAIRS`.
 
 Runs both forms of each pair through the C3 classifier and collects any that
 land in a red-flag bucket. Whether the two forms encode identically is reported
@@ -300,7 +300,7 @@ and not scored, because a tokenizer may legitimately keep them distinct.
 
 ### C12 emoji/ZWJ/control
 
-`check_emoji_control`, lines 1102-1119. Category `behavioral`. Reads the
+`check_emoji_control`, lines 1101-1118. Category `behavioral`. Reads the
 `emoji_zwj` and `control_chars` probes.
 
 Runs them through the C3 classifier and groups any red-flag results by bucket.
@@ -311,7 +311,7 @@ Runs them through the C3 classifier and groups any red-flag results by bucket.
 
 ### C13 UNK-per-script
 
-`check_unk_per_script`, lines 1125-1152. Category `behavioral`. Reads the
+`check_unk_per_script`, lines 1124-1151. Category `behavioral`. Reads the
 `multiscript` probes and, with `--use-sample-data`, the `flores` probes.
 
 The share of tokens that are UNK, grouped by script or language. A script above
@@ -325,7 +325,7 @@ runs, and the text it cannot represent is silently replaced.
 
 ### C14 vocab integrity
 
-`check_vocab_integrity`, lines 1158-1181. Category `static`. Vocabulary only.
+`check_vocab_integrity`, lines 1157-1180. Category `static`. Vocabulary only.
 
 Three structural properties: `len(get_vocab())` equals `get_vocab_size()`, no id
 appears twice, and the ids are contiguous from 0.
@@ -337,7 +337,7 @@ appears twice, and the ids are contiguous from 0.
 
 ### C15 token-length outliers
 
-`check_token_outliers`, lines 1187-1221. Category `static`. Vocabulary only.
+`check_token_outliers`, lines 1186-1220. Category `static`. Vocabulary only.
 
 Vocabulary tokens longer than `SANITY_MAX_REASONABLE_TOKEN_CHARS` (64)
 characters after marker stripping.
@@ -350,7 +350,7 @@ characters after marker stripping.
 
 ### C16 vocab reachability
 
-`check_vocab_reachability`, lines 1271-1411. Category `behavioral`. Vocabulary,
+`check_vocab_reachability`, lines 1270-1410. Category `behavioral`. Vocabulary,
 plus its own probe strings.
 
 For every non-special vocabulary token, whether any input can produce it. Each
@@ -411,6 +411,13 @@ than `C7`, so a consumer selecting one check has to match on the whole string or
 on its id prefix. The severity of one check is at
 `tokenizer_sanity_check.per_tokenizer.<tok>.checks.<name>.severity`.
 
+Running the same command twice on the same tokenizers writes the same file. The
+checker sorts the vocabulary by token string before reading it, because
+`tokenizers.Tokenizer.get_vocab()` builds its dict from a Rust HashMap that is
+seeded per process, and C2, C15 and C16 draw their `examples` from that order.
+Where a check finds more than 20 examples, the 20 published are the first in
+that sorted order rather than an arbitrary 20.
+
 `observed` and `threshold` are whatever shape the check reports: a count, a
 fraction, a bucket dict, or a string such as `introspectable` where the
 condition is not numeric.
@@ -422,7 +429,7 @@ trained on a short corpus for the Quick Start, and both come out `fail`. Nothing
 in the checker special-cases them; the results are real measurements of small
 tokenizers. `bpe` fails C1 and warns on C5, C6, C15 and C16.
 
-C6 is the one the code records a number for: the comment at lines 861-865 gives
+C6 is the one the code records a number for: the comment at lines 858-864 gives
 `bpe.json` a digit consistency of 0.3769 against the 0.99 threshold, and notes
 that the same tokenizer reports 1.0000 once its character offsets are removed,
 because with no offsets there is no digit span to measure and the check goes

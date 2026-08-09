@@ -149,8 +149,14 @@ GENERIC_SPECIAL_TOKENS = frozenset({
 
 # C1: a byte-level tokenizer must represent all 256 byte values.
 SANITY_BYTE_COVERAGE_REQUIRED = 256
-# C1: >0 bytes that are in vocab but fail behavioral roundtrip -> warn.
-SANITY_MAX_UNREPRESENTABLE_BYTES_WARN = 0
+# There was a SANITY_MAX_UNREPRESENTABLE_BYTES_WARN = 0 here, described as
+# warning when a byte that is in the vocabulary still fails the behavioral
+# round trip. No check ever read it: C1 has four exits and none of them is a
+# warn. Because _thresholds_metadata() reflects every SANITY_* name in this
+# module, it was still published in sanity_results.json under
+# metadata.thresholds, where it read as a threshold governing the result.
+# Removed rather than implemented: adding a warn would change the verdict of
+# already-published runs.
 # C17: strict byte-alphabet vocab presence. Above this count of missing single-byte
 # tokens, the check is a WARNING. Round-trip can still succeed via multi-token
 # fallback (that is what C1 tests), but a strict alphabet is needed for deterministic

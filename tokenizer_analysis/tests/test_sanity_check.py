@@ -562,3 +562,48 @@ def test_23_whitespace_handling_warn_only(byte_level_hf_wrapper):
     for w in (byte_level_hf_wrapper, drop):
         assert _checks(w, builtin_probes())[
             "checks"]["C5 whitespace handling"]["severity"] != Severity.FAIL
+
+
+def test_examples_do_not_depend_on_the_order_get_vocab_returns():
+    """The same tokenizer must publish the same examples on every run.
+
+    tokenizers.Tokenizer.get_vocab() builds its dict from a Rust HashMap, which
+    is seeded randomly per process, so the order a vocabulary arrives in changes
+    between runs of the same command and PYTHONHASHSEED does not pin it.
+    Measured on gpt2 before the checker sorted the vocabulary: two runs of
+    tokenizer-sanity-check on the same config produced different examples for
+    C15, which left benchmarks/open_source/sanity_results.json impossible to
+    regenerate without a diff.
+
+    Order alone is not the whole problem. C15 keeps only the first
+    MAX_EXAMPLE_DISPLAY_COUNT it finds, so with more outliers than that the
+    vocabulary order decided which tokens were published, not just their
+    sequence. This builds twice that many so the truncation is exercised.
+    """
+    long_tokens = [
+        f"tok{i:02d}" + "x" * constants.SANITY_MAX_REASONABLE_TOKEN_CHARS
+        for i in range(2 * constants.MAX_EXAMPLE_DISPLAY_COUNT)
+    ]
+    forward = {"<unk>": 0}
+    forward.update({t: i + 1 for i, t in enumerate(long_tokens)})
+    backward = {"<unk>": 0}
+    backward.update({t: forward[t] for t in reversed(long_tokens)})
+    assert list(forward) != list(backward), (
+        "the two vocabularies must differ in iteration order or this test "
+        "cannot tell a sorted checker from an unsorted one"
+    )
+
+    def outlier_examples(vocab):
+        stub = StubWrapper(encode_fn=lambda t: [0], vocab=vocab)
+        return TokenizerSanityChecker(
+            stub, builtin_probes()).check_token_outliers()["examples"]
+
+    from_forward = outlier_examples(forward)
+    from_backward = outlier_examples(backward)
+
+    assert len(from_forward) == constants.MAX_EXAMPLE_DISPLAY_COUNT
+    assert from_forward == from_backward
+    # The published set is the one a reader can predict from the vocabulary,
+    # rather than whichever entries the hash seed happened to put first.
+    assert from_forward == sorted(long_tokens)[
+        :constants.MAX_EXAMPLE_DISPLAY_COUNT]
