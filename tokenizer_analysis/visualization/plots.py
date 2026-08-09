@@ -708,11 +708,12 @@ def _plot_per_language_combined_subplots(results: Dict[str, Any], save_dir: str,
         for tok_name in tokenizer_names:
             if tok_name in results[metric_key].get('per_tokenizer', {}):
                 tok_data = results[metric_key]['per_tokenizer'][tok_name]
-                if 'per_language' in tok_data:
-                    for lang, lang_stats in tok_data['per_language'].items():
+                per_language = _per_language_block(tok_data)
+                if per_language is not None:
+                    for lang, lang_stats in per_language.items():
                         if lang not in lang_data:
                             lang_data[lang] = {}
-                        
+
                         # Handle different data structures based on your changes
                         if metric_key == 'vocabulary_utilization':
                             util = (lang_stats.get('utilization')
@@ -807,6 +808,42 @@ def _plot_per_language_combined_subplots(results: Dict[str, Any], save_dir: str,
     save_plot(fig, os.path.join(save_dir, 'per_language_combined_subplots.svg'))
 
 
+def _per_language_block(tok_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """One tokenizer's per-language dict, under either name it can carry.
+
+    main.run_analysis calls generate_all_plots with the raw results, before
+    normalize_results renames anything, so tokenizer_fairness_gini's per-language
+    costs are still called language_costs at that point. Reading only
+    per_language meant the Gini was the one metric with no per-language plot and
+    no panel in the combined figure, and nothing said so: both call sites simply
+    found an empty dict and returned. The two names are the same block, one
+    before the rename and one after, so a results dict read back from
+    analysis_results.json resolves here too.
+    """
+    if not isinstance(tok_data, dict):
+        return None
+    for key in ('per_language', 'language_costs'):
+        block = tok_data.get(key)
+        if isinstance(block, dict) and block:
+            return block
+    return None
+
+
+def _warn_if_no_per_language_data(metric_key: str, results: Dict[str, Any]) -> None:
+    """Log when a metric that ran contributed nothing to the per-language plots.
+
+    Only reached when --per-language-plots was passed, so the user asked for
+    these and an empty result is worth a line. A corpus with one language
+    reaches this legitimately, and the message says which metric was empty
+    rather than asserting a defect.
+    """
+    logger.warning(
+        "%s has a per_tokenizer block but no per-language data under "
+        "'per_language' or 'language_costs', so it contributes no per-language "
+        "plot. On a single-language corpus that is expected.", metric_key,
+    )
+
+
 def _compression_rate_per_language(entry) -> Optional[float]:
     """Read one language's compression rate out of its per-language entry.
 
@@ -880,11 +917,15 @@ def _plot_per_language_metric(results: Dict[str, Any], save_dir: str,
     for tok_name in tokenizer_names:
         if tok_name in results[metric_key].get('per_tokenizer', {}):
             tok_data = results[metric_key]['per_tokenizer'][tok_name]
-            if 'per_language' in tok_data:
-                for lang, lang_stats in tok_data['per_language'].items():
+            per_language = _per_language_block(tok_data)
+            if per_language is not None:
+                for lang, lang_stats in per_language.items():
                     if lang not in lang_data:
                         lang_data[lang] = {}
                     lang_data[lang][tok_name] = value_extractor(lang_stats)
+
+    if not lang_data:
+        _warn_if_no_per_language_data(metric_key, results)
 
     if lang_data:
         metadata = results[metric_key].get('metadata', {})
