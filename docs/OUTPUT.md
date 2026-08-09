@@ -101,6 +101,11 @@ Three metrics depart from that layout. All three still have `global` and
 | `encoding_speed` | `global` holds `mean_ms`, `total_s`, `num_samples`, duplicating the same three fields already published directly under `per_tokenizer.<tok>`. No `per_language` |
 | `reconstruction_fidelity` | `per_domain` in place of `per_language`, because it also runs on code and math |
 
+`tokenizer_fairness_gini` holds a `per_line_normalization` block beside
+`global`, with the same coefficient computed on tokens per line rather than per
+the configured unit. It is `null` unless every language has the same line count.
+On a parallel corpus it is the one to read.
+
 `operator_isolation_rate` holds `global`, `per_language` **and** `by_domain`,
 the last splitting the pooled global by corpus. `by_domain` has `code` and
 `math`, plus `prose` when `--operator-prose-domain` was passed, and `global`

@@ -238,15 +238,24 @@ Control how text "length" is measured for metric normalization via
 
 | Method | `method` value | Counting key and options | Default for |
 |--------|----------------|--------------------------|-------------|
-| Bytes | `"bytes"` | `byte_counting`: `"utf8"`, `"hf_bytelevel"` | Compression, Gini, the information-theoretic metrics |
+| Bytes | `"bytes"` | `byte_counting`: `"utf8"`, `"hf_bytelevel"` | `compression_rate`, `tokenizer_fairness_gini` |
 | Characters | `"characters"` | (none) | (none) |
 | Lines | `"lines"` | `line_counting`: `"single"`, `"newline_split"`, `"custom_regex"` | (none) |
 | Words | `"words"` | `word_counting`: `"python_split"`, `"hf_whitespace"`, `"regex_whitespace"`, `"custom_regex"` | Fertility |
 
-Every metric that normalizes by text length uses the unit set here, so
-`--measurement-config` changes compression, Gini and the information-theoretic
-metrics together. Fertility is the exception: it always counts words, because a
-tokens-per-word figure is what the name means.
+Two metrics consume the unit set here, and they move together:
+`compression_rate` is units per token, and `tokenizer_fairness_gini` is a Gini
+over per-language tokens per unit. `fertility` always counts words, because a
+tokens-per-word figure is what the name means. The entropies normalize by
+something other than text length (Rényi by `log2` of the vocabulary size, bigram
+and trigram by the context's own successor count), so no unit set here reaches
+them.
+
+`tokenizer_fairness_gini` also publishes a per-line coefficient on every run at
+`.per_tokenizer.<tok>.per_line_normalization`, so reading the Gini per line on a
+parallel corpus needs no `--measurement-config` at all. Setting one moves the
+primary coefficient and `compression_rate` with it, which is a different choice.
+See [METRICS.md](METRICS.md#tokenizer-gini-coefficient-tokenizer_fairness_gini).
 
 `include_empty_splits` (bool, default `false`) affects word and line counting.
 `custom_regex` (string) is required when a counting method is set to

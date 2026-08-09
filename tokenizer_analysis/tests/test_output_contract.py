@@ -678,9 +678,11 @@ class TestPerLineGiniSurvivesSlimming:
     def test_the_block_reaches_the_slim_file_intact(self):
         from tokenizer_analysis.cli.run_analysis import slim_results_for_json
 
+        # The real shape: lines_per_language is the single shared count, since
+        # the block is published only when every language has the same one.
         per_line = {
             "gini_coefficient": 0.0494,
-            "lines_per_language": {"eng_Latn": 250, "zho_Hans": 250},
+            "lines_per_language": 250,
             "mean_cost": 47.2,
             "cost_ratio": 1.21,
             "language_costs": {"eng_Latn": 42.8, "zho_Hans": 51.6},

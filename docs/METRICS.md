@@ -68,6 +68,7 @@ uses its own row ids, and eight of them appear in no results file; see
 | Identifier fragmentation | `identifier_fragmentation` | `.per_tokenizer.<tok>.global.fragmentation_rate` | lower |
 | Indentation depth correlation | `indentation_consistency` | `.per_tokenizer.<tok>.global.depth_proportionality_correlation` | higher |
 | Tokenizer fairness Gini | `tokenizer_fairness_gini` | `.per_tokenizer.<tok>.global.gini_coefficient` | lower |
+| Tokenizer fairness Gini, per line | (under `tokenizer_fairness_gini`) | `.per_tokenizer.<tok>.per_line_normalization.gini_coefficient` | lower |
 | Lorenz curve | (under `tokenizer_fairness_gini`) | `.per_tokenizer.<tok>.lorenz_curve` | n/a, a curve |
 | Encoding speed | `encoding_speed` | `.per_tokenizer.<tok>.global.mean_ms` | lower |
 
@@ -833,10 +834,32 @@ CJK and Devanagari. A tokenizer can therefore look cheaper on Chinese than on
 English purely because the denominator is larger, with no difference in how well
 it segments either.
 
-Two ways to read around it: compare the same tokenizer across languages only
-when you have accounted for that, or set `--measurement-config` to a lines
-config, where a parallel corpus gives every language the same denominator, one
-line per sentence, and the cost becomes tokens per sentence.
+**So every run also publishes the coefficient normalized per line**, at
+`tokenizer_fairness_gini.per_tokenizer.<tok>.per_line_normalization`, holding
+`gini_coefficient`, `lines_per_language`, `mean_cost`, `cost_ratio`,
+`language_costs` and `num_languages`. On a parallel corpus, line *i* of every
+language is the same sentence, so tokens per line compares tokenizers on
+identical content, which no other unit does. **On a parallel corpus this is the
+coefficient to read.**
+
+The two are far apart. Over the nine tokenizers of `benchmarks/open_source` on
+13 FLORES+ languages they rank at Spearman 0.650 and disagree on which
+tokenizer is the most equitable across languages:
+
+| Tokenizer | per byte | per line |
+|---|---:|---:|
+| XLM-RoBERTa base | 0.0976 | **0.0494** |
+| Mistral NeMo | 0.1097 | 0.0702 |
+| Llama 3 | **0.0772** | 0.0926 |
+| GPT-2 | 0.2000 | 0.2933 |
+
+`per_line_normalization` is `null` unless every language has the same line
+count. That condition is necessary for a corpus to be parallel and is not
+sufficient: equal counts do not establish that line *i* in one language is a
+translation of line *i* in another, which the library cannot check and the
+caller has to know. When the counts differ, the block is `null` and the log
+names the counts, rather than a number being published for a comparison that
+does not hold.
 
 Setting `--measurement-config` to a lines config instead moves the primary
 coefficient onto lines, and also moves `compression_rate`. That is a different

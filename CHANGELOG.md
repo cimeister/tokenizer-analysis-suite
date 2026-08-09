@@ -171,6 +171,25 @@ conflicting flags.
 
 ## Releases
 
+- **1.0.3** `tokenizer_fairness_gini` publishes a second coefficient at
+  `per_tokenizer.<tok>.per_line_normalization`, normalized by line count rather
+  than by the configured unit, and `null` unless every language has the same
+  line count. On a parallel corpus it is the one to read: over the nine
+  tokenizers of `benchmarks/open_source/` the two rank at Spearman 0.650, and
+  XLM-RoBERTa is fourth at 0.0976 per byte and first at 0.0494 per line.
+  `HuggingFaceTokenizer.can_pretokenize()` read the pre-tokenizer off the
+  transformers object rather than off `backend_tokenizer`, so it returned False
+  for every tokenizer loaded from the Hub. Sanity check C10 was
+  `not_applicable` for all nine benchmark tokenizers and is now a measurement,
+  and C16 reported 0 pretokenizer-unreachable vocabulary tokens for
+  bert-base-uncased where the count is 6823. `avg_langs_per_token` is removed:
+  measured over those nine on 13 FLORES+ languages it ran 1.239 to 2.504 against
+  a theoretical 1 to 13, at Spearman -0.950 against vocabulary size, and read as
+  its own description suggested it ranked an English-only accent-stripping
+  tokenizer as the most multilingual of the nine. It reached
+  `analysis_results_full.json` only, so no published value changes. The prose
+  corpus is checked for batch-length mismatch, which it was not before.
+  `docs/SANITY_CHECKS.md` and `docs/VISUALIZATION.md` are new.
 - **1.0.2** Fifteen fields that published a number where nothing was measured
   now publish `null`. `analysis_results.json` became a strict projection of the
   full file. `run_metadata` gained a timestamp, per-tokenizer Hub revisions and
