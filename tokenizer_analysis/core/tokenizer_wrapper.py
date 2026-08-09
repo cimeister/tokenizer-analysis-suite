@@ -454,13 +454,27 @@ class HuggingFaceTokenizer(TokenizerWrapper):
             logger.warning(f"HuggingFace decode failed for {self._name}: {e}")
             return None
 
+    def _pre_tokenizer(self):
+        """The Rust pre-tokenizer, or None when this tokenizer has none.
+
+        ``self._tokenizer`` is normally a transformers fast tokenizer, which
+        keeps the Rust object one level down at ``backend_tokenizer``; reading
+        ``pre_tokenizer`` off the transformers object finds nothing. This
+        resolves the same way ``diagnostics/sanity_check.py`` does when it
+        reports the pipeline components, so the two agree about whether a
+        pre-tokenizer exists.
+        """
+        backend = getattr(self._tokenizer, 'backend_tokenizer', None) or self._tokenizer
+        return getattr(backend, 'pre_tokenizer', None)
+
     def can_pretokenize(self) -> bool:
-        return hasattr(self._tokenizer, 'pre_tokenizer') and self._tokenizer.pre_tokenizer is not None
+        return self._pre_tokenizer() is not None
 
     def pretokenize(self, text: str) -> List[str]:
-        if not self.can_pretokenize():
+        pretok = self._pre_tokenizer()
+        if pretok is None:
             raise NotImplementedError(f"Tokenizer {self._name} does not support pretokenization")
-        return [token for token, _ in self._tokenizer.pre_tokenizer.pre_tokenize_str(text)]
+        return [token for token, _ in pretok.pre_tokenize_str(text)]
 
     def pretokenize_with_spans(self, text: str):
         """Surfaces with their character spans, straight from the backend.
@@ -468,10 +482,11 @@ class HuggingFaceTokenizer(TokenizerWrapper):
         ``pre_tokenize_str`` already returns the spans; the plain
         ``pretokenize`` above throws them away.
         """
-        if not self.can_pretokenize():
+        pretok = self._pre_tokenizer()
+        if pretok is None:
             return None
         try:
-            return list(self._tokenizer.pre_tokenizer.pre_tokenize_str(text))
+            return list(pretok.pre_tokenize_str(text))
         except Exception as e:
             logger.debug("pre_tokenize_str failed for %s: %s", self._name, e)
             return None

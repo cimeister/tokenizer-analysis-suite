@@ -686,3 +686,70 @@ def test_a_directory_of_vocab_and_merges_loads(tmp_path):
     loaded = _load_huggingface_tokenizer({"path": str(tmp_path)})
     assert loaded.get_vocab_size() > 0
     assert "hello" in loaded.encode("hello world").tokens
+
+
+class _TransformersLike:
+    """The attribute layout of a transformers fast tokenizer.
+
+    The Rust ``tokenizers.Tokenizer`` hangs off ``backend_tokenizer``; the
+    outer object carries no ``pre_tokenizer`` of its own.
+    """
+
+    def __init__(self, backend):
+        self.backend_tokenizer = backend
+
+    def get_vocab(self):
+        return self.backend_tokenizer.get_vocab()
+
+
+class TestPretokenizerResolvesThroughTheTransformersBackend:
+    """``can_pretokenize`` must look where a real tokenizer keeps it.
+
+    Every other fixture in this file hands ``HuggingFaceTokenizer`` a raw
+    ``tokenizers.Tokenizer``, which carries ``pre_tokenizer`` directly, so the
+    suite only ever exercised the shape that already worked. Anything loaded
+    through ``AutoTokenizer`` has the other shape. Reading ``pre_tokenizer``
+    off the outer object returned ``False`` for all nine tokenizers of
+    ``benchmarks/open_source``, which made C10 pretokenizer char conservation
+    ``not_applicable`` for every one of them and made C16 report 0
+    pretokenizer-unreachable vocabulary tokens for bert-base-uncased where the
+    measured count is 6823.
+    """
+
+    def test_can_pretokenize_when_only_the_backend_carries_it(self, trained_hf_tokenizer):
+        outer = _TransformersLike(trained_hf_tokenizer)
+        assert not hasattr(outer, "pre_tokenizer"), "fixture must not expose it directly"
+        wrapper = HuggingFaceTokenizer("backend-only", outer, {})
+        assert wrapper.can_pretokenize() is True
+
+    def test_spans_cover_the_non_whitespace_characters(self, trained_hf_tokenizer):
+        wrapper = HuggingFaceTokenizer(
+            "backend-only", _TransformersLike(trained_hf_tokenizer), {}
+        )
+        text = "hello world"
+        spans = wrapper.pretokenize_with_spans(text)
+        assert spans, "the backend pre-tokenizer returned no spans"
+        covered = set()
+        for _surface, (start, end) in spans:
+            covered.update(range(start, end))
+        uncovered = [i for i, ch in enumerate(text) if not ch.isspace() and i not in covered]
+        assert not uncovered, f"characters {uncovered} of {text!r} are in no span"
+
+    def test_pretokenize_returns_surfaces(self, trained_hf_tokenizer):
+        wrapper = HuggingFaceTokenizer(
+            "backend-only", _TransformersLike(trained_hf_tokenizer), {}
+        )
+        assert len(wrapper.pretokenize("hello world")) >= 2
+
+    def test_an_absent_pretokenizer_is_still_absent(self):
+        """Resolving through the backend must not invent a pre-tokenizer."""
+        from tokenizers import Tokenizer
+        from tokenizers.models import BPE
+
+        bare = Tokenizer(BPE(unk_token="<unk>"))
+        assert bare.pre_tokenizer is None
+        wrapper = HuggingFaceTokenizer("no-pretok", _TransformersLike(bare), {})
+        assert wrapper.can_pretokenize() is False
+        assert wrapper.pretokenize_with_spans("hello") is None
+        with pytest.raises(NotImplementedError):
+            wrapper.pretokenize("hello")
