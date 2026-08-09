@@ -8,9 +8,10 @@ Nine widely used tokenizers measured on the full metric set. The report is
 | `tokenizers.json` | The nine tokenizers, by Hugging Face Hub id |
 | `code_ast_config.json` | Maps each programming language to its directory under `code_data/` |
 | `fetch_code_corpus.py` | Downloads `code_data/` from `bigcode/the-stack-smol-xs` |
-| `run.sh` | The exact command, then the report render |
-| `analysis_results.json` | The results the report is rendered from, with `run_metadata` |
-| `render_report.py` | Turns the results file into `REPORT.md` |
+| `run.sh` | The two commands, then the report render |
+| `analysis_results.json` | The metrics the report is rendered from, with `run_metadata` |
+| `sanity_results.json` | The 16 health checks per tokenizer, behind the health matrix in the report. See [../../docs/SANITY_CHECKS.md](../../docs/SANITY_CHECKS.md) |
+| `render_report.py` | Turns those two files into `REPORT.md` |
 | `REPORT.md` | Generated. Do not edit by hand |
 
 ## Regenerating it
@@ -33,6 +34,13 @@ Two of the nine tokenizers, `meta-llama/Meta-Llama-3-8B` and
 `google/gemma-2-9b`, are gated on the Hub and need an accepted license. Drop
 them from `tokenizers.json` to run without one: no other number changes, since
 every metric here is computed per tokenizer.
+
+`run.sh` runs `tokenizer-analysis` and then `tokenizer-sanity-check` over the
+same nine tokenizers, the same 13 languages and the same math corpus. The
+second takes about 50 seconds and produces `sanity_results.json`. It is passed
+`--exit-zero` because the script runs under `set -e` and the checker exits
+non-zero on any warning, which these nine produce; the verdicts belong in the
+report rather than in the script's exit code.
 
 ## The committed results file predates the operator-isolation prose change
 
