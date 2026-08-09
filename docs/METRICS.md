@@ -35,11 +35,8 @@ and the path to its headline value. `<tok>` is a tokenizer name from your
 config; `<lang>` is a language code.
 
 The identifiers in this table are the results keys. The LaTeX table generator
-uses its own row ids (`three_digit_boundary_f1`, `operator_isolation`,
-`ast_full_alignment`, `ident_fragmentation`, `indent_depth_corr`,
-`utf8_boundary_crossing`, `avg_token_rank`, `utf8_char_split`), and
-`vocab_util_cross_lingual_cov` is a plot filename. None of those strings appears
-in the results file.
+uses its own row ids, and eight of them appear in no results file; see
+[VISUALIZATION.md](VISUALIZATION.md#row-ids).
 
 | Metric | Top-level key | Path to the headline value | Direction |
 |---|---|---|---|
@@ -77,9 +74,8 @@ in the results file.
 "Direction" gives the better direction for the quantity as defined.
 "neither" marks a metric that describes a tokenizer without ranking it: a longer
 mean token or a higher type-token ratio is not better or worse on its own. Plot
-titles show an arrow for the subset of metrics listed in
-`METRIC_BETTER_DIRECTION` (`tokenizer_analysis/visualization/plots.py`); metrics
-absent from that map get no arrow.
+titles carry an arrow for a subset of these metrics and none for the rest; see
+[VISUALIZATION.md](VISUALIZATION.md#direction-of-better-arrows).
 
 Two more top-level keys are not metrics. `run_metadata` is described under
 [Provenance](OUTPUT.md#provenance). `grouped_analysis` is written when
