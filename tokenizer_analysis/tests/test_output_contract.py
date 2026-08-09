@@ -201,6 +201,151 @@ def test_slim_file_is_a_strict_projection_of_the_full_file(full_and_slim_results
     )
 
 
+# Every key analysis_results_full.json holds that analysis_results.json is
+# meant not to publish, per metric. 'per_tokenizer' lists names inside each
+# tokenizer's entry, 'global' lists names inside that entry's global block, and
+# 'metric' lists names beside per_tokenizer.
+#
+# Each entry records where the same information is still readable, because a
+# drop is only acceptable when nothing is lost:
+#   compression_rate.num_texts_analyzed  is the one exception. The published
+#       global block gives total_units and total_tokens but no count of texts,
+#       and no other published field carries it.
+#   operator_isolation_rate.summary      equals per_tokenizer.<tok>.global,
+#       which normalize_results copies from it.
+#   the other four .summary blocks       hold the same numbers as the published
+#       global block, sometimes under another name (reconstruction_fidelity's
+#       texts_analyzed is global.count, its total_tokens_analyzed is
+#       global.total_tokens), plus languages_analyzed, which is len(per_language).
+#   domain_operator_counts               equals by_domain.<domain>.total_operators.
+#   the renyi_<alpha> dicts and token_counts  are the untransposed source of
+#       global.renyi_<alpha> and per_language.<lang>.{renyi_<alpha>,count}.
+#   the gini extras                      are all derivable from per_language:
+#       the two named languages are its argmin and argmax, and
+#       sorted_language_costs is it sorted.
+#   per_category                         is the only genuine detail loss, and
+#       both branches that drop it say so.
+#   sum, std_err, min and max            are stripped from every stats block by
+#       _strip_stats and are all recoverable from the published mean, std and
+#       count. OUTPUT.md names them.
+#   the gini global block's min_cost and max_cost  are the smallest and largest
+#       value of the published per_language costs.
+_DELIBERATELY_UNPUBLISHED = {
+    "compression_rate": {"per_tokenizer": {"num_texts_analyzed"}},
+    "fertility": {"global": {"sum", "std_err", "min", "max"}},
+    "token_length": {"global": {"sum", "std_err", "min", "max"}},
+    "numeric_magnitude_consistency": {"metric": {"summary"}},
+    "operator_isolation_rate": {
+        "per_tokenizer": {"per_category"},
+        "metric": {"domain_operator_counts", "summary"},
+    },
+    "reconstruction_fidelity": {"metric": {"summary"}},
+    "renyi_efficiency": {"per_tokenizer": {"token_counts"}},
+    "three_digit_boundary_alignment": {"metric": {"summary"}},
+    "tokenizer_fairness_gini": {
+        "per_tokenizer": {
+            "least_efficient_language",
+            "most_efficient_language",
+            "sorted_language_costs",
+        },
+        "global": {"min_cost", "max_cost"},
+    },
+    "utf8_token_integrity": {"metric": {"summary"}},
+    "ast_boundary_alignment": {"per_tokenizer": {"per_category"}},
+}
+
+
+def _is_allowed_drop(metric, scope, key):
+    """Whether *key* is a declared drop for *metric* at *scope*.
+
+    renyi_efficiency publishes one dict per configured alpha, named
+    renyi_<alpha>, so the alpha values come from the run's configuration rather
+    than from a fixed list. Matching them by prefix keeps a configuration change
+    from failing this test for a reason that has nothing to do with slimming.
+    """
+    if metric == "renyi_efficiency" and scope == "per_tokenizer":
+        if key.startswith("renyi_"):
+            return True
+    return key in _DELIBERATELY_UNPUBLISHED.get(metric, {}).get(scope, set())
+
+
+@requires_flores
+def test_the_slim_file_drops_only_what_it_declares(full_and_slim_results):
+    """Nothing may disappear from the published file without being declared.
+
+    test_slim_file_is_a_strict_projection_of_the_full_file checks the other
+    direction, and deleting a key is legal under that property, so it cannot see
+    a field that stopped being published. That is not hypothetical: the
+    tokenizer_fairness_gini branch of _select_tokenizer_entry enumerates the
+    fields it copies, so per_line_normalization reached
+    analysis_results_full.json and never analysis_results.json until the branch
+    was changed to carry it.
+
+    Most branches of _select_tokenizer_entry enumerate fields the same way, so
+    the same thing happens to any field added to a metric that has a named
+    branch. This test fails when that happens, and the fix is either to publish
+    the field or to add it to _DELIBERATELY_UNPUBLISHED with a note saying where
+    the same information is still readable.
+
+    A key whose value in the full file is an empty container is not reported: it
+    carries nothing to lose, and whether the selection keeps it depends on the
+    corpus rather than on the code.
+
+    This covers the metrics the bundled demo run produces. The code metrics are
+    off in that run (--no-code-ast), so ast_boundary_alignment's entry below is
+    declared from its branch rather than observed here.
+    """
+    slim, full = full_and_slim_results
+    undeclared = []
+
+    for metric, full_block in full.items():
+        if metric == "run_metadata" or not isinstance(full_block, dict):
+            continue
+        slim_block = slim.get(metric, {})
+
+        for key, value in full_block.items():
+            if key == "per_tokenizer" or key in slim_block:
+                continue
+            if value in ({}, [], None):
+                continue
+            if not _is_allowed_drop(metric, "metric", key):
+                undeclared.append(f"{metric}.{key}")
+
+        full_toks = full_block.get("per_tokenizer") or {}
+        slim_toks = slim_block.get("per_tokenizer") or {}
+        for tok, full_entry in full_toks.items():
+            if not isinstance(full_entry, dict):
+                continue
+            slim_entry = slim_toks.get(tok) or {}
+            for key, value in full_entry.items():
+                if key in slim_entry or value in ({}, [], None):
+                    continue
+                if not _is_allowed_drop(metric, "per_tokenizer", key):
+                    undeclared.append(f"{metric}.per_tokenizer.{tok}.{key}")
+
+            # The global block is checked one level in because OUTPUT.md calls
+            # it the headline block, and because the branch for
+            # tokenizer_fairness_gini rebuilds it field by field, which is the
+            # same shape of hazard one level down.
+            full_global = full_entry.get("global")
+            slim_global = slim_entry.get("global")
+            if isinstance(full_global, dict) and isinstance(slim_global, dict):
+                for key, value in full_global.items():
+                    if key in slim_global or value in ({}, [], None):
+                        continue
+                    if not _is_allowed_drop(metric, "global", key):
+                        undeclared.append(
+                            f"{metric}.per_tokenizer.{tok}.global.{key}"
+                        )
+
+    assert not undeclared, (
+        f"{len(undeclared)} field(s) are in analysis_results_full.json, absent "
+        "from analysis_results.json, and not declared in "
+        "_DELIBERATELY_UNPUBLISHED: "
+        f"{sorted(set(undeclared))}"
+    )
+
+
 def test_merge_is_a_no_op_when_the_secondary_is_absent():
     """A run that disabled a metric family must not trip the merge step."""
     results = {"compression_rate": {"per_tokenizer": {"t": {"global": {}}}}}
