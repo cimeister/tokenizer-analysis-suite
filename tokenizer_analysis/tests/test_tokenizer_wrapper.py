@@ -40,6 +40,30 @@ _CORPUS = [
 _TEST_TEXT = "Hello world, this is a test."
 _TEST_TEXT_MULTI = "Die Relativitätstheorie ist wichtig."
 
+# Offset inputs, written with escapes so the composition is unambiguous in the
+# source rather than depending on how this file was saved.
+_NFD_CAFE = "cafe\u0301"           # 5 characters; NFC composes them into 4
+_NFC_CAFE = "caf\u00e9"             # the 4-character form of the same word
+_HANGUL_JAMO = "\u1100\u1161\u11a8"  # L, V, T; NFC composes all three into one
+_HANGUL_SYLLABLE = "\uac01"        # that syllable, as one character
+_DROPPED_CHAR = "\ufff0"           # unassigned, so the script config drops it
+
+# Inputs whose every character survives the pretokenizer's normalization, so
+# each one must end up inside some token's offsets.
+_OFFSET_BATTERY = [
+    _TEST_TEXT,
+    _TEST_TEXT_MULTI,
+    _NFD_CAFE,
+    _NFC_CAFE,
+    _HANGUL_JAMO,
+    "世界 こんにちは 漢字",
+    "1234567890 and 42",
+    "def f(x):\n    return x + 1\n",
+    "   ",
+    "  \t \n  ",
+    "",
+]
+
 
 # ── Fixtures ──────────────────────────────────────────────────────────
 
@@ -468,13 +492,24 @@ class TestScriptTokWrappers:
         assert all(isinstance(i, int) for i in ids)
 
     @pytest.mark.parametrize("wrapper_name", _SCRIPT_TOK_FIXTURES)
-    def test_no_offsets_provided(self, wrapper_name, request):
-        # The bundled pretokenizer normalizes, so true source offsets are not
-        # recoverable; the wrapper reports None rather than guessing.
+    def test_offsets_are_reported_and_index_the_source(self, wrapper_name, request):
+        # This used to assert offsets were None, on the grounds that the
+        # bundled pretokenizer normalizes before it encodes. The wrapper now
+        # aligns the normalized text back to the caller's text, so offsets are
+        # reported and they index the caller's text: the decomposed spelling
+        # below is one character longer than its normalized form, and its last
+        # offset ends one character further right than the composed spelling's.
         wrapper = request.getfixturevalue(wrapper_name)
         ids, offsets = wrapper.encode_with_offsets(_TEST_TEXT)
-        assert offsets is None
         assert ids == wrapper.encode(_TEST_TEXT)
+        assert offsets is not None
+        assert len(offsets) == len(ids)
+
+        nfd_ids, nfd_offsets = wrapper.encode_with_offsets(_NFD_CAFE)
+        nfc_ids, nfc_offsets = wrapper.encode_with_offsets(_NFC_CAFE)
+        assert nfd_ids == nfc_ids, "the two spellings normalize to the same text"
+        assert nfd_offsets[-1][1] == len(_NFD_CAFE) == 5
+        assert nfc_offsets[-1][1] == len(_NFC_CAFE) == 4
 
     @pytest.mark.parametrize("wrapper_name", _SCRIPT_TOK_FIXTURES)
     def test_pretokenize_returns_strings(self, wrapper_name, request):
@@ -540,6 +575,327 @@ class TestScriptTokWrappers:
             create_tokenizer_wrapper("x", {"class": "does_not_exist", "path": "p"})
         msg = str(exc.value)
         assert "script_bpe" in msg and "mingram" in msg
+
+
+class TestScriptTokOffsets:
+    """Character offsets and pretokenizer spans over the source text.
+
+    The pretokenizer normalizes (NFC) and drops code points its script config
+    does not cover before it encodes anything, so positions in the text it
+    works on are not positions in the caller's text. These tests hold the
+    wrapper to the caller's text: every offset indexes the string that was
+    passed in, and the composing, dropping and regrouping steps in between are
+    accounted for rather than approximated.
+
+    Offsets may overlap. Unless a tokenizer's training config enforced
+    character boundaries, a merged token can hold the tail of one character and
+    the head of the next, and both fixtures have such tokens, so no test here
+    asserts that offsets are disjoint.
+    """
+
+    @staticmethod
+    def _covered(offsets):
+        covered = set()
+        for start, end in offsets:
+            covered.update(range(start, end))
+        return covered
+
+    @pytest.mark.parametrize("wrapper_name", _SCRIPT_TOK_FIXTURES)
+    def test_ids_and_offsets_agree_over_a_battery(self, wrapper_name, request):
+        """The ids are encode()'s, and every offset is a range within the text.
+
+        Offsets also advance with the tokens: a start or an end that went
+        backwards would mean the alignment lost its place in the text.
+        """
+        wrapper = request.getfixturevalue(wrapper_name)
+        for text in _OFFSET_BATTERY:
+            ids, offsets = wrapper.encode_with_offsets(text)
+            assert ids == wrapper.encode(text), f"ids differ for {text!r}"
+            assert offsets is not None, f"no offsets for {text!r}"
+            assert len(offsets) == len(ids), f"offset count differs for {text!r}"
+            previous = (0, 0)
+            for start, end in offsets:
+                assert 0 <= start <= end <= len(text), (
+                    f"{text!r}: offset ({start}, {end}) is not a range in the text"
+                )
+                assert previous[0] <= start and previous[1] <= end, (
+                    f"{text!r}: offsets went backwards at ({start}, {end})"
+                )
+                previous = (start, end)
+
+    @pytest.mark.parametrize("wrapper_name", _SCRIPT_TOK_FIXTURES)
+    def test_every_character_is_covered_when_none_is_dropped(
+        self, wrapper_name, request
+    ):
+        """No character of these inputs is left out of every token's offsets.
+
+        Every character in the battery survives normalization, so each one is
+        part of some token. A character the script config drops is a different
+        case, covered by test_a_dropped_character_shifts_the_offsets.
+        """
+        wrapper = request.getfixturevalue(wrapper_name)
+        for text in _OFFSET_BATTERY:
+            _ids, offsets = wrapper.encode_with_offsets(text)
+            covered = self._covered(offsets)
+            missing = [i for i in range(len(text)) if i not in covered]
+            assert not missing, (
+                f"{text!r}: characters {missing} are in no token's offsets"
+            )
+
+    @pytest.mark.parametrize("wrapper_name", _SCRIPT_TOK_FIXTURES)
+    def test_a_composed_character_reaches_both_source_characters(
+        self, wrapper_name, request
+    ):
+        """A letter plus a combining acute is one character after normalizing.
+
+        Whichever token holds the composed character has to report both source
+        positions, since neither one alone produced it. Reporting positions in
+        the normalized text would stop at index 4 of a 5-character string.
+        """
+        wrapper = request.getfixturevalue(wrapper_name)
+        _ids, offsets = wrapper.encode_with_offsets(_NFD_CAFE)
+        assert self._covered(offsets) == set(range(len(_NFD_CAFE)))
+        holders = [(s, e) for s, e in offsets if s <= 3 < e]
+        assert holders, "no token covers the base letter of the composition"
+        assert all(e >= 5 for _s, e in holders), (
+            f"a token covering source character 3 stops before the combining "
+            f"mark at 4: {holders}"
+        )
+
+    @pytest.mark.parametrize("wrapper_name", _SCRIPT_TOK_FIXTURES)
+    def test_hangul_jamo_compose_across_a_starter_boundary(
+        self, wrapper_name, request
+    ):
+        """Three combining-class-0 characters that NFC composes into one.
+
+        An alignment that cut the text wherever the combining class is 0 would
+        cut between the jamo, so its reconstruction would be the three jamo
+        rather than the syllable, and the wrapper would report no offsets at
+        all. Naming this input separately is the point: it is the case where
+        the cheap rule silently produces a different text.
+        """
+        wrapper = request.getfixturevalue(wrapper_name)
+        ids, offsets = wrapper.encode_with_offsets(_HANGUL_JAMO)
+        assert ids == wrapper.encode(_HANGUL_SYLLABLE), (
+            "the three jamo encode as the syllable they compose into"
+        )
+        assert offsets is not None, (
+            "the jamo alignment could not be established, so no offsets were "
+            "reported"
+        )
+        assert self._covered(offsets) == set(range(len(_HANGUL_JAMO)))
+        assert all((s, e) == (0, 3) for s, e in offsets), (
+            f"every token here holds the one composed syllable: {offsets}"
+        )
+
+    def test_normalization_segments_are_as_fine_as_composition_allows(self):
+        """The alignment cuts the text only where normalization lets it.
+
+        Three cases in one call, because they pull in opposite directions:
+        "e" and its combining acute compose, so they stay together; the three
+        jamo compose across two combining-class-0 characters, so cutting where
+        the combining class is 0 would separate them; and the combining
+        overline composes with nothing, so it keeps its own position instead of
+        inheriting its neighbour's span.
+        """
+        text = _NFD_CAFE + " " + _HANGUL_JAMO + " a\u0305"
+        assert _ScriptTokTokenizer._normalization_segments(text, "NFC") == [
+            (0, 1), (1, 2), (2, 3), (3, 5),   # c, a, f, e+acute
+            (5, 6),                            # space
+            (6, 9),                            # the three jamo
+            (9, 10),                           # space
+            (10, 11), (11, 12),                # a, and the overline on its own
+        ]
+
+    def test_a_range_is_cut_at_the_earliest_valid_position(self):
+        """Where several cuts are valid, the first one has to be taken.
+
+        _refine_segment stops at the first position where normalizing the two
+        sides separately rebuilds the whole range. Taking a later valid cut
+        instead is not caught by any invariant, because a coarser partition
+        still reproduces the normalization; it just reports wider spans. The
+        case above cannot see the difference, since none of its ranges has a
+        second valid cut. This one does: 'b' takes no precomposed form with a
+        following acute, so both 4 and 5 are valid cuts of the range 3 to 6,
+        and dropping the early exit merges 'b' with its first mark.
+        """
+        text = "a\u0301\u0301b\u0301\u0301"
+        assert _ScriptTokTokenizer._normalization_segments(text, "NFC") == [
+            (0, 2),            # a and its acute, which compose
+            (2, 3),            # the second acute, which composes with nothing
+            (3, 4), (4, 5), (5, 6),   # b and its two marks, each on its own
+        ]
+
+    @pytest.mark.parametrize("wrapper_name", _SCRIPT_TOK_FIXTURES)
+    def test_a_dropped_character_shifts_the_offsets(self, wrapper_name, request):
+        """A dropped code point changes the offsets but not the ids.
+
+        U+FFF0 is unassigned, so the pretokenizer removes it and both spellings
+        encode identically. The offsets must still index the text as passed in,
+        which is what makes them differ between the two. Whether the dropped
+        position is covered depends on whether a merged token reaches across
+        it, so this asserts only that the surviving characters are covered.
+        """
+        wrapper = request.getfixturevalue(wrapper_name)
+        with_dropped = "a" + _DROPPED_CHAR + "b"
+        without = "ab"
+        ids_with, offsets_with = wrapper.encode_with_offsets(with_dropped)
+        ids_without, offsets_without = wrapper.encode_with_offsets(without)
+        assert ids_with == ids_without
+        assert offsets_with != offsets_without, (
+            "offsets index the source text, so the dropped character must push "
+            "everything after it one position right"
+        )
+        covered = self._covered(offsets_with)
+        assert 0 in covered and 2 in covered, (
+            f"the surviving characters are not both covered: {offsets_with}"
+        )
+        assert max(end for _s, end in offsets_with) == len(with_dropped)
+
+    @pytest.mark.parametrize("wrapper_name", _SCRIPT_TOK_FIXTURES)
+    def test_empty_and_whitespace_only_input(self, wrapper_name, request):
+        wrapper = request.getfixturevalue(wrapper_name)
+        assert wrapper.encode_with_offsets("") == ([], [])
+        assert wrapper.pretokenize_with_spans("") == []
+        whitespace = "  \t \n  "
+        _ids, offsets = wrapper.encode_with_offsets(whitespace)
+        assert self._covered(offsets) == set(range(len(whitespace)))
+
+    @pytest.mark.parametrize("wrapper_name", _SCRIPT_TOK_FIXTURES)
+    def test_pretokenize_with_spans_agrees_with_pretokenize(
+        self, wrapper_name, request
+    ):
+        """Same surfaces as pretokenize(), and each span produces its surface.
+
+        Slicing the source text at a span and normalizing it must give that
+        span's surface back. That is what lets C10 pretokenizer char
+        conservation measure coverage against source positions rather than
+        against surface lengths, which a byte-level surface inflates.
+
+        It does not follow that character loss always shows up as a gap. A
+        chunk whose characters sit on either side of one the pretokenizer
+        dropped reports a single range across it: ``'a￰b'`` on the SCRIPT
+        BPE fixture gives one chunk spanning (0, 3), so the dropped character
+        at index 1 reads as covered and C10 reports conservation 1.0 on text
+        that lost a character. See the C10 entry in docs/SANITY_CHECKS.md.
+
+        One input class is excluded, and none of the battery is in it: when
+        normalization reorders a run of combining marks and the reordering
+        moves one of them past a chunk boundary, no mark in the run can be
+        given a span of its own, so every chunk holding part of the run reports
+        the run's whole span and slicing any of them returns the whole run.
+        """
+        wrapper = request.getfixturevalue(wrapper_name)
+        normalize = wrapper._pretokenizer.normalize
+        for text in _OFFSET_BATTERY:
+            spans = wrapper.pretokenize_with_spans(text)
+            assert spans is not None, f"no spans for {text!r}"
+            assert [surface for surface, _span in spans] == wrapper.pretokenize(text)
+            previous = (0, 0)
+            for surface, (start, end) in spans:
+                assert 0 <= start <= end <= len(text), f"{text!r}: bad span"
+                assert previous[0] <= start and previous[1] <= end, (
+                    f"{text!r}: spans went backwards at ({start}, {end})"
+                )
+                previous = (start, end)
+                assert normalize(text[start:end]) == surface, (
+                    f"{text!r}: span ({start}, {end}) holds "
+                    f"{text[start:end]!r}, not {surface!r}"
+                )
+
+    @pytest.mark.parametrize("wrapper_name", _SCRIPT_TOK_FIXTURES)
+    def test_spans_are_character_positions_not_byte_positions(
+        self, wrapper_name, request
+    ):
+        """A CJK chunk spans its characters, not the bytes they encode to.
+
+        Three bytes per character is what made the C10 conservation check read
+        1.000 while half the text was being dropped, so the widths are asserted
+        against the character count.
+        """
+        wrapper = request.getfixturevalue(wrapper_name)
+        text = "世界 こんにちは"
+        spans = wrapper.pretokenize_with_spans(text)
+        assert spans is not None
+        assert spans[0] == ("世界", (0, 2))
+        assert sum(end - start for _surface, (start, end) in spans) == len(text)
+
+    @pytest.mark.parametrize("wrapper_name", _SCRIPT_TOK_FIXTURES)
+    def test_digit_run_spans(self, wrapper_name, request):
+        """Digits are their own chunk, spanning exactly the source digits.
+
+        These fixtures leave digit_handling unset, so a run stays whole; the
+        regrouped case is covered in TestScriptTokOffsetsOtherPretokenizers.
+        """
+        wrapper = request.getfixturevalue(wrapper_name)
+        text = "1234567890 and 42"
+        spans = wrapper.pretokenize_with_spans(text)
+        assert spans is not None
+        assert ("1234567890", (0, 10)) in spans
+        assert ("42", (15, 17)) in spans
+
+    @pytest.mark.parametrize("wrapper_name", _SCRIPT_TOK_FIXTURES)
+    def test_batch_offsets_match_single(self, wrapper_name, request):
+        wrapper = request.getfixturevalue(wrapper_name)
+        texts = [t for t in _OFFSET_BATTERY if t]
+        assert wrapper.encode_batch_with_offsets(texts) == [
+            wrapper.encode_with_offsets(text) for text in texts
+        ]
+
+    # ── the inputs that get no offsets ────────────────────────────────
+
+    @pytest.mark.parametrize("wrapper_name", _SCRIPT_TOK_FIXTURES)
+    def test_no_offsets_when_match_positions_cannot_be_established(
+        self, wrapper_name, request, monkeypatch
+    ):
+        """A capture group in regex_pattern makes findall report groups.
+
+        ``regex_split`` returns what ``findall`` returns, which for a pattern
+        with a capture group is the group and not the whole match, so the
+        matches cannot be paired with positions. The wrapper reports no offsets
+        rather than pairing them anyway; the ids are unaffected.
+
+        The split itself is asserted on directly as well. Every later check
+        would also refuse this text, because a replay that split it differently
+        from the pretokenizer no longer matches the tokens it produced, so the
+        black-box result alone does not say that the positions were the thing
+        found wanting.
+        """
+        wrapper = request.getfixturevalue(wrapper_name)
+        monkeypatch.setattr(
+            wrapper._pretokenizer.config, "regex_pattern", r"(\w)\w*"
+        )
+        assert wrapper._regex_split_spans(_TEST_TEXT, 0, len(_TEST_TEXT)) is None
+        ids, offsets = wrapper.encode_with_offsets(_TEST_TEXT)
+        assert ids == wrapper.encode(_TEST_TEXT)
+        assert offsets is None
+        assert wrapper.pretokenize_with_spans(_TEST_TEXT) is None
+
+    @pytest.mark.parametrize("wrapper_name", _SCRIPT_TOK_FIXTURES)
+    def test_no_offsets_when_split_encoded_returns_other_objects(
+        self, wrapper_name, request, monkeypatch
+    ):
+        """Spans follow the encoded characters by identity through split_encoded.
+
+        A ``split_encoded`` that returned copies would still produce the same
+        atomic tokens, so the tokenization would look right while the wrapper
+        no longer knew which character each group came from. It reports no
+        offsets instead of assuming the order was kept.
+        """
+        import copy
+
+        wrapper = request.getfixturevalue(wrapper_name)
+        original = wrapper._pretokenizer.split_encoded
+        monkeypatch.setattr(
+            wrapper._pretokenizer,
+            "split_encoded",
+            lambda encs: [[copy.copy(enc) for enc in group]
+                          for group in original(encs)],
+        )
+        ids, offsets = wrapper.encode_with_offsets(_TEST_TEXT)
+        assert ids == wrapper.encode(_TEST_TEXT)
+        assert offsets is None
+        assert wrapper.pretokenize_with_spans(_TEST_TEXT) is None
 
 
 class TestScriptTokEdgeCases:
@@ -660,6 +1016,151 @@ class TestScriptTokEdgeCases:
             create_tokenizer_wrapper("x", {"class": "script_bpe", "path": mingram_file})
 
 
+class TestScriptTokOffsetsOtherPretokenizers:
+    """Offsets under pretokenizer settings no committed fixture uses.
+
+    Both fixtures were trained with the SCRIPT pretokenizer, no regex pattern
+    and no digit handling, which leaves three branches of the offset code with
+    no coverage: one CharEnc per UTF-8 byte instead of one per character, a
+    regex split whose match positions have to be recovered, and digit runs that
+    are regrouped before encoding. Training a tokenizer for each setting would
+    be a lot of fixture for the question, so these use a back end whose
+    vocabulary is exactly the pretokenizer's atomic tokens. Only the offsets are
+    of interest here; the merged-token walk is what the two fixtures exercise.
+    """
+
+    @staticmethod
+    def _wrap(pretokenizer, name):
+        from script_bpe.tokenizers.base import BaseToken
+        from script_bpe.utils import token_array
+
+        class _AtomicBackend:
+            """One token per atomic token, so encode is the pretokenizer's output."""
+
+            def __init__(self, pretok):
+                self.pretokenizer = pretok
+                self.tokens = {tid: BaseToken(tid, token_array([tid]))
+                               for tid in pretok.atomic_tokens}
+
+            def encode(self, text):
+                return [tid for chunk in self.pretokenizer.pretokenize(text)
+                        for tid in chunk]
+
+            def decode(self, ids, errors="replace"):
+                return self.pretokenizer.decode(ids, errors=errors)
+
+        return ScriptBPETokenizer(name, _AtomicBackend(pretokenizer), {})
+
+    @pytest.fixture(scope="module")
+    def utf8_regex_digits_wrapper(self):
+        """UTF-8 pretokenizer, GPT-4 regex split, digits regrouped in threes."""
+        pytest.importorskip("script_bpe")
+        from script_bpe.pretokenize import GPT4_REGEX, UTF8PretokenizerConfig
+        from script_bpe.pretokenize.pretokenizer import UTF8Pretokenizer
+
+        return self._wrap(
+            UTF8Pretokenizer(UTF8PretokenizerConfig(
+                regex_pattern=GPT4_REGEX,
+                digit_handling="RTL3",
+                enforce_char_boundaries=False,
+            )),
+            "utf8-gpt4-rtl3",
+        )
+
+    @pytest.fixture(scope="module")
+    def utf8_digits_wrapper(self):
+        """UTF-8 pretokenizer with digits regrouped and no regex split.
+
+        Without a pattern, the digit split's empty pieces reach the encoder and
+        become empty chunks, which is the case that has no atomic token to take
+        a position from.
+        """
+        pytest.importorskip("script_bpe")
+        from script_bpe.pretokenize import UTF8PretokenizerConfig
+        from script_bpe.pretokenize.pretokenizer import UTF8Pretokenizer
+
+        return self._wrap(
+            UTF8Pretokenizer(UTF8PretokenizerConfig(
+                digit_handling="RTL3", enforce_char_boundaries=False)),
+            "utf8-rtl3",
+        )
+
+    def test_the_bytes_of_one_character_share_that_characters_span(
+        self, utf8_regex_digits_wrapper
+    ):
+        """Each of a CJK character's three tokens reports the character, not a byte.
+
+        This pretokenizer emits one token per UTF-8 byte, so a wrapper that
+        counted CharEncs as characters would walk three positions right per
+        character and report offsets far past the end of the text.
+        """
+        wrapper = utf8_regex_digits_wrapper
+        text = "a 世界"
+        ids, offsets = wrapper.encode_with_offsets(text)
+        assert ids == wrapper.encode(text)
+        assert offsets is not None
+        assert len(offsets) == len("a 世界".encode("utf-8"))
+        assert offsets[-6:] == [(2, 3)] * 3 + [(3, 4)] * 3
+        assert max(end for _s, end in offsets) == len(text)
+
+    def test_regrouped_digit_runs_span_their_source_digits(
+        self, utf8_regex_digits_wrapper
+    ):
+        """RTL3 cuts 1234567 into 1, 234, 567; each group spans its own digits."""
+        wrapper = utf8_regex_digits_wrapper
+        text = "abc 1234567 def"
+        spans = wrapper.pretokenize_with_spans(text)
+        assert spans is not None
+        assert [surface for surface, _span in spans] == wrapper.pretokenize(text)
+        assert ("1", (4, 5)) in spans
+        assert ("234", (5, 8)) in spans
+        assert ("567", (8, 11)) in spans
+
+    def test_empty_chunks_keep_a_position(self, utf8_digits_wrapper):
+        """The digit split's empty pieces still get a zero-width span.
+
+        pretokenize() reports one surface per chunk including the empty ones,
+        so pretokenize_with_spans has to report one span per chunk too, or the
+        two lists stop lining up.
+        """
+        wrapper = utf8_digits_wrapper
+        text = "12ab"
+        surfaces = wrapper.pretokenize(text)
+        spans = wrapper.pretokenize_with_spans(text)
+        assert spans is not None
+        assert "" in surfaces, "expected the digit split to produce an empty piece"
+        assert [surface for surface, _span in spans] == surfaces
+        for surface, (start, end) in spans:
+            if surface == "":
+                assert start == end, f"an empty chunk got a non-empty span at {start}"
+        assert ("12", (0, 2)) in spans
+        assert ("ab", (2, 4)) in spans
+
+    def test_a_trailing_empty_chunk_sits_at_the_end_of_the_text(
+            self, utf8_digits_wrapper):
+        """Zero width is not enough; the position has to be right.
+
+        The test above only reaches a leading empty chunk, whose span is (0, 0)
+        under any rule, and it asserts start == end, which every wrong position
+        also satisfies. Putting the digits last moves the empty chunk to the
+        end, where reporting (0, 0) instead of the end of the text would place
+        a chunk before the text it follows and still pass that assertion. Full
+        spans are asserted here rather than a property, so the position is
+        pinned rather than described.
+        """
+        wrapper = utf8_digits_wrapper
+        text = "ab12"
+        spans = wrapper.pretokenize_with_spans(text)
+        assert spans is not None
+        assert [surface for surface, _span in spans] == wrapper.pretokenize(text)
+        assert spans == [("ab", (0, 2)), ("12", (2, 4)), ("", (4, 4))]
+
+        # A text that is only digits has an empty chunk at each end, so the two
+        # cannot both be reported at the same place.
+        assert wrapper.pretokenize_with_spans("12") == [
+            ("", (0, 0)), ("12", (0, 2)), ("", (2, 2))]
+
+
 def test_a_directory_of_vocab_and_merges_loads(tmp_path):
     """The vocab.json plus merges.txt route could never load a tokenizer.
 
@@ -753,3 +1254,105 @@ class TestPretokenizerResolvesThroughTheTransformersBackend:
         assert wrapper.pretokenize_with_spans("hello") is None
         with pytest.raises(NotImplementedError):
             wrapper.pretokenize("hello")
+
+
+class TestScriptTokOffsetGuardsRefuseRatherThanGuess:
+    """Each runtime invariant must stop the offsets, not shift them.
+
+    The whole design rests on one claim: where the replay of script_bpe's
+    pretokenization cannot be shown to match the real pipeline, the wrapper
+    reports no offsets rather than approximate ones. Eleven checks enforce that,
+    and an adversarial review found three of them that could be deleted with the
+    suite still green, because no input reaches them and nothing faked one.
+    A guard nobody tests reads as dead code to the next person.
+
+    Each test below breaks one assumption at run time and asserts two things:
+    offsets are None, and the ids are still the ids `encode` returns, since a
+    failed alignment must not disturb the tokenization.
+    """
+
+    @pytest.fixture
+    def wrapper(self, script_bpe_wrapper):
+        """The shared fixture with its warn-once memory cleared.
+
+        `_no_offsets` records each reason for the lifetime of the wrapper, and
+        the fixture is module-scoped, so a reason another test already triggered
+        would be silently skipped here.
+        """
+        script_bpe_wrapper._offset_failures.clear()
+        return script_bpe_wrapper
+
+    def test_encoding_that_depends_on_neighbouring_characters(
+            self, wrapper, monkeypatch, caplog):
+        """Assumption: `encode_text` is character-local.
+
+        The replay pairs one CharEnc with one character by encoding characters
+        one at a time. A pretokenizer whose output depended on context would
+        make that pairing wrong, so the per-character stream is compared against
+        encoding the whole piece.
+        """
+        pretok = wrapper._pretokenizer
+        real = pretok.encode_text
+
+        def context_dependent(text):
+            # Longer input takes a different path, so the whole-piece encoding
+            # stops matching the concatenated per-character one.
+            return real(text if len(text) < 2 else text[:-1])
+
+        monkeypatch.setattr(pretok, "encode_text", context_dependent)
+        with caplog.at_level("WARNING"):
+            ids, offsets = wrapper.encode_with_offsets("hello world")
+        assert offsets is None
+        assert ids == wrapper.encode("hello world")
+        assert any("one character at a time" in r.message for r in caplog.records), \
+            [r.message for r in caplog.records]
+
+    def test_tokens_that_cover_only_part_of_the_atomic_stream(
+            self, wrapper, monkeypatch, caplog):
+        """Assumption: the tokens spell out the whole pretokenized stream.
+
+        Reporting spans for the tokens that did match would silently describe a
+        prefix of the text as though it were all of it.
+        """
+        backend = wrapper._backend
+        real = backend.encode
+        monkeypatch.setattr(backend, "encode", lambda text: list(real(text))[:-1])
+        with caplog.at_level("WARNING"):
+            ids, offsets = wrapper.encode_with_offsets("hello world")
+        assert offsets is None
+        assert ids == wrapper.encode("hello world")
+        assert any("cover only part" in r.message for r in caplog.records), \
+            [r.message for r in caplog.records]
+
+    def test_a_segmentation_that_does_not_rebuild_the_normalized_text(
+            self, wrapper, monkeypatch, caplog):
+        """Assumption: the NFC segmentation reproduces the whole normalization.
+
+        This is the check that makes a wrong segmentation refuse instead of
+        reporting shifted spans. A segmentation can only be checked against the
+        text it claims to cover, so breaking the segmenter is the only way in.
+
+        The message is asserted, not just the None. The check below this one
+        compares the same text after the unassigned-character filter has run, so
+        it catches most of the same failures and would leave this test passing
+        with this guard deleted. The two are not interchangeable: this one names
+        the segmentation, the other names the filtered result, and only this one
+        fires when the filter happens to remove exactly the characters the
+        segmentation got wrong.
+        """
+        from tokenizer_analysis.core.tokenizer_wrapper import _ScriptTokTokenizer
+
+        monkeypatch.setattr(
+            _ScriptTokTokenizer, "_normalization_segments",
+            staticmethod(lambda text, form: [(0, max(1, len(text) - 1))]),
+        )
+        # Text the pretokenizer's own normalizer changes, so the segmenting
+        # branch runs at all.
+        text = _NFD_CAFE
+        assert wrapper._pretokenizer.normalize(text) != text
+        with caplog.at_level("WARNING"):
+            ids, offsets = wrapper.encode_with_offsets(text)
+        assert offsets is None
+        assert ids == wrapper.encode(text)
+        assert any("normalizing the aligned segments" in r.message
+                   for r in caplog.records), [r.message for r in caplog.records]

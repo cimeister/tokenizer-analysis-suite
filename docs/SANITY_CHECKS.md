@@ -66,7 +66,7 @@ reported as one that passed. An `unverifiable` check can never on its own
 produce `fail`, because nothing was measured to fail.
 
 `summary.<tok>.n_warn` counts `warn` and `unverifiable` together, matching the
-rank map (lines 1477-1478).
+rank map (lines 1489-1490).
 
 ## Exit codes
 
@@ -122,7 +122,7 @@ other seven cannot, and each entry says so.
 
 ### C1 byte-level 256-coverage
 
-`check_byte_coverage`, lines 411-477. Category `behavioral` when a decoder is
+`check_byte_coverage`, lines 423-489. Category `behavioral` when a decoder is
 available, `static` otherwise.
 
 Whether a byte-level tokenizer can carry all 256 byte values without loss. With
@@ -139,7 +139,7 @@ standalone vocabulary key, which is the weaker question that C17 asks in full.
 
 ### C17 strict byte-alphabet vocab presence
 
-`check_byte_alphabet_strict`, lines 490-534. Category `static`. Vocabulary only.
+`check_byte_alphabet_strict`, lines 502-546. Category `static`. Vocabulary only.
 
 The strict form of C1: whether all 256 bytes are present as their own
 single-token vocabulary entries, rather than merely reachable through a
@@ -155,7 +155,7 @@ supplementary Unicode planes.
 
 ### C2 combining-mark mishandling
 
-`check_combining_marks`, lines 540-586. Category `static`. Vocabulary only.
+`check_combining_marks`, lines 552-598. Category `static`. Vocabulary only.
 
 Counts vocabulary tokens that are made of nothing but combining marks, and the
 fraction of tokens whose first character is a combining mark. A token that is
@@ -172,7 +172,7 @@ built without regard for grapheme boundaries.
 
 ### C3 lossy-text root-cause
 
-`check_roundtrip`, lines 679-703. Category `behavioral`. Reads every probe.
+`check_roundtrip`, lines 691-715. Category `behavioral`. Reads every probe.
 
 Encodes and decodes each probe and sorts the outcome into a bucket, which is
 what separates loss the tokenizer's own normalizer causes from loss that is a
@@ -193,7 +193,7 @@ flags. `clean_frac` sums the first four buckets, `bug_frac` sums the red flags.
 
 ### C4 faithful-pipeline conformance
 
-`check_faithful_pipeline`, lines 709-740. Category `static` when unverifiable,
+`check_faithful_pipeline`, lines 721-752. Category `static` when unverifiable,
 `behavioral` otherwise. Reads `NFC_NFD_PAIRS`.
 
 Whether `encode()` applies the normalizer the tokenizer declares. For each pair
@@ -209,7 +209,7 @@ different pipeline from the one the tokenizer advertises.
 
 ### C5 whitespace handling
 
-`check_whitespace`, lines 746-799. Category `behavioral`. Reads the 12
+`check_whitespace`, lines 758-811. Category `behavioral`. Reads the 12
 `whitespace` probes.
 
 Whitespace round-trip fidelity, as the fraction of whitespace characters
@@ -225,7 +225,7 @@ whitespace-only is reported beside it and is not scored.
 
 ### C6 digit handling
 
-`check_digits`, lines 805-892. Category `behavioral`. Reads the `digits` probes
+`check_digits`, lines 817-904. Category `behavioral`. Reads the `digits` probes
 and, with `--use-builtin-math-data`, the `math` probes.
 
 How consistently the tokenizer splits numbers. It resolves each digit span to
@@ -243,7 +243,7 @@ run are reported and not scored.
 
 ### C7 special-token sanity
 
-`check_special_tokens`, lines 910-961. Category `static`. Vocabulary and the
+`check_special_tokens`, lines 922-973. Category `static`. Vocabulary and the
 tokenizer's declared special ids. No probes.
 
 Reads the declared BOS, EOS, PAD and UNK ids and checks three things: that they
@@ -260,7 +260,7 @@ special token's surface string returns exactly that one id.
 
 ### C8 determinism/idempotency
 
-`check_determinism`, lines 967-991. Category `behavioral`. Reads the first 50
+`check_determinism`, lines 979-1003. Category `behavioral`. Reads the first 50
 probes.
 
 Encodes each probe twice and compares, then compares a batch encode against a
@@ -273,7 +273,7 @@ every other tool irreproducible.
 
 ### C10 pretokenizer char conservation
 
-`check_pretok_conservation`, lines 997-1067. Category `behavioral`. Reads every
+`check_pretok_conservation`, lines 1009-1079. Category `behavioral`. Reads every
 probe except the `control_chars` ones, which a normalizer may legitimately drop.
 
 The fraction of non-whitespace source characters covered by the spans the
@@ -286,9 +286,21 @@ drops them before the model ever sees them.
 - `pass`: at or above it.
 - No `warn`.
 
+A `pass` here is not proof that nothing was dropped. The check reads spans, and
+a pre-tokenizer that drops a character between two it keeps can report one span
+across all three, which leaves no gap to find. Measured on the SCRIPT BPE test
+fixture, whose script configuration drops unassigned code points: `a￰b`
+produces a single chunk spanning positions 0 to 3, so the dropped character at
+position 1 reads as covered, and two probes that each lose one character give
+`pass` at conservation 1.000000. Whether the loss is visible depends on whether
+a merged chunk reaches across it. The exposure is private-use, unassigned,
+noncharacter and surrogate code points, not ordinary text: none of the 78
+built-in probes contains a character this configuration drops. An uncovered
+character is evidence of loss; a covered one is not evidence against it.
+
 ### C11 NFC/NFD roundtrip
 
-`check_nfc_nfd`, lines 1073-1095. Category `behavioral`. Reads `NFC_NFD_PAIRS`.
+`check_nfc_nfd`, lines 1085-1107. Category `behavioral`. Reads `NFC_NFD_PAIRS`.
 
 Runs both forms of each pair through the C3 classifier and collects any that
 land in a red-flag bucket. Whether the two forms encode identically is reported
@@ -300,7 +312,7 @@ and not scored, because a tokenizer may legitimately keep them distinct.
 
 ### C12 emoji/ZWJ/control
 
-`check_emoji_control`, lines 1101-1118. Category `behavioral`. Reads the
+`check_emoji_control`, lines 1113-1130. Category `behavioral`. Reads the
 `emoji_zwj` and `control_chars` probes.
 
 Runs them through the C3 classifier and groups any red-flag results by bucket.
@@ -311,7 +323,7 @@ Runs them through the C3 classifier and groups any red-flag results by bucket.
 
 ### C13 UNK-per-script
 
-`check_unk_per_script`, lines 1124-1151. Category `behavioral`. Reads the
+`check_unk_per_script`, lines 1136-1163. Category `behavioral`. Reads the
 `multiscript` probes and, with `--use-sample-data`, the `flores` probes.
 
 The share of tokens that are UNK, grouped by script or language. A script above
@@ -325,7 +337,7 @@ runs, and the text it cannot represent is silently replaced.
 
 ### C14 vocab integrity
 
-`check_vocab_integrity`, lines 1157-1180. Category `static`. Vocabulary only.
+`check_vocab_integrity`, lines 1169-1192. Category `static`. Vocabulary only.
 
 Three structural properties: `len(get_vocab())` equals `get_vocab_size()`, no id
 appears twice, and the ids are contiguous from 0.
@@ -337,7 +349,7 @@ appears twice, and the ids are contiguous from 0.
 
 ### C15 token-length outliers
 
-`check_token_outliers`, lines 1186-1220. Category `static`. Vocabulary only.
+`check_token_outliers`, lines 1198-1232. Category `static`. Vocabulary only.
 
 Vocabulary tokens longer than `SANITY_MAX_REASONABLE_TOKEN_CHARS` (64)
 characters after marker stripping.
@@ -350,7 +362,7 @@ characters after marker stripping.
 
 ### C16 vocab reachability
 
-`check_vocab_reachability`, lines 1270-1410. Category `behavioral`. Vocabulary,
+`check_vocab_reachability`, lines 1282-1422. Category `behavioral`. Vocabulary,
 plus its own probe strings.
 
 For every non-special vocabulary token, whether any input can produce it. Each
@@ -429,7 +441,7 @@ trained on a short corpus for the Quick Start, and both come out `fail`. Nothing
 in the checker special-cases them; the results are real measurements of small
 tokenizers. `bpe` fails C1 and warns on C5, C6, C15 and C16.
 
-C6 is the one the code records a number for: the comment at lines 858-864 gives
+C6 is the one the code records a number for: the comment at lines 870-876 gives
 `bpe.json` a digit consistency of 0.3769 against the 0.99 threshold, and notes
 that the same tokenizer reports 1.0000 once its character offsets are removed,
 because with no offsets there is no digit span to measure and the check goes

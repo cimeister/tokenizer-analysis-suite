@@ -870,11 +870,10 @@ class TokenizerSanityChecker:
             # TokenizerWrapper.encode_with_offsets returns (ids, None) by
             # default, which PreTokenizedDataTokenizer inherits unchanged
             # (_ScriptTokTokenizer overrides it and does report offsets).
-            # Measured on the
-            # bundled bpe.json: WARN at 0.3769 with offsets, PASS at 1.0000
-            # with the same tokenizer once offsets are removed. This follows
-            # check_byte_coverage, which skips explicitly rather than passing
-            # silently.
+            # Measured on the bundled bpe.json: WARN at 0.3769 with offsets,
+            # PASS at 1.0000 with the same tokenizer once offsets are removed.
+            # This follows check_byte_coverage, which skips explicitly rather
+            # than passing silently.
             return _mk(name, "behavioral", Severity.NOT_APPLICABLE, "no digit spans",
                        SANITY_DIGIT_CONSISTENCY_PASS,
                        "no digit span could be measured, so consistency is not "
