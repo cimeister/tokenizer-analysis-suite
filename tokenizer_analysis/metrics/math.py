@@ -33,7 +33,7 @@ import logging
 
 from .base import BaseMetrics, TokenizedDataProcessor, format_optional
 from ..constants import AGGREGATION_MICRO_POOLED
-from ..core.input_types import TokenizedData
+from ..core.input_types import TokenizedData, check_batch_pairing
 from ..core.input_providers import InputProvider
 from ..utils.text_utils import load_math_data, BUILTIN_MATH_SAMPLES_PATH
 
@@ -818,10 +818,9 @@ class DigitBoundaryMetrics(BaseMetrics):
                 #
                 # A batch is paired with its texts by position, which is the
                 # batch API's contract and what InputProvider already relies on
-                # for the prose corpus. The count is checked below; a backend
-                # that returned the right number of encodings in the wrong
-                # order would not be caught here, and neither corpus checks for
-                # that today.
+                # for the prose corpus. check_batch_pairing below verifies the
+                # count for both corpora; a backend that returned the right
+                # number of encodings in the wrong order is caught by neither.
                 #
                 # The unpacking sits inside the try, so a backend that returns
                 # something other than (ids, offsets) pairs falls back to the
@@ -855,16 +854,10 @@ class DigitBoundaryMetrics(BaseMetrics):
                         if ids is None:
                             ids, offsets = encode(text), None
                         encoded.append((ids, offsets))
-                if len(encoded) != len(usable):
-                    raise ValueError(
-                        f"Tokenizer {tok_name!r} returned {len(encoded)} "
-                        f"encodings for the {len(usable)} {lang!r} texts of the "
-                        "operator-isolation corpus. Pairing them by position "
-                        "would attach one text's offsets to another text, so "
-                        "the metric would be computed against the wrong source. "
-                        "Only the count is checked: a backend that reordered a "
-                        "batch of the right length would not be caught here."
-                    )
+                check_batch_pairing(
+                    tok_name, lang, usable, encoded,
+                    "operator-isolation corpus",
+                )
                 for text, (ids, offsets) in zip(usable, encoded):
                     items.append(
                         TokenizedData(

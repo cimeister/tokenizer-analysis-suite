@@ -8,7 +8,7 @@ import logging
 import time
 from .input_types import (
     InputProvider, TokenizedData, InputSpecification,
-    VocabularyProvider
+    VocabularyProvider, check_batch_pairing
 )
 
 if TYPE_CHECKING:
@@ -95,6 +95,10 @@ class RawTokenizationProvider(InputProvider):
                         [per_sample_time] * len(valid_texts)
                     )
 
+                    check_batch_pairing(
+                        tok_name, language, valid_texts, batch_results,
+                        "prose corpus",
+                    )
                     for text, (tokens, offsets) in zip(valid_texts, batch_results):
                         if not isinstance(tokens, list) or not all(isinstance(t, int) for t in tokens):
                             logger.error(f"Tokens for {language} are not a list of integers: {type(tokens)} - {tokens}")
