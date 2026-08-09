@@ -693,10 +693,11 @@ def _select_tokenizer_entry(
         # num_texts_analyzed is dropped, and it is the only field this whole
         # selection drops whose value is not readable somewhere else in
         # analysis_results.json: the global block gives total_units and
-        # total_tokens but no count of texts. Publishing it is a one-line
-        # change here. It is left out for now so that the committed benchmark
-        # artifact keeps matching what this code writes, which a schema
-        # addition would break until the next regeneration.
+        # total_tokens but no count of texts. Not published, by decision
+        # (2026-08-09), rather than pending one. Do not add it later on the
+        # assumption it was an oversight; it is a deliberate limit of the
+        # published schema, and adding it would also leave the committed
+        # benchmark artifact a field behind until the next regeneration.
         # test_the_slim_file_drops_only_what_it_declares pins this.
 
     elif metric_name == 'vocabulary_utilization':
