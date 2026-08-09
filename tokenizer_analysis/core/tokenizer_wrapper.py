@@ -683,17 +683,20 @@ class UniMixLMTokenizer(HuggingFaceTokenizer):
 
     # ── overrides for base_tokenizer pre-tokenization ────────────────
 
-    def can_pretokenize(self) -> bool:
-        return (
-            hasattr(self._tokenizer, 'base_tokenizer')
-            and hasattr(self._tokenizer.base_tokenizer, 'pre_tokenizer')
-            and self._tokenizer.base_tokenizer.pre_tokenizer is not None
-        )
+    def _pre_tokenizer(self):
+        """The base tokenizer's Rust pre-tokenizer, or None when there is none.
 
-    def pretokenize(self, text: str) -> List[str]:
-        if not self.can_pretokenize():
-            raise NotImplementedError(f"Tokenizer {self._name} does not support pretokenization")
-        return [token for token, _ in self._tokenizer.base_tokenizer.pre_tokenizer.pre_tokenize_str(text)]
+        Overriding the resolution rather than ``can_pretokenize`` and
+        ``pretokenize`` separately, because :class:`HuggingFaceTokenizer` builds
+        all three of those on this one method. Overriding only the first two
+        left ``pretokenize_with_spans`` resolving through the UniMixLM object,
+        which has no ``pre_tokenizer`` of its own, so it returned None while
+        ``can_pretokenize()`` answered True. Sanity check C10 reads those spans,
+        so it reported ``unverifiable`` for a tokenizer whose spans were one
+        attribute away.
+        """
+        base = getattr(self._tokenizer, 'base_tokenizer', None)
+        return getattr(base, 'pre_tokenizer', None)
 
     # ── from_config ──────────────────────────────────────────────────
 
@@ -1090,31 +1093,48 @@ class CustomBPETokenizer(TokenizerWrapper):
         self._name = name
         self._tokenizer = tokenizer
         self._config = config
-    
+
+    def _rust(self):
+        """The ``tokenizers.Tokenizer`` this wrapper's methods are written for.
+
+        ``_load_custom_bpe_from_directory`` returns a raw ``tokenizers.Tokenizer``
+        for a ``.json`` path and for a directory holding vocab.json plus
+        merges.txt, but the strategy before it returns a transformers fast
+        tokenizer for a Hub id or a directory carrying tokenizer_config.json, and
+        that keeps the Rust object one level down at ``backend_tokenizer``. Every
+        method here reads the Rust API, so on that shape ``encode``,
+        ``encode_with_offsets``, ``encode_batch_with_offsets`` and
+        ``convert_ids_to_tokens`` all raised AttributeError, and
+        ``can_pretokenize`` quietly answered False for a tokenizer that has a
+        pre-tokenizer. Resolving the same way :class:`HuggingFaceTokenizer` does
+        makes both shapes work and leaves the raw-Tokenizer path untouched.
+        """
+        return getattr(self._tokenizer, 'backend_tokenizer', None) or self._tokenizer
+
     def get_name(self) -> str:
         return self._name
-    
+
     def get_vocab_size(self) -> int:
         return len(self._tokenizer.get_vocab())
-    
+
     def get_vocab(self) -> Dict[str, int]:
         return self._tokenizer.get_vocab()
-    
+
     def can_encode(self) -> bool:
         return True
-    
+
     def encode(self, text: str) -> List[int]:
-        return self._tokenizer.encode(text).ids
+        return self._rust().encode(text).ids
 
     def encode_with_offsets(self, text: str) -> Tuple[List[int], Optional[List[Tuple[int, int]]]]:
         """Encode text using custom BPE tokenizer and return offsets."""
-        encoding = self._tokenizer.encode(text)
+        encoding = self._rust().encode(text)
         return encoding.ids, encoding.offsets
 
     def encode_batch_with_offsets(
         self, texts: List[str]
     ) -> List[Tuple[List[int], Optional[List[Tuple[int, int]]]]]:
-        encodings = self._tokenizer.encode_batch(texts)
+        encodings = self._rust().encode_batch(texts)
         return [(enc.ids, enc.offsets) for enc in encodings]
 
     def can_decode(self) -> bool:
@@ -1122,18 +1142,42 @@ class CustomBPETokenizer(TokenizerWrapper):
 
     def decode(self, token_ids: List[int], skip_special_tokens: bool = True) -> Optional[str]:
         try:
-            return self._tokenizer.decode(token_ids, skip_special_tokens=skip_special_tokens)
+            return self._rust().decode(token_ids, skip_special_tokens=skip_special_tokens)
         except Exception as e:
             logger.warning(f"CustomBPE decode failed for {self._name}: {e}")
             return None
 
+    def _pre_tokenizer(self):
+        """The Rust pre-tokenizer, or None when this tokenizer has none."""
+        return getattr(self._rust(), 'pre_tokenizer', None)
+
     def can_pretokenize(self) -> bool:
-        return hasattr(self._tokenizer, 'pre_tokenizer') and self._tokenizer.pre_tokenizer is not None
+        return self._pre_tokenizer() is not None
 
     def pretokenize(self, text: str) -> List[str]:
-        if not self.can_pretokenize():
+        pretok = self._pre_tokenizer()
+        if pretok is None:
             raise NotImplementedError(f"Tokenizer {self._name} does not support pretokenization")
-        return [token for token, _ in self._tokenizer.pre_tokenizer.pre_tokenize_str(text)]
+        return [token for token, _ in pretok.pre_tokenize_str(text)]
+
+    def pretokenize_with_spans(self, text: str):
+        """Surfaces with their character spans, straight from the backend.
+
+        ``pre_tokenize_str`` already returns the spans and ``pretokenize`` above
+        throws them away, so this wrapper reported None and sanity check C10
+        came out ``unverifiable``. Measured on ``tokenizers/bpe.json``: C10 is
+        ``unverifiable`` under the ``custom_bpe`` class and ``pass`` at 1.0 under
+        ``huggingface`` for the same file, so the wrapper class rather than the
+        tokenizer decided whether that check could run.
+        """
+        pretok = self._pre_tokenizer()
+        if pretok is None:
+            return None
+        try:
+            return list(pretok.pre_tokenize_str(text))
+        except Exception as e:
+            logger.debug("pre_tokenize_str failed for %s: %s", self._name, e)
+            return None
 
     def get_special_token_strings(self) -> Optional[Set[str]]:
         """Added-token surfaces from the underlying ``tokenizers.Tokenizer``.
@@ -1163,7 +1207,8 @@ class CustomBPETokenizer(TokenizerWrapper):
 
     def convert_ids_to_tokens(self, token_ids: List[int]) -> List[str]:
         """Convert token IDs using the underlying HuggingFace tokenizer."""
-        return [self._tokenizer.id_to_token(tid) or f"<UNK_{tid}>" for tid in token_ids]
+        rust = self._rust()
+        return [rust.id_to_token(tid) or f"<UNK_{tid}>" for tid in token_ids]
 
     @classmethod
     def from_config(cls, name: str, config: Dict[str, Any]) -> 'CustomBPETokenizer':

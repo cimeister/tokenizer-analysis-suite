@@ -1356,3 +1356,135 @@ class TestScriptTokOffsetGuardsRefuseRatherThanGuess:
         assert ids == wrapper.encode(text)
         assert any("normalizing the aligned segments" in r.message
                    for r in caplog.records), [r.message for r in caplog.records]
+
+
+class TestCustomBPEHandlesBothShapesItsLoaderReturns:
+    """`custom_bpe` is written for the Rust API and can be handed the other one.
+
+    `_load_custom_bpe_from_directory` returns a raw `tokenizers.Tokenizer` for a
+    `.json` path and for a directory of vocab.json plus merges.txt, but the
+    strategy that runs before those returns a transformers fast tokenizer for a
+    Hub id or a directory carrying tokenizer_config.json. Every method of
+    `CustomBPETokenizer` read the Rust API directly, so on that shape four of
+    them raised AttributeError and `can_pretokenize()` answered False for a
+    tokenizer that has a pre-tokenizer, which is the one silent failure of the
+    five. The fixture below is the shape that already worked; this class covers
+    the other one.
+    """
+
+    @pytest.fixture(scope="class")
+    def transformers_shaped(self, trained_hf_tokenizer):
+        return CustomBPETokenizer(
+            "cbpe-transformers", _TransformersLike(trained_hf_tokenizer), {})
+
+    def test_every_method_agrees_with_the_raw_shape(
+            self, transformers_shaped, custom_bpe_wrapper):
+        """Same tokenizer object underneath, so every answer has to match."""
+        text = _TEST_TEXT_MULTI
+        assert transformers_shaped.encode(text) == custom_bpe_wrapper.encode(text)
+        assert (transformers_shaped.encode_with_offsets(text)
+                == custom_bpe_wrapper.encode_with_offsets(text))
+        assert (transformers_shaped.encode_batch_with_offsets([text, _TEST_TEXT])
+                == custom_bpe_wrapper.encode_batch_with_offsets([text, _TEST_TEXT]))
+        ids = transformers_shaped.encode(text)
+        assert (transformers_shaped.convert_ids_to_tokens(ids)
+                == custom_bpe_wrapper.convert_ids_to_tokens(ids))
+        assert (transformers_shaped.decode(ids)
+                == custom_bpe_wrapper.decode(ids))
+
+    def test_the_pretokenizer_is_found_through_the_backend(
+            self, transformers_shaped, custom_bpe_wrapper):
+        """The silent one: False here meant no pre-tokenizer, which is wrong."""
+        assert transformers_shaped.can_pretokenize() is True
+        text = "héllo wörld"
+        assert (transformers_shaped.pretokenize(text)
+                == custom_bpe_wrapper.pretokenize(text))
+
+    def test_spans_are_reported_rather_than_discarded(self, custom_bpe_wrapper):
+        """`pre_tokenize_str` returns spans and `pretokenize` drops them.
+
+        Byte-level surfaces are why the spans matter: 'héllo' renders as
+        'hÃ©llo', so a consumer measuring coverage by surface length overcounts
+        exactly where a character is multi-byte.
+        """
+        text = "héllo wörld"
+        spans = custom_bpe_wrapper.pretokenize_with_spans(text)
+        assert spans is not None
+        assert [surface for surface, _span in spans] == custom_bpe_wrapper.pretokenize(text)
+        for _surface, (start, end) in spans:
+            assert 0 <= start <= end <= len(text)
+        assert "".join(text[s:e] for _surface, (s, e) in spans) == text
+
+    def test_c10_no_longer_depends_on_which_wrapper_class_loaded_the_file(
+            self, trained_hf_tokenizer):
+        """The same tokenizer must get the same health verdict either way.
+
+        Measured before this fix on tokenizers/bpe.json: C10 was `unverifiable`
+        under `custom_bpe` and `pass` at 1.0 under `huggingface`, so the wrapper
+        class rather than the tokenizer decided whether the check could run, and
+        `unverifiable` forces the overall verdict to at least `warn`.
+        """
+        from tokenizer_analysis.diagnostics.probe_corpus import builtin_probes
+        from tokenizer_analysis.diagnostics.sanity_check import (
+            Severity, TokenizerSanityChecker,
+        )
+
+        probes = builtin_probes()
+        results = {}
+        for label, wrapper in (
+            ("custom_bpe", CustomBPETokenizer("c", trained_hf_tokenizer, {})),
+            ("huggingface", HuggingFaceTokenizer("h", trained_hf_tokenizer, {})),
+        ):
+            check = TokenizerSanityChecker(
+                wrapper=wrapper, probes=probes).check_pretok_conservation()
+            results[label] = (check["severity"], check["observed"])
+        assert results["custom_bpe"] == results["huggingface"], results
+        assert results["custom_bpe"][0] != Severity.UNVERIFIABLE, results
+
+
+class TestUniMixLMResolvesThroughItsBaseTokenizer:
+    """UniMixLM overrode two of the three methods built on one resolver.
+
+    `HuggingFaceTokenizer` derives `can_pretokenize`, `pretokenize` and
+    `pretokenize_with_spans` from `_pre_tokenizer()`. UniMixLM overrode the
+    first two to read `base_tokenizer`, and inherited the third, which resolved
+    through the UniMixLM object instead and found nothing. The result was a
+    wrapper that said it could pretokenize, did pretokenize, and reported no
+    spans, so sanity check C10 came out `unverifiable`.
+    """
+
+    class _UniMixLike:
+        """A UniMixLM model's layout: the Rust tokenizer under base_tokenizer."""
+
+        def __init__(self, backend):
+            self.base_tokenizer = backend
+
+        def get_vocab(self):
+            return self.base_tokenizer.get_vocab()
+
+    def _wrapper(self, backend):
+        from tokenizer_analysis.core.tokenizer_wrapper import UniMixLMTokenizer
+        return UniMixLMTokenizer("unimix", self._UniMixLike(backend), {})
+
+    def test_all_three_pretokenizer_methods_agree(self, trained_hf_tokenizer):
+        wrapper = self._wrapper(trained_hf_tokenizer)
+        text = "héllo wörld"
+        assert wrapper.can_pretokenize() is True
+        surfaces = wrapper.pretokenize(text)
+        spans = wrapper.pretokenize_with_spans(text)
+        assert spans is not None, (
+            "can_pretokenize() said yes, so the spans must be reachable too")
+        assert [surface for surface, _span in spans] == surfaces
+
+    def test_a_base_tokenizer_without_one_is_still_without_one(self):
+        """Resolving through base_tokenizer must not invent a pre-tokenizer."""
+        from tokenizers import Tokenizer
+        from tokenizers.models import BPE
+
+        bare = Tokenizer(BPE(unk_token="<unk>"))
+        assert bare.pre_tokenizer is None
+        wrapper = self._wrapper(bare)
+        assert wrapper.can_pretokenize() is False
+        assert wrapper.pretokenize_with_spans("hello") is None
+        with pytest.raises(NotImplementedError):
+            wrapper.pretokenize("hello")
