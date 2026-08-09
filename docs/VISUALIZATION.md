@@ -88,11 +88,11 @@ says nothing about which end of it is good.
 | `--faceted-plots` | Add the `faceted_plots/` subdirectory above |
 | `--no-global-lines` | Drop the dashed global-average reference line from the per-language and faceted charts |
 
-The `--faceted-plots` help text says the flag applies to grouped analysis as
-well as to per-language plots. It does not:
-`visualization/plotter.py:64-65` passes `faceted_plots=False` on the grouped
-path, so the flag reaches only the four faceted charts listed above. The help
-text and the code disagree, and the code is what runs.
+`--faceted-plots` and `--per-language-plots` are independent: each adds its own
+subdirectory and neither requires the other. Neither reaches grouped analysis.
+`visualization/plotter.plot_grouped_analysis` passes both as `False`, and it
+passes an empty results dict alongside the grouped results, so those two
+branches would find nothing to draw even if the flags were forwarded.
 
 ## tokenizer-visualize
 

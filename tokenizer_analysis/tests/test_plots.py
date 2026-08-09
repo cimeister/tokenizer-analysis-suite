@@ -361,3 +361,76 @@ def test_utf8_panel_colours_are_keyed_to_the_tokenizer(captured_plots, tmp_path)
         )
     # Distinct tokenizers still get distinct colours.
     assert len(set(split_colors.values())) == 3
+
+
+class TestFacetedAndPerLanguageFlagsAreIndependent:
+    """`--faceted-plots` help text claimed a dependency the code does not have.
+
+    Until 1.0.3 it read "for grouped analysis (--run-grouped-analysis) and
+    per-language plots (--per-language-plots)". Both halves were wrong.
+    `generate_all_plots` gates the two subdirectories on separate `if`
+    statements, and `plotter.plot_grouped_analysis` passes both as `False` on
+    the grouped path, so the flag reaches neither. These assert the behaviour
+    the corrected help text now describes, so the two cannot drift apart again
+    without a test failing.
+    """
+
+    def _dirs(self, captured):
+        return {os.path.basename(os.path.dirname(path)) for path, _ in captured}
+
+    def _results(self):
+        """`_full_results` plus the per-language blocks those plots need.
+
+        Without them every per-language plot returns before drawing, so a test
+        asserting the subdirectory is absent would pass for the wrong reason.
+        """
+        results = _full_results()
+        results['fertility']['per_tokenizer']['A']['per_language'] = {
+            'eng_Latn': {'mean': 1.3}, 'deu_Latn': {'mean': 1.6}}
+        results['fertility']['per_tokenizer']['B']['per_language'] = {
+            'eng_Latn': {'mean': 1.7}, 'deu_Latn': {'mean': 2.1}}
+        return results
+
+    def test_faceted_alone_writes_faceted_and_no_per_language(self, captured_plots, tmp_path):
+        generate_all_plots(self._results(), str(tmp_path), _TOKS,
+                           per_language_plots=False, faceted_plots=True)
+        dirs = self._dirs(captured_plots)
+        assert "faceted_plots" in dirs
+        assert "per-language" not in dirs
+
+    def test_per_language_alone_writes_no_faceted(self, captured_plots, tmp_path):
+        generate_all_plots(self._results(), str(tmp_path), _TOKS,
+                           per_language_plots=True, faceted_plots=False)
+        dirs = self._dirs(captured_plots)
+        assert "per-language" in dirs, "the fixture drew no per-language plot at all"
+        assert "faceted_plots" not in dirs
+
+    def test_grouped_analysis_gets_neither(self, captured_plots, tmp_path):
+        """The outcome, which two separate things in plotter.py guarantee.
+
+        It passes `per_language_plots=False, faceted_plots=False`, and it also
+        passes `{}` as the results dict, so both branches would find nothing to
+        draw even if the flags were forwarded. This asserts the outcome rather
+        than either mechanism, so flipping only the hardcoded `False` leaves it
+        passing.
+        """
+        from tokenizer_analysis.visualization.plotter import TokenizerVisualizer
+
+        viz = TokenizerVisualizer(_TOKS, str(tmp_path),
+                                  per_language_plots=True, faceted_plots=True)
+        viz.plot_grouped_analysis({"script": {"latin": self._results()}})
+        dirs = self._dirs(captured_plots)
+        assert "faceted_plots" not in dirs
+        assert "per-language" not in dirs
+
+    def test_the_help_text_does_not_promise_either_link(self):
+        """The help string is the thing that was wrong; assert on it directly."""
+        from tokenizer_analysis.cli.run_analysis import build_parser
+
+        help_text = next(
+            a.help for a in build_parser()._actions
+            if "--faceted-plots" in (a.option_strings or [])
+        )
+        lowered = help_text.lower()
+        assert "independent of --per-language-plots" in lowered
+        assert "does not apply to grouped analysis" in lowered

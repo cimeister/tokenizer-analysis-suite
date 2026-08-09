@@ -54,7 +54,7 @@ Every flag `tokenizer-analysis` accepts.
 | `--verbose` | Detailed console output |
 | `--run-grouped-analysis` | Also compute metrics within each language group from `analysis_groups` |
 | `--per-language-plots` | Per-language grouped bar charts |
-| `--faceted-plots` | One subplot per tokenizer with shared y-axis |
+| `--faceted-plots` | One subplot per tokenizer with shared y-axis, for four metrics, in `<output-dir>/faceted_plots`. Independent of `--per-language-plots`; neither applies to grouped analysis |
 | `--no-global-lines` | Hide global average reference lines in plots |
 | `--generate-latex-tables` | Generate LaTeX tables into `<output-dir>/latex_tables` |
 | `--latex-table-types ...` | Which LaTeX tables to emit: `basic`, `information`, `comprehensive` (default: `basic comprehensive`) |

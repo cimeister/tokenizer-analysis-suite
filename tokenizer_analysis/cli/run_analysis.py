@@ -1076,11 +1076,10 @@ Examples:
   # Generate per-language plots in addition to standard plots
   uv run tokenizer-analysis --use-sample-data --per-language-plots
   
-  # Generate per-language plots with additional faceted plots (subplots per tokenizer)
+  # Generate faceted plots (one subplot per tokenizer); the two plot flags are
+  # independent, and neither applies to --run-grouped-analysis
+  uv run tokenizer-analysis --use-sample-data --faceted-plots
   uv run tokenizer-analysis --use-sample-data --per-language-plots --faceted-plots
-  
-  # Generate grouped analysis with additional faceted plots for grouped metrics
-  uv run tokenizer-analysis --use-sample-data --run-grouped-analysis --faceted-plots
   
   # Generate custom LaTeX tables from configuration file
   uv run tokenizer-analysis --use-sample-data --custom-latex-config custom_tables.json
@@ -1273,7 +1272,10 @@ Examples:
     parser.add_argument(
         "--faceted-plots",
         action="store_true",
-        help="Generate additional faceted plots (one subplot per tokenizer with shared y-axis) for grouped analysis (--run-grouped-analysis) and per-language plots (--per-language-plots). Normal plots are still generated."
+        help="Generate additional faceted plots (one subplot per tokenizer with shared y-axis) "
+             "for fertility, compression_rate, vocabulary_utilization and bigram_entropy, in "
+             "<output-dir>/faceted_plots. Independent of --per-language-plots, and does not "
+             "apply to grouped analysis. Normal plots are still generated."
     )
     
     parser.add_argument(
