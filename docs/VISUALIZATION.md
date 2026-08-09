@@ -173,15 +173,29 @@ invalid-choice error.
 
 ### Row ids
 
-The registry uses its own row identifiers, and eight of them appear in no
-results file: `avg_token_rank`, `three_digit_boundary_f1`, `operator_isolation`,
-`ast_full_alignment`, `ident_fragmentation`, `indent_depth_corr`,
-`utf8_boundary_crossing` and `utf8_char_split`. They are the keys of
-`LaTeXTableGenerator.metric_configs`, at `latex_tables.py` lines 122, 171, 180,
-190, 199, 208, 218 and 231. A row id is what to pass to `--latex-table-types`
-and to a custom config; the results key it reads is the `key_path` in its
-registry entry. `vocab_util_cross_lingual_cov` is a third thing again, a plot
-filename.
+The keys of `LaTeXTableGenerator.metric_configs` are the registry's own
+identifiers. There are 24, and 11 of them match neither the metric they read nor
+any field name in their own entry: `morphscore_recall`, `morphscore_precision`,
+`avg_token_rank`, `avg_tokens_per_line`, `three_digit_boundary_f1`,
+`operator_isolation`, `ast_full_alignment`, `ident_fragmentation`,
+`indent_depth_corr`, `utf8_boundary_crossing` and `utf8_char_split`, at
+`latex_tables.py` lines 102, 111, 122, 142, 171, 180, 190, 199, 208, 218 and
+231. To find what one reads, follow `key_path` and `value_key` in its entry:
+`operator_isolation` reads `overall_isolation_rate` from the
+`operator_isolation_rate` block, and `utf8_char_split` reads `char_split` then
+`global` from the `utf8_token_integrity` block.
+
+A row id is what a `--custom-latex-config` table lists under `metrics`.
+`--latex-table-types` takes `basic`, `information` or `comprehensive`, not row
+ids. `vocab_util_cross_lingual_cov` is a third thing again, a plot filename.
+
+Those `key_path` and `value_key` entries name the raw results the analyser holds
+in memory, which is what `tokenizer-analysis` passes the generator. They are not
+the key paths of `analysis_results.json`, which `normalize_results` renames and
+pivots before writing. Building tables from a saved results file therefore
+leaves 11 of the 24 rows as `---`, with only a log line from
+`_warn_if_block_present_but_unresolved` to say why. No command does that; it is
+a hazard for code that loads the published file and calls the generator itself.
 
 `LaTeXTableGenerator.__init__` calls `_validate_registry` (line 286), which
 raises if a registry entry is rooted at one of the six metrics
