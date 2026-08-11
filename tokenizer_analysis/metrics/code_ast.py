@@ -560,9 +560,10 @@ class ASTBoundaryMetrics(BaseMetrics):
         reported no warning, so its output was indistinguishable from a real
         measurement.
 
-        Failing here is the right behaviour: the wrappers that return no offsets
-        (pre-tokenized data, script_bpe, mingram) cannot support a metric defined
-        on source character positions, and guessing produced numbers that looked
+        Failing here is the right behaviour: a wrapper that returns no offsets
+        (pre-tokenized data, and script_bpe or mingram on text whose alignment
+        their wrapper could not establish) cannot support a metric defined on
+        source character positions, and guessing produced numbers that looked
         valid.
 
         The offsets are normalized by

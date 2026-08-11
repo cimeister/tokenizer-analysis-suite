@@ -35,11 +35,8 @@ and the path to its headline value. `<tok>` is a tokenizer name from your
 config; `<lang>` is a language code.
 
 The identifiers in this table are the results keys. The LaTeX table generator
-uses its own row ids (`three_digit_boundary_f1`, `operator_isolation`,
-`ast_full_alignment`, `ident_fragmentation`, `indent_depth_corr`,
-`utf8_boundary_crossing`, `avg_token_rank`, `utf8_char_split`), and
-`vocab_util_cross_lingual_cov` is a plot filename. None of those strings appears
-in the results file.
+uses its own row ids, and eight of them appear in no results file; see
+[VISUALIZATION.md](VISUALIZATION.md#row-ids).
 
 | Metric | Top-level key | Path to the headline value | Direction |
 |---|---|---|---|
@@ -71,15 +68,15 @@ in the results file.
 | Identifier fragmentation | `identifier_fragmentation` | `.per_tokenizer.<tok>.global.fragmentation_rate` | lower |
 | Indentation depth correlation | `indentation_consistency` | `.per_tokenizer.<tok>.global.depth_proportionality_correlation` | higher |
 | Tokenizer fairness Gini | `tokenizer_fairness_gini` | `.per_tokenizer.<tok>.global.gini_coefficient` | lower |
+| Tokenizer fairness Gini, per line | (under `tokenizer_fairness_gini`) | `.per_tokenizer.<tok>.per_line_normalization.gini_coefficient` | lower |
 | Lorenz curve | (under `tokenizer_fairness_gini`) | `.per_tokenizer.<tok>.lorenz_curve` | n/a, a curve |
 | Encoding speed | `encoding_speed` | `.per_tokenizer.<tok>.global.mean_ms` | lower |
 
 "Direction" gives the better direction for the quantity as defined.
 "neither" marks a metric that describes a tokenizer without ranking it: a longer
 mean token or a higher type-token ratio is not better or worse on its own. Plot
-titles show an arrow for the subset of metrics listed in
-`METRIC_BETTER_DIRECTION` (`tokenizer_analysis/visualization/plots.py`); metrics
-absent from that map get no arrow.
+titles carry an arrow for a subset of these metrics and none for the rest; see
+[VISUALIZATION.md](VISUALIZATION.md#direction-of-better-arrows).
 
 Two more top-level keys are not metrics. `run_metadata` is described under
 [Provenance](OUTPUT.md#provenance). `grouped_analysis` is written when
@@ -224,7 +221,15 @@ This implementation deviates from the reference in four ways, listed in
 the normalizer: this metric divides by the context's own successor count, the
 reference divides by the corpus-wide accessor-domain size. The reference
 normalizer and the reference unweighted aggregation are computed alongside and
-written under `bigram_entropy.reference_definition`.
+written under `bigram_entropy.reference_definition`, both for the corpus at
+`.per_tokenizer.<tok>.bigram_entropy` and per language at
+`.per_tokenizer.<tok>.per_language.<lang>.bigram_entropy`.
+
+A per-language entry treats that language as its own corpus: it normalizes by
+the language's own accessor domain, published beside it as
+`accessor_domain_size`. Over six FLORES languages with gpt2 that divisor ranges
+from 104 to 1894, so two per-language values are not on a common scale. Compare
+one language across tokenizers, not two languages under one tokenizer.
 
 ### Trigram entropy (`trigram_entropy`)
 
@@ -299,9 +304,10 @@ tokenization of numbers. Disable with `--no-digit-boundary`.
 > `tokenizer_analysis/sample_data/math_samples.json` when no flag names another
 > file, and its `code` domain always reads code snippets, the bundled
 > `sample_data/code_samples.json` when no `--code-ast-config` names a corpus.
-> Only its `prose` domain comes from the main corpus. Each run logs the three
-> sources on one line:
-> `Operator isolation domains: prose=multilingual, math=..., code=...`.
+> Its `prose` domain is the main corpus, and it is off by default. Pass
+> `--operator-prose-domain` to score it. Each run logs the domains it will use
+> on one line:
+> `Operator isolation domains: math=..., code=...`.
 >
 > `--no-code-ast` drops the three AST metrics without affecting this metric's `code`
 > domain running on the bundled samples. `--no-digit-boundary` drops
@@ -433,31 +439,36 @@ two tokens.
 Merging an operator with its operand puts the operation and the value in one
 embedding.
 
-**How the global is computed:** operators are counted in three domains, prose,
-code and math, and `global` pools all three, weighted by operator instances.
-On the bundled demo,
+**Which domains are counted.** Code and math always run. Prose, meaning the
+main corpus, runs only under `--operator-prose-domain`.
+
+Prose is off by default because an operator is a code construct. The pattern
+matches `-`, `/` and `!`, which are ordinary punctuation in prose, so a prose
+corpus contributes occurrences that are hyphens and slashes rather than
+operators. On the nine-tokenizer benchmark prose supplied 568 of 455558
+occurrences, 0.12 percent, so it moved the pooled figure by almost nothing while
+being the domain that cost the most to score: 78.5 percent of the documents of a
+web corpus contain at least one character the pattern matches.
+
+**How the global is computed:** `global` pools the domains that ran, weighted by
+operator instances. On the bundled demo,
 
 ```bash
 uv run tokenizer-analysis --use-sample-data
 ```
 
-`bpe` scores 0.7938 pooled over 3016 instances, against 0.6832 for code over
-1932 instances, 0.9886 for prose over 787 and 0.9966 for math over 297. The
-three domain rates are far apart, and the pooled figure is not close to any of
-them: code supplies 64 percent of the instances, and the pooled rate is 0.11
-above the code rate, because prose and math are both near 1.0. Quoting `global`
-alone therefore reports a number that describes no domain.
+`bpe` scores 0.7250 pooled over 2229 instances, against 0.6832 for code over
+1932 and 0.9966 for math over 297. Adding `--operator-prose-domain` gives 0.7938
+over 3016, with prose at 0.9886 over 787.
 
-The weights also move with the flags. `--samples-per-lang` changes the prose
-corpus while the code and math corpora stay fixed at 1932 and 297 instances, so
-the same tokenizer on the same demo scores 0.7285 pooled at
-`--samples-per-lang 20` (prose 1.0 over 29 instances) and 0.7938 at the default
-2000 (prose 0.9886 over 787). A `--code-ast-config` corpus changes the code
-domain, and `--math-data` changes the math domain.
+The domain rates are far apart and the pooled figure is not close to any of
+them, so quoting `global` alone reports a number that describes no domain. The
+weights also move with the flags: `--code-ast-config` changes the code domain,
+`--math-data` changes the math domain, and with prose on, `--samples-per-lang`
+changes the prose domain.
 
-`by_domain` holds the three rates and the three instance counts separately, and
-is written beside `global` for that reason. Read it before quoting the pooled
-number.
+`by_domain` holds each rate and each instance count separately, and is written
+beside `global` for that reason. Read it before quoting the pooled number.
 
 ## Reconstruction fidelity metrics (`reconstruction_fidelity`)
 
@@ -821,12 +832,39 @@ which is why the bundled configs use it.
 uses one byte per Latin character, two for Cyrillic and Greek, three for most
 CJK and Devanagari. A tokenizer can therefore look cheaper on Chinese than on
 English purely because the denominator is larger, with no difference in how well
-it segments either. Two ways to read around it: compare the same tokenizer
-across languages only when you have accounted for that, or set
-`--measurement-config` to a lines config, where a parallel corpus gives every
-language the same denominator, one line per sentence, and the cost becomes
-tokens per sentence. The number under a lines config is not comparable with the
-number under the byte default.
+it segments either.
+
+**So every run also publishes the coefficient normalized per line**, at
+`tokenizer_fairness_gini.per_tokenizer.<tok>.per_line_normalization`, holding
+`gini_coefficient`, `lines_per_language`, `mean_cost`, `cost_ratio`,
+`language_costs` and `num_languages`. On a parallel corpus, line *i* of every
+language is the same sentence, so tokens per line compares tokenizers on
+identical content, which no other unit does. **On a parallel corpus this is the
+coefficient to read.**
+
+The two are far apart. Over the nine tokenizers of `benchmarks/open_source` on
+13 FLORES+ languages they rank at Spearman 0.650 and disagree on which
+tokenizer is the most equitable across languages:
+
+| Tokenizer | per byte | per line |
+|---|---:|---:|
+| XLM-RoBERTa base | 0.0976 | **0.0494** |
+| Mistral NeMo | 0.1097 | 0.0702 |
+| Llama 3 | **0.0772** | 0.0926 |
+| GPT-2 | 0.2000 | 0.2933 |
+
+`per_line_normalization` is `null` unless every language has the same line
+count. That condition is necessary for a corpus to be parallel and is not
+sufficient: equal counts do not establish that line *i* in one language is a
+translation of line *i* in another, which the library cannot check and the
+caller has to know. When the counts differ, the block is `null` and the log
+names the counts, rather than a number being published for a comparison that
+does not hold.
+
+Setting `--measurement-config` to a lines config instead moves the primary
+coefficient onto lines, and also moves `compression_rate`. That is a different
+choice from reading `per_line_normalization`, and the number under a lines
+config is not comparable with the number under the byte default.
 
 The underlying Lorenz curve is written under
 `tokenizer_fairness_gini.per_tokenizer.<tok>.lorenz_curve`, from which
@@ -853,22 +891,5 @@ omitted from the plot. `per_language_mean` and `per_language_std` are beside
 it, and are `null` under the same condition, since a dispersion over fewer than
 two languages is undefined.
 
-### Cross-language token sharing
-
-Written as `avg_langs_per_token` under
-`vocabulary_utilization.per_tokenizer.<tok>` in `analysis_results_full.json`
-only. It is computed on every run but the slimming step does not select it, so
-`--save-full-results` is needed to read it. The metric's own `metadata`
-describes it, which is how the omission stayed invisible.
-
-For each learned merge token emitted at least once anywhere in the language
-set, the number of distinct languages it is emitted in; averaged over those
-tokens. A token counts for a language on any occurrence.
-
-Single-character base tokens and declared special or reserved tokens are
-excluded, so the value reflects learned sharing rather than the byte coverage
-every byte-level tokenizer has by construction. The range is 1 to the number of
-languages. Higher means more of the learned vocabulary is reused across
-languages rather than being specific to one.
 The comparison plot is written to `vocab_util_cross_lingual_cov_individual.svg`;
 that string is a plot filename, not a results key.

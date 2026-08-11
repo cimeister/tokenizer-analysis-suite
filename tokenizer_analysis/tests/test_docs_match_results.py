@@ -1,8 +1,8 @@
 """Every results key the documentation names must exist in a real results file.
 
-README.md and METRICS.md tell a reader where to find each metric's value.  When
-the output schema moves and the documentation does not, those paths send the
-reader to a KeyError, or worse to a neighbouring value that looks plausible.
+The documents tell a reader where to find each metric's value.  When the output
+schema moves and the documentation does not, those paths send the reader to a
+KeyError, or worse to a neighbouring value that looks plausible.
 
 That happened between 1.0.0 and 1.0.2.  README claimed five metrics had no
 ``global`` block forty lines after stating that every metric has one, and
@@ -16,6 +16,11 @@ over nine tokenizers and thirteen languages.  Metrics absent from it, such as
 ``morphscore`` when the run did not enable MorphScore, are skipped rather than
 failed: this test checks that a documented path resolves, not that the
 benchmark exercises every metric.
+
+It scanned only README.md and METRICS.md until 1.0.3.  OUTPUT.md is the schema
+reference and names key paths throughout, so leaving it out was the larger gap
+of the two; all three added pages resolved cleanly on the first run, so nothing
+was suppressed to make this pass.
 """
 
 import json
@@ -26,7 +31,17 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RESULTS = REPO_ROOT / "benchmarks" / "open_source" / "analysis_results.json"
-DOCS = ("README.md", "docs/METRICS.md")
+# Every document that names a key of analysis_results.json.
+# docs/SANITY_CHECKS.md is deliberately absent: its key paths are in
+# sanity_results.json, which this test does not open, so scanning it here would
+# report every one of them as unresolved.
+DOCS = (
+    "README.md",
+    "docs/METRICS.md",
+    "docs/OUTPUT.md",
+    "docs/CONFIGURATION.md",
+    "docs/EXTENDING.md",
+)
 
 # A backtick-quoted dotted path, e.g. `fertility.per_tokenizer.<tok>.global`.
 PATH_PATTERN = re.compile(r"`([a-z0-9_]+(?:\.[a-zA-Z0-9_<>]+)+)`")

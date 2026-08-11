@@ -438,3 +438,171 @@ class TestTrigramEntropy:
         bi_r = bi_results['per_tokenizer'][tok]
         # Bigram threshold is 100, so all types should be excluded
         assert bi_r['global_types_evaluated'] == 0
+
+
+class TestReferenceDefinitionPerLanguage:
+    """The reference-normalizer block, corpus level and per language.
+
+    ``bigram_entropy`` and ``trigram_entropy`` publish this library's own eta,
+    normalized by each context's own successor count. The
+    ``reference_definition`` block reports the same corpus under Poelman et
+    al.'s normalizer, ``log2(min(accessor domain, context count))``, and their
+    unweighted aggregation. Nothing covered that block before.
+
+    The per-language entries treat each language as its own corpus. That is a
+    choice with a consequence worth pinning: the divisor differs by language, so
+    two per-language values are not comparable to each other.
+    """
+
+    TOK = "tok"
+
+    def _metrics(self):
+        return InformationTheoreticMetrics(_SimpleProvider(self.TOK))
+
+    def _two_language_corpus(self):
+        """Two languages whose accessor domains differ by construction.
+
+        'narrow' has one context with 2 distinct successors. 'wide' has one
+        context with 8. Both contexts are perfectly uniform, so this library's
+        eta is 1.0 for each and only the reference normalizer separates them.
+        """
+        docs = []
+        for _ in range(6):
+            for succ in (2, 3):
+                docs.append(_make_td_tokens(self.TOK, [1, succ], lang="narrow"))
+        for _ in range(6):
+            for succ in range(10, 18):
+                docs.append(_make_td_tokens(self.TOK, [9, succ], lang="wide"))
+        return {self.TOK: docs}
+
+    def test_per_language_entries_exist_for_every_language(self):
+        results = self._metrics().compute_bigram_entropy(self._two_language_corpus())
+        ref = results['reference_definition']['per_tokenizer'][self.TOK]
+        assert set(ref['per_language']) == {"narrow", "wide"}
+        for lang, entry in ref['per_language'].items():
+            assert set(entry) == {
+                'bigram_entropy', 'accessor_domain_size', 'types_evaluated', 'count'
+            }, lang
+
+    def test_each_language_is_normalized_by_its_own_accessor_domain(self):
+        """The divisor is the language's own domain, not the corpus-wide one."""
+        results = self._metrics().compute_bigram_entropy(self._two_language_corpus())
+        ref = results['reference_definition']['per_tokenizer'][self.TOK]
+
+        assert ref['per_language']['narrow']['accessor_domain_size'] == 2
+        assert ref['per_language']['wide']['accessor_domain_size'] == 8
+        # The corpus-wide domain is the union, which is neither language's.
+        assert ref['accessor_domain_size'] == 10
+
+    def test_this_librarys_eta_cannot_tell_the_two_languages_apart(self):
+        """Which is the whole reason the reference block exists.
+
+        Both contexts are uniform over their own support, so dividing by the
+        context's own successor count gives 1.0 for both. The reference
+        normalizer separates them, because 'narrow' could only ever have
+        branched two ways.
+        """
+        results = self._metrics().compute_bigram_entropy(self._two_language_corpus())
+        own = results['per_tokenizer'][self.TOK]['per_language']
+        ref = results['reference_definition']['per_tokenizer'][self.TOK]['per_language']
+
+        assert own['narrow']['bigram_entropy'] == pytest.approx(1.0)
+        assert own['wide']['bigram_entropy'] == pytest.approx(1.0)
+        assert ref['narrow']['bigram_entropy'] == pytest.approx(1.0)
+        # 3 bits of observed entropy against log2(min(8, 12)) = 3 bits.
+        assert ref['wide']['bigram_entropy'] == pytest.approx(1.0)
+
+    def test_a_context_that_could_have_branched_wider_scores_below_one(self):
+        """Separates the reference normalizer from this library's.
+
+        One language, one context, 2 equally likely successors, but an accessor
+        domain of 4 because two other contexts contribute successors this one
+        never used. Own-successor-count normalization gives 1.0; the reference
+        normalizer gives 1 bit over log2(min(4, 12)) = 0.5.
+        """
+        tok = self.TOK
+        docs = []
+        for _ in range(6):
+            for succ in (2, 3):
+                docs.append(_make_td_tokens(tok, [1, succ], lang="en"))
+        # Two more contexts, each seen min_occ times, adding successors 4 and 5
+        # to the domain without touching context 1.
+        for _ in range(3):
+            docs.append(_make_td_tokens(tok, [6, 4], lang="en"))
+            docs.append(_make_td_tokens(tok, [7, 5], lang="en"))
+
+        results = self._metrics().compute_bigram_entropy({tok: docs})
+        own = results['per_tokenizer'][tok]['per_language']['en']['bigram_entropy']
+        ref = results['reference_definition']['per_tokenizer'][tok]['per_language']['en']
+
+        assert ref['accessor_domain_size'] == 4
+        assert own > ref['bigram_entropy'], (
+            "this library's normalizer is never larger than the reference's, so "
+            "its eta is never smaller"
+        )
+        assert ref['bigram_entropy'] < 1.0
+
+    def test_per_language_aggregation_is_unweighted(self):
+        """The reference takes an unweighted mean over context types.
+
+        This library's own eta is frequency-weighted, so if the per-language
+        reference block inherited that weighting it would not be the reference
+        definition. Two contexts of unequal frequency are needed to see the
+        difference; with one context per language the two agree and the test
+        proves nothing.
+
+        Context 1: 20 bigrams, 2 uniform successors. Context 9: 4 bigrams, 4
+        uniform successors. Accessor domain 6.
+          eta(1) = log2(2) / log2(min(6, 20)) = 1 / log2(6)
+          eta(9) = log2(4) / log2(min(6, 4))  = 2 / 2 = 1
+        Unweighted mean 0.6935; frequency-weighted mean 0.4891.
+        """
+        import math
+        tok = self.TOK
+        docs = []
+        for _ in range(10):
+            for succ in (2, 3):
+                docs.append(_make_td_tokens(tok, [1, succ], lang="en"))
+        for succ in (10, 11, 12, 13):
+            docs.append(_make_td_tokens(tok, [9, succ], lang="en"))
+
+        results = self._metrics().compute_bigram_entropy({tok: docs})
+        ref = results['reference_definition']['per_tokenizer'][tok]['per_language']['en']
+        assert ref['accessor_domain_size'] == 6
+
+        eta_1 = 1.0 / math.log2(6)
+        eta_9 = 1.0
+        unweighted = (eta_1 + eta_9) / 2
+        weighted = (20 * eta_1 + 4 * eta_9) / 24
+        assert unweighted != pytest.approx(weighted, abs=0.05), (
+            "the fixture must separate the two aggregations"
+        )
+        assert ref['bigram_entropy'] == pytest.approx(unweighted, abs=1e-6)
+
+    def test_trigram_publishes_the_same_shape(self):
+        tok = self.TOK
+        docs = []
+        for _ in range(6):
+            for succ in (3, 4):
+                docs.append(_make_td_tokens(tok, [1, 2, succ], lang="en"))
+        results = self._metrics().compute_trigram_entropy({tok: docs})
+        ref = results['reference_definition']['per_tokenizer'][tok]
+        assert set(ref['per_language']) == {"en"}
+        assert set(ref['per_language']['en']) == {
+            'trigram_entropy', 'accessor_domain_size', 'types_evaluated', 'count'
+        }
+
+    def test_metadata_says_the_per_language_divisor_differs(self):
+        """The block's own metadata has to disclose the scale caveat.
+
+        Without it a reader compares two per-language values that were divided
+        by different numbers.
+        """
+        results = self._metrics().compute_bigram_entropy(self._two_language_corpus())
+        md = results['reference_definition']['metadata']
+        assert 'accessor_domain_scope' in md
+        assert 'not on a common scale' in md['accessor_domain_scope']
+        assert 'corpus-wide' not in md['normalizer'], (
+            "the normalizer string describes both scopes now, so it must not "
+            "claim the domain is always corpus-wide"
+        )

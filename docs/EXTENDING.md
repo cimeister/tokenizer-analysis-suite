@@ -108,7 +108,7 @@ These have working defaults but can be overridden for better results:
 | Method | Default behaviour | Why override |
 |--------|------------------|--------------|
 | `convert_ids_to_tokens(ids) -> List[str]` | Reverses `get_vocab()`. | Faster or more accurate when the underlying library has a direct lookup (for example `id_to_token`). |
-| `encode_with_offsets(text) -> (List[int], Optional[List[Tuple[int,int]]])` | Returns `(self.encode(text), None)`. | Provide `(start_char, end_char)` offsets per token for exact source-to-token mapping. Without this, the code metrics fall back to greedy character alignment, which fails for tokenizers that strip whitespace from tokens (for example custom BPE with a `Whitespace` pre-tokenizer), and the operator metric skips the document. HuggingFace `tokenizers` and SentencePiece both expose offsets natively. |
+| `encode_with_offsets(text) -> (List[int], Optional[List[Tuple[int,int]]])` | Returns `(self.encode(text), None)`. | Provide `(start_char, end_char)` offsets per token for exact source-to-token mapping. Without this, the code metrics raise rather than score: the greedy character alignment they used to fall back to mismapped most non-ASCII text without reporting anything, and was removed in 1.0.2. The digit metrics raise for a tokenizer that encodes raw text and reports no offsets, and skip the document for pre-tokenized input, which carries no offsets by construction. HuggingFace `tokenizers` and SentencePiece both expose offsets natively. |
 | `get_underlying_tokenizer()` | Returns `None`. | Expose the raw HuggingFace tokenizer object for consumers like MorphScore, which only works with HF tokenizers. |
 | `get_unk_token_id() -> Optional[int]` | Returns `None`. | Enables `unk_token_rate`. |
 

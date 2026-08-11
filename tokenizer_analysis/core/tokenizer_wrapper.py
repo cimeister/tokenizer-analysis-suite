@@ -7,11 +7,12 @@ making it easy for users to integrate custom tokenizers into the framework.
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Union, Any, Tuple
+from typing import Dict, List, NamedTuple, Optional, Set, Union, Any, Tuple
 import json
 import logging
 import os
 import glob
+import unicodedata
 import warnings
 
 from ..config.language_metadata import PACKAGE_ROOT
@@ -454,13 +455,27 @@ class HuggingFaceTokenizer(TokenizerWrapper):
             logger.warning(f"HuggingFace decode failed for {self._name}: {e}")
             return None
 
+    def _pre_tokenizer(self):
+        """The Rust pre-tokenizer, or None when this tokenizer has none.
+
+        ``self._tokenizer`` is normally a transformers fast tokenizer, which
+        keeps the Rust object one level down at ``backend_tokenizer``; reading
+        ``pre_tokenizer`` off the transformers object finds nothing. This
+        resolves the same way ``diagnostics/sanity_check.py`` does when it
+        reports the pipeline components, so the two agree about whether a
+        pre-tokenizer exists.
+        """
+        backend = getattr(self._tokenizer, 'backend_tokenizer', None) or self._tokenizer
+        return getattr(backend, 'pre_tokenizer', None)
+
     def can_pretokenize(self) -> bool:
-        return hasattr(self._tokenizer, 'pre_tokenizer') and self._tokenizer.pre_tokenizer is not None
+        return self._pre_tokenizer() is not None
 
     def pretokenize(self, text: str) -> List[str]:
-        if not self.can_pretokenize():
+        pretok = self._pre_tokenizer()
+        if pretok is None:
             raise NotImplementedError(f"Tokenizer {self._name} does not support pretokenization")
-        return [token for token, _ in self._tokenizer.pre_tokenizer.pre_tokenize_str(text)]
+        return [token for token, _ in pretok.pre_tokenize_str(text)]
 
     def pretokenize_with_spans(self, text: str):
         """Surfaces with their character spans, straight from the backend.
@@ -468,10 +483,11 @@ class HuggingFaceTokenizer(TokenizerWrapper):
         ``pre_tokenize_str`` already returns the spans; the plain
         ``pretokenize`` above throws them away.
         """
-        if not self.can_pretokenize():
+        pretok = self._pre_tokenizer()
+        if pretok is None:
             return None
         try:
-            return list(self._tokenizer.pre_tokenizer.pre_tokenize_str(text))
+            return list(pretok.pre_tokenize_str(text))
         except Exception as e:
             logger.debug("pre_tokenize_str failed for %s: %s", self._name, e)
             return None
@@ -667,17 +683,20 @@ class UniMixLMTokenizer(HuggingFaceTokenizer):
 
     # ── overrides for base_tokenizer pre-tokenization ────────────────
 
-    def can_pretokenize(self) -> bool:
-        return (
-            hasattr(self._tokenizer, 'base_tokenizer')
-            and hasattr(self._tokenizer.base_tokenizer, 'pre_tokenizer')
-            and self._tokenizer.base_tokenizer.pre_tokenizer is not None
-        )
+    def _pre_tokenizer(self):
+        """The base tokenizer's Rust pre-tokenizer, or None when there is none.
 
-    def pretokenize(self, text: str) -> List[str]:
-        if not self.can_pretokenize():
-            raise NotImplementedError(f"Tokenizer {self._name} does not support pretokenization")
-        return [token for token, _ in self._tokenizer.base_tokenizer.pre_tokenizer.pre_tokenize_str(text)]
+        Overriding the resolution rather than ``can_pretokenize`` and
+        ``pretokenize`` separately, because :class:`HuggingFaceTokenizer` builds
+        all three of those on this one method. Overriding only the first two
+        left ``pretokenize_with_spans`` resolving through the UniMixLM object,
+        which has no ``pre_tokenizer`` of its own, so it returned None while
+        ``can_pretokenize()`` answered True. Sanity check C10 reads those spans,
+        so it reported ``unverifiable`` for a tokenizer whose spans were one
+        attribute away.
+        """
+        base = getattr(self._tokenizer, 'base_tokenizer', None)
+        return getattr(base, 'pre_tokenizer', None)
 
     # ── from_config ──────────────────────────────────────────────────
 
@@ -1074,31 +1093,48 @@ class CustomBPETokenizer(TokenizerWrapper):
         self._name = name
         self._tokenizer = tokenizer
         self._config = config
-    
+
+    def _rust(self):
+        """The ``tokenizers.Tokenizer`` this wrapper's methods are written for.
+
+        ``_load_custom_bpe_from_directory`` returns a raw ``tokenizers.Tokenizer``
+        for a ``.json`` path and for a directory holding vocab.json plus
+        merges.txt, but the strategy before it returns a transformers fast
+        tokenizer for a Hub id or a directory carrying tokenizer_config.json, and
+        that keeps the Rust object one level down at ``backend_tokenizer``. Every
+        method here reads the Rust API, so on that shape ``encode``,
+        ``encode_with_offsets``, ``encode_batch_with_offsets`` and
+        ``convert_ids_to_tokens`` all raised AttributeError, and
+        ``can_pretokenize`` quietly answered False for a tokenizer that has a
+        pre-tokenizer. Resolving the same way :class:`HuggingFaceTokenizer` does
+        makes both shapes work and leaves the raw-Tokenizer path untouched.
+        """
+        return getattr(self._tokenizer, 'backend_tokenizer', None) or self._tokenizer
+
     def get_name(self) -> str:
         return self._name
-    
+
     def get_vocab_size(self) -> int:
         return len(self._tokenizer.get_vocab())
-    
+
     def get_vocab(self) -> Dict[str, int]:
         return self._tokenizer.get_vocab()
-    
+
     def can_encode(self) -> bool:
         return True
-    
+
     def encode(self, text: str) -> List[int]:
-        return self._tokenizer.encode(text).ids
+        return self._rust().encode(text).ids
 
     def encode_with_offsets(self, text: str) -> Tuple[List[int], Optional[List[Tuple[int, int]]]]:
         """Encode text using custom BPE tokenizer and return offsets."""
-        encoding = self._tokenizer.encode(text)
+        encoding = self._rust().encode(text)
         return encoding.ids, encoding.offsets
 
     def encode_batch_with_offsets(
         self, texts: List[str]
     ) -> List[Tuple[List[int], Optional[List[Tuple[int, int]]]]]:
-        encodings = self._tokenizer.encode_batch(texts)
+        encodings = self._rust().encode_batch(texts)
         return [(enc.ids, enc.offsets) for enc in encodings]
 
     def can_decode(self) -> bool:
@@ -1106,18 +1142,42 @@ class CustomBPETokenizer(TokenizerWrapper):
 
     def decode(self, token_ids: List[int], skip_special_tokens: bool = True) -> Optional[str]:
         try:
-            return self._tokenizer.decode(token_ids, skip_special_tokens=skip_special_tokens)
+            return self._rust().decode(token_ids, skip_special_tokens=skip_special_tokens)
         except Exception as e:
             logger.warning(f"CustomBPE decode failed for {self._name}: {e}")
             return None
 
+    def _pre_tokenizer(self):
+        """The Rust pre-tokenizer, or None when this tokenizer has none."""
+        return getattr(self._rust(), 'pre_tokenizer', None)
+
     def can_pretokenize(self) -> bool:
-        return hasattr(self._tokenizer, 'pre_tokenizer') and self._tokenizer.pre_tokenizer is not None
+        return self._pre_tokenizer() is not None
 
     def pretokenize(self, text: str) -> List[str]:
-        if not self.can_pretokenize():
+        pretok = self._pre_tokenizer()
+        if pretok is None:
             raise NotImplementedError(f"Tokenizer {self._name} does not support pretokenization")
-        return [token for token, _ in self._tokenizer.pre_tokenizer.pre_tokenize_str(text)]
+        return [token for token, _ in pretok.pre_tokenize_str(text)]
+
+    def pretokenize_with_spans(self, text: str):
+        """Surfaces with their character spans, straight from the backend.
+
+        ``pre_tokenize_str`` already returns the spans and ``pretokenize`` above
+        throws them away, so this wrapper reported None and sanity check C10
+        came out ``unverifiable``. Measured on ``tokenizers/bpe.json``: C10 is
+        ``unverifiable`` under the ``custom_bpe`` class and ``pass`` at 1.0 under
+        ``huggingface`` for the same file, so the wrapper class rather than the
+        tokenizer decided whether that check could run.
+        """
+        pretok = self._pre_tokenizer()
+        if pretok is None:
+            return None
+        try:
+            return list(pretok.pre_tokenize_str(text))
+        except Exception as e:
+            logger.debug("pre_tokenize_str failed for %s: %s", self._name, e)
+            return None
 
     def get_special_token_strings(self) -> Optional[Set[str]]:
         """Added-token surfaces from the underlying ``tokenizers.Tokenizer``.
@@ -1147,7 +1207,8 @@ class CustomBPETokenizer(TokenizerWrapper):
 
     def convert_ids_to_tokens(self, token_ids: List[int]) -> List[str]:
         """Convert token IDs using the underlying HuggingFace tokenizer."""
-        return [self._tokenizer.id_to_token(tid) or f"<UNK_{tid}>" for tid in token_ids]
+        rust = self._rust()
+        return [rust.id_to_token(tid) or f"<UNK_{tid}>" for tid in token_ids]
 
     @classmethod
     def from_config(cls, name: str, config: Dict[str, Any]) -> 'CustomBPETokenizer':
@@ -1212,6 +1273,21 @@ class PreTokenizedDataTokenizer(TokenizerWrapper):
         if vocab_size is None:
             raise ValueError("PreTokenizedDataTokenizer requires vocab_size in config")
         return cls(name, vocab_size, vocab_dict)
+
+
+class _PretokChunkSpans(NamedTuple):
+    """One ``script_bpe`` pretokenizer chunk, with source spans.
+
+    ``atom_ids`` is the chunk as ``Pretokenizer.pretokenize`` emits it, and
+    ``atom_spans[i]`` is the range of the original text that produced
+    ``atom_ids[i]``. ``span`` is the chunk's own range, held separately because
+    a chunk can be empty (the digit split produces empty parts) and an empty
+    chunk still has a position.
+    """
+
+    atom_ids: List[int]
+    atom_spans: List[Tuple[int, int]]
+    span: Tuple[int, int]
 
 
 class _ScriptTokTokenizer(TokenizerWrapper):
@@ -1279,6 +1355,9 @@ class _ScriptTokTokenizer(TokenizerWrapper):
         self._vocab_size: int = base + len(native_ids)
         self._id_to_str_cache: Optional[Dict[int, str]] = None
         self._vocab_cache: Optional[Dict[str, int]] = None
+        # Reasons character offsets were already reported unavailable for, so a
+        # corpus-wide run logs each cause once instead of once per text.
+        self._offset_failures: Set[str] = set()
 
     def get_name(self) -> str:
         return self._name
@@ -1350,6 +1429,397 @@ class _ScriptTokTokenizer(TokenizerWrapper):
         # (array.array); decode each chunk back to its rendered substring.
         return [self._pretokenizer.decode(chunk)
                 for chunk in self._pretokenizer.pretokenize(text)]
+
+    # ---- character offsets ------------------------------------------------
+    #
+    # The bundled pretokenizer rewrites the text before any token exists: it
+    # normalizes it (NFC by default) and drops code points its script config
+    # does not cover. Positions in that rewritten text do not index the caller's
+    # string, so the methods below replay the pretokenizer's pipeline one step
+    # at a time, carrying a source span with every character, and check each
+    # step against the pretokenizer's own output. A step that cannot be
+    # established exactly gives up on the whole text rather than approximating:
+    # an offset that is merely close still reads as a real measurement, which is
+    # why metrics/code_ast.py removed its string-matching fallback.
+
+    def _no_offsets(self, reason: str) -> None:
+        """Warn that offsets are unavailable, once per distinct *reason*."""
+        if reason in self._offset_failures:
+            return
+        self._offset_failures.add(reason)
+        logger.warning(
+            "script_bpe tokenizer %s cannot report character offsets: %s. "
+            "Offsets are None for inputs of this kind; this reason is logged "
+            "once per tokenizer.", self._name, reason)
+
+    @staticmethod
+    def _refine_segment(
+        text: str, form: str, start: int, end: int
+    ) -> List[Tuple[int, int]]:
+        """Cut ``text[start:end]`` as finely as normalizing it allows.
+
+        A cut is taken only where normalizing the two sides separately
+        reproduces the normalization of the whole range, so however the range
+        is cut, the pieces still rebuild it. Cutting as early as possible keeps
+        the reported spans as narrow as the normalization permits: characters
+        that happen to sit next to a composition get their own span rather than
+        inheriting the composition's.
+        """
+        pieces: List[Tuple[int, int]] = []
+        while start < end:
+            whole = unicodedata.normalize(form, text[start:end])
+            cut = end
+            for position in range(start + 1, end):
+                if (unicodedata.normalize(form, text[start:position])
+                        + unicodedata.normalize(form, text[position:end])) == whole:
+                    cut = position
+                    break
+            pieces.append((start, cut))
+            start = cut
+        return pieces
+
+    @classmethod
+    def _normalization_segments(cls, text: str, form: str) -> List[Tuple[int, int]]:
+        """Cut *text* where normalization cannot reach across the cut.
+
+        Two passes. The first cuts before every combining-class-0 character and
+        merges a pair back together when normalizing the two sides separately
+        does not give what normalizing them together gives, which is what NFC
+        composing Hangul jamo (all combining class 0) needs. The second pass
+        cuts each of those ranges as finely as its own normalization allows.
+
+        The first pass alone is too coarse: a mark that composes with nothing
+        would still share a span with its neighbour. The second pass alone is
+        not safe: normalization reorders adjacent marks by combining class, so
+        a cut that looks harmless against the next character alone can change
+        the result once the character after it is included. The caller also
+        checks the joined result against the whole-string normalization, so a
+        segmentation these passes get wrong stops the offsets rather than
+        shifting them.
+        """
+        n = len(text)
+        if n == 0:
+            return []
+        starts = [0]
+        starts.extend(i for i in range(1, n) if unicodedata.combining(text[i]) == 0)
+        starts.append(n)
+        segments: List[Tuple[int, int]] = []
+        i = 0
+        while i < len(starts) - 1:
+            start = starts[i]
+            j = i + 1
+            while j < len(starts) - 1:
+                left = unicodedata.normalize(form, text[start:starts[j]])
+                right = unicodedata.normalize(form, text[starts[j]:starts[j + 1]])
+                if left + right == unicodedata.normalize(form, text[start:starts[j + 1]]):
+                    break
+                j += 1
+            segments.extend(cls._refine_segment(text, form, start, starts[j]))
+            i = j
+        return segments
+
+    def _normalized_chars_with_spans(
+        self, text: str
+    ) -> Optional[Tuple[List[str], List[Tuple[int, int]]]]:
+        """``(chars, spans)`` for ``pretokenizer.normalize(text)``, or ``None``.
+
+        ``chars`` is that normalized text one character at a time, and
+        ``spans[i]`` is the range of the original *text* that produced
+        ``chars[i]``. Composition is many-to-one, so a span can be wider than
+        one character, and a decomposing form (NFD, NFKD) makes consecutive
+        characters share one span.
+        """
+        pretok = self._pretokenizer
+        cfg = pretok.config
+        form = cfg.normalization
+        normalized = text if form is None else unicodedata.normalize(form, text)
+        if normalized == text:
+            # Nothing composed, decomposed or reordered, so each character of
+            # the input stands for itself.
+            chars = list(text)
+            spans = [(i, i + 1) for i in range(len(text))]
+        else:
+            chars = []
+            spans = []
+            for start, end in self._normalization_segments(text, form):
+                for ch in unicodedata.normalize(form, text[start:end]):
+                    chars.append(ch)
+                    spans.append((start, end))
+            if "".join(chars) != normalized:
+                self._no_offsets(
+                    "normalizing the aligned segments one at a time did not "
+                    f"reproduce {form} of the whole text")
+                return None
+        if cfg.remove_unassigned:
+            kept = [i for i, ch in enumerate(chars) if ch in pretok.valid_chars]
+            chars = [chars[i] for i in kept]
+            spans = [spans[i] for i in kept]
+        if "".join(chars) != pretok.normalize(text):
+            self._no_offsets(
+                "the reconstructed normalized text differs from what "
+                "pretokenizer.normalize() returns")
+            return None
+        return chars, spans
+
+    def _encode_text_with_spans(
+        self,
+        chars: List[str],
+        spans: List[Tuple[int, int]],
+        lo: int,
+        hi: int,
+    ) -> Optional[Tuple[List[Any], List[Tuple[int, int]]]]:
+        """``encode_text`` over ``chars[lo:hi]``, with a source span per CharEnc.
+
+        Encoding one character at a time is what pairs a CharEnc with a
+        character, since one character can produce several (the UTF-8
+        pretokenizer emits one per byte). The resulting atomic-token stream is
+        compared against encoding the whole piece at once, so a pretokenizer
+        whose encoding depends on neighbouring characters gives up instead of
+        pairing them wrongly.
+        """
+        pretok = self._pretokenizer
+        encs: List[Any] = []
+        enc_spans: List[Tuple[int, int]] = []
+        for i in range(lo, hi):
+            for enc in pretok.encode_text(chars[i]):
+                encs.append(enc)
+                enc_spans.append(spans[i])
+        whole = pretok.encode_text("".join(chars[lo:hi]))
+        if ([tid for enc in encs for tid in enc.atomic_token_ids]
+                != [tid for enc in whole for tid in enc.atomic_token_ids]):
+            self._no_offsets(
+                "encoding one character at a time gives a different "
+                "atomic-token stream than encoding the whole piece")
+            return None
+        return encs, enc_spans
+
+    def _regex_split_spans(
+        self, norm: str, lo: int, hi: int
+    ) -> Optional[List[Tuple[int, int]]]:
+        """Index ranges of ``regex_split(norm[lo:hi])`` within *norm*, or ``None``.
+
+        ``regex_split`` runs ``findall``, which reports the matched strings
+        without saying where they are and silently drops whatever the pattern
+        does not match. ``finditer`` over the same pattern gives the positions;
+        its matches are compared against ``regex_split``'s own output, so a
+        pattern whose capture groups make ``findall`` return something other
+        than whole matches gives up instead of pairing the two wrongly.
+        """
+        pretok = self._pretokenizer
+        if pretok.config.regex_pattern is None:
+            return [(lo, hi)]
+        # The module's own regex binding, so the pattern is matched by the
+        # engine split_unencoded_and_encode uses (script_bpe matches with the
+        # third-party `regex` module, whose syntax the configured patterns use).
+        from script_bpe.pretokenize import pretokenizer as script_bpe_pretokenize
+        part = norm[lo:hi]
+        matches = list(script_bpe_pretokenize.re.finditer(
+            pretok.config.regex_pattern, part))
+        if [m.group(0) for m in matches] != list(pretok.regex_split(part)):
+            self._no_offsets(
+                "the configured regex_pattern does not report whole matches "
+                "through findall, so match positions cannot be established")
+            return None
+        return [(lo + m.start(), lo + m.end()) for m in matches]
+
+    def _append_split_chunks(
+        self,
+        chunks: List[_PretokChunkSpans],
+        encs: List[Any],
+        enc_spans: List[Tuple[int, int]],
+        piece_span: Tuple[int, int],
+    ) -> bool:
+        """Run ``split_encoded`` over *encs* and append its groups with spans.
+
+        ``split_encoded`` regroups the CharEncs it is handed (script grouping,
+        space merging) and returns the same objects in the same order, which is
+        what lets each span follow its character. That is checked here by
+        identity, position by position, so an implementation that copied or
+        reordered them would stop the offsets rather than shift them.
+        """
+        pretok = self._pretokenizer
+        consumed = 0
+        for group in pretok.split_encoded(encs):
+            atom_ids: List[int] = []
+            atom_spans: List[Tuple[int, int]] = []
+            first = consumed
+            for enc in group:
+                if consumed >= len(encs) or enc is not encs[consumed]:
+                    self._no_offsets(
+                        "split_encoded did not return the encoded characters it "
+                        "was given, in order")
+                    return False
+                for tid in enc.atomic_token_ids:
+                    atom_ids.append(tid)
+                    atom_spans.append(enc_spans[consumed])
+                consumed += 1
+            if atom_spans:
+                span = (atom_spans[0][0], atom_spans[-1][1])
+            elif first < len(enc_spans):
+                span = (enc_spans[first][0], enc_spans[first][0])
+            else:
+                span = (piece_span[1], piece_span[1])
+            chunks.append(_PretokChunkSpans(atom_ids, atom_spans, span))
+        if consumed != len(encs):
+            self._no_offsets(
+                "split_encoded dropped some of the encoded characters")
+            return False
+        return True
+
+    def _chunks_with_spans(self, text: str) -> Optional[List[_PretokChunkSpans]]:
+        """Replay ``pretokenize`` keeping a source span per atomic token.
+
+        Mirrors ``Pretokenizer.pretokenize``: normalize, split digit runs off,
+        regex-split the rest, encode, regroup. Returns ``None`` as soon as one
+        of those steps cannot be tied back to positions in *text*.
+        """
+        # The pretokenizer module itself, so the digit split and the digit
+        # grouping below are the ones split_unencoded_and_encode runs, down to
+        # script_bpe splitting with the third-party `regex` module.
+        from script_bpe.pretokenize import pretokenizer as script_bpe_pretokenize
+
+        pretok = self._pretokenizer
+        cfg = pretok.config
+        aligned = self._normalized_chars_with_spans(text)
+        if aligned is None:
+            return None
+        chars, spans = aligned
+        norm = "".join(chars)
+
+        def source_span(lo: int, hi: int) -> Tuple[int, int]:
+            if lo >= hi:
+                # A zero-width piece is placed where the next kept character
+                # starts, or at the end of the last one for a trailing piece.
+                pos = spans[lo][0] if lo < len(spans) else (spans[-1][1] if spans else 0)
+                return (pos, pos)
+            return (spans[lo][0], spans[hi - 1][1])
+
+        # Digit runs are split out first and regrouped, so they carry their own
+        # spans; everything else goes through the regex split. Index ranges into
+        # `norm` stand in for the substrings the pretokenizer passes around.
+        parts: List[Tuple[int, int, bool]] = []
+        if cfg.digit_handling is None:
+            parts.append((0, len(norm), False))
+        else:
+            raw = script_bpe_pretokenize.re.split("([0-9]+)", norm)
+            if "".join(raw) != norm:
+                self._no_offsets(
+                    "the digit split did not partition the normalized text")
+                return None
+            at = 0
+            for i, part in enumerate(raw):
+                # re.split with one capture group alternates non-digits, digits.
+                parts.append((at, at + len(part), i % 2 == 1))
+                at += len(part)
+
+        chunks: List[_PretokChunkSpans] = []
+        for lo, hi, is_digits in parts:
+            if is_digits:
+                groups = script_bpe_pretokenize.group_digits(
+                    norm[lo:hi], cfg.digit_handling)
+                if "".join(groups) != norm[lo:hi]:
+                    self._no_offsets(
+                        "digit grouping did not partition the digit run")
+                    return None
+                at = lo
+                for group in groups:
+                    encs = list(pretok.encode_digits([group]))
+                    group_span = source_span(at, at + len(group))
+                    if not self._append_split_chunks(
+                            chunks, encs, [group_span] * len(encs), group_span):
+                        return None
+                    at += len(group)
+            else:
+                pieces = self._regex_split_spans(norm, lo, hi)
+                if pieces is None:
+                    return None
+                for start, end in pieces:
+                    encoded = self._encode_text_with_spans(chars, spans, start, end)
+                    if encoded is None:
+                        return None
+                    encs, enc_spans = encoded
+                    if not self._append_split_chunks(
+                            chunks, encs, enc_spans, source_span(start, end)):
+                        return None
+        return chunks
+
+    def encode_with_offsets(self, text: str) -> Tuple[List[int], Optional[List[Tuple[int, int]]]]:
+        """Encode, reporting each token's character range in the original *text*.
+
+        The ids are the ones :meth:`encode` returns. Offsets index the caller's
+        text rather than the normalized text the pretokenizer works on, so a
+        token holding a composed character reports the range of every original
+        character that composed into it. Offsets can overlap: unless the
+        training config enforced character boundaries, a token can hold the tail
+        of one character and the head of the next, and is reported as covering
+        both.
+
+        Characters the pretokenizer drops (outside its script config, or
+        unmatched by its regex) are usually covered by no token, and sometimes
+        are. A token whose first and last atoms sit on either side of a dropped
+        character reports one range across it, dropped character included.
+        Measured on the SCRIPT BPE fixture: ``'a￰b'`` covers index 1, which
+        was dropped, while ``'ab￰cd'`` leaves index 2 uncovered. An
+        uncovered character is therefore evidence of loss, and a covered one is
+        not evidence against it.
+
+        Offsets are ``None``, with the ids unaffected, whenever the alignment
+        cannot be established; :meth:`_no_offsets` logs why.
+        """
+        # The native ids are kept alongside the compacted ones because the
+        # atomic tokens are looked up by native id below. This repeats what
+        # encode() does rather than calling it, which would encode twice.
+        native = list(self._backend.encode(text))
+        ids = [self._native_to_dense[i] for i in native]
+        chunks = self._chunks_with_spans(text)
+        if chunks is None:
+            return ids, None
+        atom_ids = [tid for chunk in chunks for tid in chunk.atom_ids]
+        atom_spans = [span for chunk in chunks for span in chunk.atom_spans]
+        offsets: List[Tuple[int, int]] = []
+        pos = 0
+        for nid in native:
+            atoms = self._backend.tokens[nid].atomic_tokens
+            end = pos + len(atoms)
+            if (not len(atoms) or end > len(atom_ids)
+                    or list(atoms) != atom_ids[pos:end]):
+                self._no_offsets(
+                    "the encoded tokens do not spell out the atomic-token "
+                    "stream the pretokenizer produced")
+                return ids, None
+            offsets.append((atom_spans[pos][0], atom_spans[end - 1][1]))
+            pos = end
+        if pos != len(atom_ids):
+            self._no_offsets(
+                "the encoded tokens cover only part of the pretokenizer's "
+                "atomic-token stream")
+            return ids, None
+        return ids, offsets
+
+    def pretokenize_with_spans(
+        self, text: str
+    ) -> Optional[List[Tuple[str, Tuple[int, int]]]]:
+        """The pretokenizer's chunks with their character range in *text*.
+
+        The surfaces are :meth:`pretokenize`'s, and the chunks this replays are
+        checked against the ones ``pretokenize`` produced before any span is
+        reported. A chunk that dropped every character it was given (the digit
+        split can produce empty pieces) keeps a zero-width span at the position
+        it sits in.
+        """
+        chunks = self._chunks_with_spans(text)
+        if chunks is None:
+            return None
+        produced = self._pretokenizer.pretokenize(text)
+        if len(produced) != len(chunks) or any(
+                list(chunk) != replay.atom_ids
+                for chunk, replay in zip(produced, chunks)):
+            self._no_offsets(
+                "the replayed pretokenizer chunks differ from the ones "
+                "pretokenize() produced")
+            return None
+        return [(self._pretokenizer.decode(chunk), replay.span)
+                for chunk, replay in zip(produced, chunks)]
 
     def get_special_token_strings(self) -> Optional[Set[str]]:
         """Empty: the ``script_bpe`` back ends declare no special tokens.

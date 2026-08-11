@@ -35,6 +35,7 @@ Every flag `tokenizer-analysis` accepts.
 | `--math-data FILE` | Math-rich text file (`.txt`/`.json`) for the digit metrics |
 | `--use-builtin-math-data` | Use the bundled math corpus for the digit metrics. Ignored when `--math-data` is also given |
 | `--no-code-ast` | Skip `ast_boundary_alignment`, `identifier_fragmentation` and `indentation_consistency`, including their synthetic-code fallback. The `code` domain of `operator_isolation_rate` still runs |
+| `--operator-prose-domain` | Score the main corpus as a `prose` domain of `operator_isolation_rate`. Off by default: an operator is a code construct, and the pattern matches a hyphen, a slash and an exclamation mark |
 | `--code-ast-config FILE` | JSON mapping languages to code paths for AST analysis |
 | `--max-code-files-per-lang N` | Cap on code files loaded per language from `--code-ast-config` paths (default: 0, no cap) |
 | `--max-code-file-chars N` | Truncate each loaded code file to this many characters before it reaches the code metrics (default: 0, no cap) |
@@ -53,7 +54,7 @@ Every flag `tokenizer-analysis` accepts.
 | `--verbose` | Detailed console output |
 | `--run-grouped-analysis` | Also compute metrics within each language group from `analysis_groups` |
 | `--per-language-plots` | Per-language grouped bar charts |
-| `--faceted-plots` | One subplot per tokenizer with shared y-axis |
+| `--faceted-plots` | One subplot per tokenizer with shared y-axis, for four metrics, in `<output-dir>/faceted_plots`. Independent of `--per-language-plots`; neither applies to grouped analysis |
 | `--no-global-lines` | Hide global average reference lines in plots |
 | `--generate-latex-tables` | Generate LaTeX tables into `<output-dir>/latex_tables` |
 | `--latex-table-types ...` | Which LaTeX tables to emit: `basic`, `information`, `comprehensive` (default: `basic comprehensive`) |
@@ -202,14 +203,15 @@ a scanned directory. A directory holding only `.jsonl` files loads zero texts.
 | Compression, fertility, token length, vocabulary utilization, Rényi efficiency, bigram and trigram entropy, Gini, UTF-8 integrity, reconstruction fidelity, encoding speed | the main corpus | `--input`, `--language-config` or `--use-sample-data` | the run aborts with an error naming the three options. There is no fallback to demo data |
 | The three digit metrics: `three_digit_boundary_alignment`, digit split variability, `numeric_magnitude_consistency` | dedicated math texts | `--math-data FILE` or `--use-builtin-math-data` | computed on the main corpus instead, and the run prints a warning naming all three. `--no-digit-boundary` turns them off |
 | `operator_isolation_rate`, `math` domain | dedicated math texts | `--math-data FILE` | the bundled `sample_data/math_samples.json`, which is also what `--use-builtin-math-data` names. This domain never falls back to the main corpus |
-| `operator_isolation_rate`, `prose` domain | the main corpus | `--input`, `--language-config` or `--use-sample-data` | see the first row |
+| `operator_isolation_rate`, `prose` domain | the main corpus | `--operator-prose-domain`, plus `--input`, `--language-config` or `--use-sample-data` | not scored at all. This domain is off by default |
 | The three AST metrics: `ast_boundary_alignment`, `identifier_fragmentation`, `indentation_consistency` | dedicated source-code snippets | `--code-ast-config FILE` | computed on built-in synthetic code samples, and the run prints a warning naming all three. `--no-code-ast` turns them off |
 | `operator_isolation_rate`, `code` domain | dedicated source-code snippets | `--code-ast-config FILE` | the bundled `sample_data/code_samples.json`. This domain runs under `--no-code-ast` as well; only `--no-digit-boundary`, which drops `operator_isolation_rate` entirely, turns it off |
 | MorphScore | MorphScore datasets | `--morphscore` or `--morphscore-config`, plus `--morphscore-data-dir` | not computed |
 | Cross-language metrics (`tokenizer_fairness_gini`, `per_language_cov`) | at least 2 languages | `--language-config` with 2 or more entries | computed as `null` with a stated reason |
 
 `operator_isolation_rate` logs its three sources on one line each run:
-`Operator isolation domains: prose=multilingual, math=..., code=...`.
+`Operator isolation domains: math=..., code=...`, naming the domains that will
+run.
 
 #### How `data_path` is resolved
 
@@ -236,15 +238,24 @@ Control how text "length" is measured for metric normalization via
 
 | Method | `method` value | Counting key and options | Default for |
 |--------|----------------|--------------------------|-------------|
-| Bytes | `"bytes"` | `byte_counting`: `"utf8"`, `"hf_bytelevel"` | Compression, Gini, the information-theoretic metrics |
+| Bytes | `"bytes"` | `byte_counting`: `"utf8"`, `"hf_bytelevel"` | `compression_rate`, `tokenizer_fairness_gini` |
 | Characters | `"characters"` | (none) | (none) |
 | Lines | `"lines"` | `line_counting`: `"single"`, `"newline_split"`, `"custom_regex"` | (none) |
 | Words | `"words"` | `word_counting`: `"python_split"`, `"hf_whitespace"`, `"regex_whitespace"`, `"custom_regex"` | Fertility |
 
-Every metric that normalizes by text length uses the unit set here, so
-`--measurement-config` changes compression, Gini and the information-theoretic
-metrics together. Fertility is the exception: it always counts words, because a
-tokens-per-word figure is what the name means.
+Two metrics consume the unit set here, and they move together:
+`compression_rate` is units per token, and `tokenizer_fairness_gini` is a Gini
+over per-language tokens per unit. `fertility` always counts words, because a
+tokens-per-word figure is what the name means. The entropies normalize by
+something other than text length (Rényi by `log2` of the vocabulary size, bigram
+and trigram by the context's own successor count), so no unit set here reaches
+them.
+
+`tokenizer_fairness_gini` also publishes a per-line coefficient on every run at
+`.per_tokenizer.<tok>.per_line_normalization`, so reading the Gini per line on a
+parallel corpus needs no `--measurement-config` at all. Setting one moves the
+primary coefficient and `compression_rate` with it, which is a different choice.
+See [METRICS.md](METRICS.md#tokenizer-gini-coefficient-tokenizer_fairness_gini).
 
 `include_empty_splits` (bool, default `false`) affects word and line counting.
 `custom_regex` (string) is required when a counting method is set to

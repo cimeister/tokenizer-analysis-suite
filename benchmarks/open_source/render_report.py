@@ -113,25 +113,31 @@ def section_headline(results, rows):
     lines = [
         "", "## Headline", "",
         "One row per tokenizer. The arrow gives the direction each column is "
-        "read in; `compression_rate` is bytes per token, so higher means fewer "
-        "tokens for the same text.",
+        "read in.",
         "",
-        "| Tokenizer | Vocabulary | Compression (up) | Fertility (down) | "
-        "Gini (down) | UTF-8 complete (up) | AST aligned (up) | Digit F1 (up) |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|",
+        "| Tokenizer | Vocabulary | Bytes/token (up) | Tokens/line (down) | "
+        "Fertility (down) | Gini per byte (down) | Gini per line (down) | "
+        "UTF-8 complete (up) | AST aligned (up) | Digit F1 (up) |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for key, name, _repo, _algo in rows:
         lines.append(
-            "| {name} | {vocab} | {comp} | {fert} | {gini} | {utf8} | {ast} | {digit} |".format(
+            "| {name} | {vocab} | {comp} | {tpl} | {fert} | {gini} | {gini_line} "
+            "| {utf8} | {ast} | {digit} |".format(
                 name=name,
                 vocab=fmt(get(results, "vocabulary_utilization", "per_tokenizer", key,
                               "global", "vocab_size")),
                 comp=fmt(get(results, "compression_rate", "per_tokenizer", key,
                              "global", "compression_rate")),
+                tpl=fmt(get(results, "compression_rate", "per_tokenizer", key,
+                            "tokens_per_line", "global_avg"), places=1),
                 fert=fmt(get(results, "fertility", "per_tokenizer", key,
                              "global", "mean")),
                 gini=fmt(get(results, "tokenizer_fairness_gini", "per_tokenizer", key,
-                             "global", "gini_coefficient")),
+                             "global", "gini_coefficient"), places=4),
+                gini_line=fmt(get(results, "tokenizer_fairness_gini", "per_tokenizer",
+                                  key, "per_line_normalization", "gini_coefficient"),
+                              places=4),
                 utf8=fmt(get(results, "utf8_token_integrity", "per_tokenizer", key,
                              "global", "completeness_rate")),
                 ast=fmt(get(results, "ast_boundary_alignment", "per_tokenizer", key,
@@ -142,13 +148,81 @@ def section_headline(results, rows):
         )
     lines.append("")
     lines.append(
-        "Every column is the `global` block the results file publishes for that "
-        "metric, and `metadata.aggregation` there names which average it is. "
-        "Nothing in this table is recomputed here. The run passed "
+        "Every column is a value the results file publishes, and nothing in "
+        "this table is recomputed here. `metadata.aggregation` in each metric "
+        "block names which average its `global` is. The run passed "
         "`--use-builtin-math-data`, so the digit column is measured on the "
         "bundled math corpus rather than on the prose."
     )
+    lines.append("")
+    lines.append(
+        "**Two compression columns, two Gini columns.** Bytes per token is "
+        "`compression_rate.per_tokenizer.<tok>.global.compression_rate`. Tokens "
+        "per line is `.tokens_per_line.global_avg`, and on a parallel corpus it "
+        "is the cross-language-comparable one: line *i* is the same sentence in "
+        "every language, so the same content is being counted. Bytes are not "
+        "neutral across scripts, since UTF-8 spends one byte on a Latin "
+        "character and three on most CJK and Devanagari."
+    )
+    lines.append("")
+    lines.append(
+        "The same holds for the two Gini columns. Gini per byte is "
+        "`tokenizer_fairness_gini.per_tokenizer.<tok>.global.gini_coefficient`; "
+        "Gini per line is `.per_line_normalization.gini_coefficient`, which is "
+        "`n/a` unless every language has the same line count."
+    )
+    lines.extend(_gini_disagreement_sentences(results, rows))
     return lines
+
+
+def _gini_disagreement_sentences(results, rows):
+    """The comparison of the two Gini columns, computed from the results.
+
+    These numbers were typed into this file until 1.0.3, which made them the
+    only figures in the report that a regeneration could leave disagreeing with
+    the table above them. The module docstring already promised nothing was
+    transcribed by hand.
+    """
+    pairs = []
+    for key, name, _repo, _algo in rows:
+        by_byte = get(results, "tokenizer_fairness_gini", "per_tokenizer", key,
+                      "global", "gini_coefficient")
+        by_line = get(results, "tokenizer_fairness_gini", "per_tokenizer", key,
+                      "per_line_normalization", "gini_coefficient")
+        if isinstance(by_byte, (int, float)) and isinstance(by_line, (int, float)):
+            pairs.append((name, by_byte, by_line))
+
+    # Two points are the minimum for a rank correlation, and the per-line block
+    # is absent on any corpus that is not line-parallel, so this is the ordinary
+    # case rather than a degenerate one.
+    if len(pairs) < 2:
+        return ["", f"{len(pairs)} of the {len(rows)} tokenizers here have a "
+                    "coefficient under both units, so the two columns cannot be "
+                    "compared on this run."]
+
+    from scipy.stats import spearmanr
+    rho = spearmanr([p[1] for p in pairs], [p[2] for p in pairs]).statistic
+
+    lowest_byte = min(pairs, key=lambda p: p[1])
+    lowest_line = min(pairs, key=lambda p: p[2])
+    out = ["", f"Over the {len(pairs)} tokenizers with both, the two columns "
+               f"rank at Spearman {rho:.3f}."]
+    if lowest_byte[0] == lowest_line[0]:
+        out.append(
+            f"{lowest_byte[0]} has the lowest coefficient under both units, "
+            f"{lowest_byte[1]:.4f} per byte and {lowest_byte[2]:.4f} per line."
+        )
+    else:
+        out.append(
+            f"**They disagree on which tokenizer is the most equitable across "
+            f"languages**: {lowest_byte[0]} is lowest per byte at "
+            f"{lowest_byte[1]:.4f}, against {lowest_byte[2]:.4f} per line, while "
+            f"{lowest_line[0]} is lowest per line at {lowest_line[2]:.4f}, "
+            f"against {lowest_line[1]:.4f} per byte. Which one is lower depends "
+            "on the unit."
+        )
+    out.append("On this corpus, which is parallel, read the per-line column.")
+    return out
 
 
 def section_per_language(results, rows):
@@ -193,9 +267,11 @@ def section_domain(results, rows):
         )
     lines.append("")
     lines.append(
-        "Operator isolation pools prose, code and math weighted by operator "
+        "Operator isolation pools the domains that ran, weighted by operator "
         "instances, so with this code corpus it sits close to the code rate; "
-        "`by_domain` in the results file splits the three."
+        "`by_domain` in the results file names them and splits the rates. "
+        "`run.sh` does not pass `--operator-prose-domain`, so a fresh run has "
+        "`code` and `math` there."
     )
     # Select on cer_skipped, not on mean_cer being None. A null mean_cer means
     # either that the edit distance exceeded the budget or that there was
@@ -203,7 +279,7 @@ def section_domain(results, rows):
     # Selecting on the null and then asserting the budget explanation was right
     # by luck on this corpus, not by construction.
     skipped = [
-        name for key, name, _repo, _algo in rows
+        (key, name) for key, name, _repo, _algo in rows
         if get(results, "reconstruction_fidelity", "per_tokenizer", key,
                "cer_skipped") is True
     ]
@@ -212,30 +288,157 @@ def section_domain(results, rows):
     if skipped:
         lines.append("")
         lines.append(
-            "CER is `n/a` for " + ", ".join(skipped) + ". The character error "
+            "CER is `n/a` for " + ", ".join(name for _key, name in skipped)
+            + ". The character error "
             "rate is an edit distance, and a tokenizer that does not "
             "reconstruct its input has a large distance on every text, so the "
             f"run projected past the {budget}-second budget and reported the "
             "value as null rather than spending the time, which "
-            "`cer_skipped` records. The exact round-trip column "
-            "carries the same information: a tokenizer at 0.031 exact matches "
-            "is lossy by construction, in this case through lowercasing, "
-            "accent stripping and unknown-token substitution."
+            "`cer_skipped` records."
         )
+        # The rate was typed as 0.031 until 1.0.3, which tied the sentence to
+        # one tokenizer on one corpus. Reading the worst of the skipped ones
+        # keeps it true whichever tokenizers a run skips.
+        rates = [
+            (name, get(results, "reconstruction_fidelity", "per_tokenizer", key,
+                       "global", "exact_match_rate"))
+            for key, name in skipped
+        ]
+        rates = [(n, r) for n, r in rates if isinstance(r, (int, float))]
+        if rates:
+            worst_name, worst_rate = min(rates, key=lambda p: p[1])
+            lines.append(
+                "The exact round-trip column carries the same information: "
+                f"{worst_name} reconstructs {worst_rate:.3f} of its texts "
+                "exactly, so it is lossy on nearly every one of them."
+            )
     return lines
+
+
+# Cell glyph per severity. Five, because sanity_check.Severity has five and a
+# legend short of one renders an unknown state as a blank cell that reads as a
+# pass. tokenizer_analysis/tests/test_render_report.py asserts the legend covers
+# every severity the sanity file actually emitted.
+SEVERITY_GLYPH = {
+    "pass": "ok",
+    "warn": "warn",
+    "fail": "FAIL",
+    "not_applicable": "n/a",
+    "unverifiable": "?",
+}
+
+SEVERITY_LEGEND = {
+    "pass": "the check ran and the tokenizer met its condition",
+    "warn": "the check ran and found something that is a defect in some "
+            "tokenizers and a design choice in others",
+    "fail": "the check ran and found something no correct tokenizer does",
+    "not_applicable": "the check does not apply to this tokenizer",
+    "unverifiable": "the check could not run, because the tokenizer does not "
+                    "expose what it needs",
+}
+
+
+def check_ids(sanity):
+    """The check ids in file order, from the first tokenizer's own check names.
+
+    The results file keys each check by its full name, "C7 special-token
+    sanity" rather than "C7", and there is no C9. Reading the ids off the file
+    rather than composing them keeps this from inventing a column for a check
+    that was removed or missing one that was added.
+    """
+    per_tok = get(sanity, "tokenizer_sanity_check", "per_tokenizer", default={})
+    if not per_tok:
+        return []
+    first = per_tok[sorted(per_tok)[0]]
+    return [(name.split()[0], name) for name in first.get("checks", {})]
+
+
+def section_health(sanity, rows):
+    """The 16-check health matrix, or nothing at all when there is no input."""
+    if not sanity:
+        return []
+    ids = check_ids(sanity)
+    per_tok = get(sanity, "tokenizer_sanity_check", "per_tokenizer", default={})
+    if not ids or not per_tok:
+        return []
+
+    header = " | ".join(
+        f"[{cid}](../../docs/SANITY_CHECKS.md#{anchor(name)})" for cid, name in ids
+    )
+    lines = [
+        "", "## Tokenizer health", "",
+        "`tokenizer-sanity-check` asks whether each tokenizer is intact, which "
+        "is a different question from how well it compresses. Every cell is "
+        "`tokenizer_sanity_check.per_tokenizer.<tok>.checks.<name>.severity` "
+        "from `sanity_results.json`. Column headers link to the check "
+        "definition.",
+        "",
+        f"| Tokenizer | {header} |",
+        "|---" * (len(ids) + 1) + "|",
+    ]
+    emitted = set()
+    for key, name, _repo, _algo in rows:
+        checks = get(sanity, "tokenizer_sanity_check", "per_tokenizer", key,
+                     "checks", default={})
+        cells = []
+        for _cid, check_name in ids:
+            sev = get(checks, check_name, "severity")
+            if sev is not None:
+                emitted.add(sev)
+            cells.append(SEVERITY_GLYPH.get(sev, "?" if sev is None else sev))
+        lines.append(f"| {name} | " + " | ".join(cells) + " |")
+
+    lines.append("")
+    lines.append("Legend, in worsening order:")
+    lines.append("")
+    lines.append("| Cell | Severity | Meaning |")
+    lines.append("|---|---|---|")
+    for sev in ("pass", "not_applicable", "unverifiable", "warn", "fail"):
+        if sev in emitted:
+            lines.append(f"| `{SEVERITY_GLYPH[sev]}` | `{sev}` | {SEVERITY_LEGEND[sev]} |")
+    lines.append("")
+    lines.append(
+        "A tokenizer's overall verdict is the worst of its checks, with "
+        "`not_applicable` ranking alongside `pass` and `unverifiable` alongside "
+        "`warn`. A check that could not run is therefore never reported as one "
+        "that passed."
+    )
+    lines.append("")
+    lines.append(
+        "The probes are the 78 built-in ones plus the bundled math corpus and "
+        "up to 50 FLORES sentences per language from the same 13 languages the "
+        "metrics above use, so the behavioural checks and the metrics describe "
+        "the same text. `run.sh` records the exact invocation. Reproducing the "
+        "matrix needs that configuration: the behavioural checks measure what "
+        "the probes contain."
+    )
+    return lines
+
+
+def anchor(check_name):
+    """The docs/SANITY_CHECKS.md heading slug for a check name.
+
+    The headings there are the check names verbatim, so the GitHub slug rule
+    (lowercase, drop punctuation, spaces to hyphens) reproduces them.
+    """
+    slug = check_name.lower()
+    slug = "".join(c for c in slug if c.isalnum() or c in " -_")
+    return slug.replace(" ", "-")
 
 
 def section_caveats(rows):
     return [
         "", "## How to read this", "",
-        "**The Gini column is tokens per UTF-8 byte, and the byte is not "
-        "neutral across scripts.** UTF-8 spends one byte per Latin character, "
-        "two for Cyrillic, three for most CJK and Devanagari, so a tokenizer "
-        "can score cheaper on Chinese than on English because the denominator "
-        "is larger rather than because it segments Chinese better. The corpus "
-        "here is parallel, which is what makes the comparison meaningful at "
-        "all; the unit is what stops it from being a clean one. Read the "
-        "per-language costs in the results file beside the coefficient.",
+        "**The per-byte Gini column is not neutral across scripts.** UTF-8 "
+        "spends one byte per Latin character, two for Cyrillic, three for most "
+        "CJK and Devanagari, so a tokenizer can score cheaper on Chinese than "
+        "on English because the denominator is larger rather than because it "
+        "segments Chinese better. The per-line column beside it divides by a "
+        "count that is the same in every language, which is why it is the one "
+        "to read here. Equal line counts do not by themselves establish that a "
+        "corpus is parallel; that FLORES+ is parallel is what makes the "
+        "per-line column meaningful, and the library cannot check it. Read the "
+        "per-language costs in the results file beside either coefficient.",
         "",
         "**Vocabulary size is not held constant.** The tokenizers here span "
         f"{len(rows)} models and a wide vocabulary range, and a larger "
@@ -253,9 +456,11 @@ def section_caveats(rows):
         "meaningful, and it is not representative of what any of these models "
         "was trained on.",
         "",
-        "**Compression depends on the measurement unit.** These figures are "
-        "bytes per token. Under a word or line unit the ordering changes, "
-        "particularly for languages without whitespace word boundaries.",
+        "**Compression depends on the measurement unit.** The headline gives "
+        "both bytes per token and tokens per line, and they order the "
+        "tokenizers differently for the reason above. Under a word unit the "
+        "ordering changes again, particularly for languages without whitespace "
+        "word boundaries.",
         "",
         "**The code numbers depend on the code corpus.** They come from 100 "
         "files per language of The Stack, so they describe that sample rather "
@@ -270,10 +475,30 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--results", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--sanity", type=Path, default=None,
+        help="sanity_results.json for the health matrix. Defaults to a file "
+             "of that name beside --results. The section is omitted when the "
+             "file is absent.",
+    )
     args = parser.parse_args(argv)
 
     with open(args.results, encoding="utf-8") as f:
         results = json.load(f)
+
+    # An explicit --sanity that does not exist is an error: the caller named a
+    # file. An absent default is not, because a run predating the sanity step
+    # has no such file and should still render everything else.
+    sanity_path = args.sanity or args.results.parent / "sanity_results.json"
+    sanity = None
+    if args.sanity is not None and not args.sanity.is_file():
+        raise SystemExit(f"--sanity {args.sanity} does not exist.")
+    if sanity_path.is_file():
+        with open(sanity_path, encoding="utf-8") as f:
+            sanity = json.load(f)
+    else:
+        print(f"No {sanity_path}; omitting the tokenizer health section. "
+              f"Run tokenizer-sanity-check to produce it.")
 
     rows = present(results)
     if not rows:
@@ -294,6 +519,7 @@ def main(argv=None) -> int:
     lines += section_headline(results, rows)
     lines += section_per_language(results, rows)
     lines += section_domain(results, rows)
+    lines += section_health(sanity, rows)
     lines += section_caveats(rows)
     lines.append("")
     lines.append(

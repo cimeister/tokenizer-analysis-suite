@@ -12,7 +12,10 @@ import logging
 from .base import BaseMetrics, TokenizedDataProcessor, format_optional
 from ..core.input_types import TokenizedData
 from ..core.input_providers import InputProvider
-from ..config import TextMeasurementConfig, TextMeasurer, DEFAULT_TEXT_MEASUREMENT_CONFIG
+from ..config import (
+    TextMeasurementConfig, TextMeasurer, DEFAULT_TEXT_MEASUREMENT_CONFIG,
+    NormalizationMethod,
+)
 from ..config.language_metadata import LanguageMetadata
 from ..constants import AGGREGATION_MACRO_LANGUAGES, MIN_LANGUAGES_FOR_GINI
 
@@ -41,6 +44,98 @@ class TokenizerGiniMetrics(BaseMetrics):
         self.text_measurer = TextMeasurer(self.measurement_config)
         self.language_metadata = language_metadata
     
+    @staticmethod
+    def _gini_of(costs: List[float]) -> Optional[float]:
+        """TFG over an already-ordered cost vector.
+
+        ``TFG = sum_i sum_j |c_i - c_j| / (2 n^2 mu)``. Returns None when the
+        mean is zero, which means no tokens were produced for any language, so
+        there is no inequality to report rather than equality to report.
+
+        *costs* must arrive in a fixed order. The double sum is floating point
+        addition, which is not associative, so an order that varied gave a
+        different last digit on each run.
+        """
+        n = len(costs)
+        if n == 0:
+            return None
+        mu = float(np.mean(costs))
+        if mu <= 0:
+            return None
+        total = 0.0
+        for i in range(n):
+            for j in range(n):
+                total += abs(costs[i] - costs[j])
+        return total / (2 * n * n * mu)
+
+    def _compute_lines_per_language(
+        self, tok_data: List[TokenizedData], languages: List[str]
+    ) -> Dict[str, int]:
+        """Line count per language, counted by the shared TextMeasurer.
+
+        Uses the library's own line counter rather than a local one, so a
+        change to what counts as a line reaches this and the ``lines``
+        measurement config together.
+        """
+        measurer = TextMeasurer(
+            TextMeasurementConfig(method=NormalizationMethod.LINES)
+        )
+        lang_groups = TokenizedDataProcessor.group_by_language(tok_data)
+        lines: Dict[str, int] = {}
+        for lang in languages:
+            if lang not in lang_groups:
+                continue
+            lines[lang] = sum(
+                measurer.get_unit_count(d.text)
+                for d in lang_groups[lang]
+                if d.text and d.text.strip()
+            )
+        return lines
+
+    def _per_line_block(
+        self, tok_data: List[TokenizedData], languages: List[str]
+    ) -> Optional[Dict[str, Any]]:
+        """The coefficient with each language's cost taken per line.
+
+        Returns None when the languages do not all have the same line count, or
+        when fewer than ``MIN_LANGUAGES_FOR_GINI`` have any lines at all. The
+        caller writes null in that case; the reason a reader needs is in the
+        metric's ``metadata.per_line_normalization``.
+        """
+        lines = self._compute_lines_per_language(tok_data, languages)
+        lines = {lang: n for lang, n in lines.items() if n > 0}
+        if len(lines) < MIN_LANGUAGES_FOR_GINI:
+            return None
+        counts = set(lines.values())
+        if len(counts) != 1:
+            logger.info(
+                "Per-line Gini not published: line counts differ across "
+                "languages (%s). Lines are only comparable across languages "
+                "when each language has the same number of them.",
+                ", ".join(f"{lang}={n}" for lang, n in sorted(lines.items())),
+            )
+            return None
+
+        lang_groups = TokenizedDataProcessor.group_by_language(tok_data)
+        costs: Dict[str, float] = {}
+        for lang in sorted(lines):
+            tokens = sum(
+                len(d.tokens) for d in lang_groups[lang]
+                if d.text and d.text.strip()
+            )
+            costs[lang] = tokens / lines[lang]
+
+        ordered = [costs[lang] for lang in sorted(costs)]
+        min_cost, max_cost = min(ordered), max(ordered)
+        return {
+            'gini_coefficient': self._gini_of(ordered),
+            'lines_per_language': counts.pop(),
+            'mean_cost': float(np.mean(ordered)),
+            'cost_ratio': max_cost / min_cost if min_cost > 0 else None,
+            'language_costs': costs,
+            'num_languages': len(costs),
+        }
+
     def _compute_language_costs(self, tok_data: List[TokenizedData],
                                 languages: Optional[List[str]] = None) -> Dict[str, float]:
         """Compute per-language token costs (tokens / normalization units).
@@ -116,6 +211,20 @@ class TokenizerGiniMetrics(BaseMetrics):
                 ),
                 'std_ddof': 1,
                 'normalization_method': self.measurement_config.method.value,
+                'per_line_normalization': (
+                    'per_tokenizer.<tok>.per_line_normalization holds the same '
+                    'coefficient with each language cost taken as tokens per '
+                    'line instead of per '
+                    f'{self.measurement_config.method.value}. On a parallel '
+                    'corpus, where line i of every language is the same '
+                    'sentence, that is the one to read: it compares tokenizers '
+                    'on identical content, which no other unit does. It is null '
+                    'unless every language has the same line count, which is '
+                    'necessary for a parallel corpus and not sufficient. Equal '
+                    'counts do not establish that line i is a translation of '
+                    'line i; that part cannot be checked here and is the '
+                    "caller's to know."
+                ),
                 'comparability': (
                     'Comparable only across runs using the same language set and the '
                     'same normalization method. Latin-only and full-13-language '
@@ -172,29 +281,18 @@ class TokenizerGiniMetrics(BaseMetrics):
                         f'Undefined for fewer than {MIN_LANGUAGES_FOR_GINI} languages '
                         f'(got {len(language_costs)})'
                     ),
+                    # Present and null, not absent: every tokenizer's block
+                    # carries the same keys, so a consumer indexes rather than
+                    # tests for existence. The per-line coefficient is undefined
+                    # here for the same reason the main one is.
+                    'per_line_normalization': None,
                 }
                 continue
             
-            # Step 2: Compute mean cost
             mu = np.mean(total_costs)
-            
-            # Step 3: Compute TFG using the exact formula
-            # TFG = Σᵢ Σⱼ |c_i - c_j| / (2 * n² * μ)
-            sum_absolute_differences = 0.0
             n = len(total_costs)
-            
-            for i in range(n):
-                for j in range(n):
-                    sum_absolute_differences += abs(total_costs[i] - total_costs[j])
-            
-            # Apply the TFG formula
-            if mu > 0 and n > 0:
-                tfg = sum_absolute_differences / (2 * n * n * mu)
-            else:
-                # A zero mean cost means no tokens were produced for any
-                # language, so there is no inequality to report, not equality.
-                tfg = None
-            
+            tfg = self._gini_of(total_costs)
+
             # Additional statistics for analysis
             min_cost = min(total_costs)
             max_cost = max(total_costs)
@@ -227,7 +325,33 @@ class TokenizerGiniMetrics(BaseMetrics):
                 'num_languages': len(language_costs),
                 'sorted_language_costs': sorted_langs
             }
-            
+
+            # The same coefficient with each language's cost normalized by its
+            # line count instead of by the configured unit.
+            #
+            # On a parallel corpus, line i of every language is the same
+            # sentence, so tokens per line compares tokenizers on identical
+            # content. The configured unit does not: under bytes, a language
+            # whose script needs three bytes per character is charged three
+            # times the denominator for the same sentence, which flatters a
+            # tokenizer on exactly the languages that fragment most. Over the
+            # nine tokenizers of benchmarks/open_source the two rank at Spearman
+            # 0.650 and disagree on which tokenizer is the fairest:
+            # XLM-RoBERTa is fourth at 0.0976 under bytes and first at 0.0494
+            # under lines.
+            #
+            # Published only when every language has the same line count. That
+            # is necessary for a parallel corpus and not sufficient, but it is
+            # the part that can be checked; without it the per-line costs are
+            # not comparable and the coefficient would be a number with no
+            # meaning rather than an absent one.
+            per_line = self._per_line_block(tok_data, sorted(language_costs))
+            if per_line is not None:
+                results['per_tokenizer'][tok_name]['per_line_normalization'] = per_line
+            else:
+                results['per_tokenizer'][tok_name]['per_line_normalization'] = None
+
+
             # tfg is None when the mean cost is 0 and cost_ratio is None when the
             # cheapest language cost 0, both published as null rather than as a
             # number. Formatting a null here raised TypeError and took the whole

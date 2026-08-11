@@ -201,6 +201,151 @@ def test_slim_file_is_a_strict_projection_of_the_full_file(full_and_slim_results
     )
 
 
+# Every key analysis_results_full.json holds that analysis_results.json is
+# meant not to publish, per metric. 'per_tokenizer' lists names inside each
+# tokenizer's entry, 'global' lists names inside that entry's global block, and
+# 'metric' lists names beside per_tokenizer.
+#
+# Each entry records where the same information is still readable, because a
+# drop is only acceptable when nothing is lost:
+#   compression_rate.num_texts_analyzed  is the one exception. The published
+#       global block gives total_units and total_tokens but no count of texts,
+#       and no other published field carries it.
+#   operator_isolation_rate.summary      equals per_tokenizer.<tok>.global,
+#       which normalize_results copies from it.
+#   the other four .summary blocks       hold the same numbers as the published
+#       global block, sometimes under another name (reconstruction_fidelity's
+#       texts_analyzed is global.count, its total_tokens_analyzed is
+#       global.total_tokens), plus languages_analyzed, which is len(per_language).
+#   domain_operator_counts               equals by_domain.<domain>.total_operators.
+#   the renyi_<alpha> dicts and token_counts  are the untransposed source of
+#       global.renyi_<alpha> and per_language.<lang>.{renyi_<alpha>,count}.
+#   the gini extras                      are all derivable from per_language:
+#       the two named languages are its argmin and argmax, and
+#       sorted_language_costs is it sorted.
+#   per_category                         is the only genuine detail loss, and
+#       both branches that drop it say so.
+#   sum, std_err, min and max            are stripped from every stats block by
+#       _strip_stats and are all recoverable from the published mean, std and
+#       count. OUTPUT.md names them.
+#   the gini global block's min_cost and max_cost  are the smallest and largest
+#       value of the published per_language costs.
+_DELIBERATELY_UNPUBLISHED = {
+    "compression_rate": {"per_tokenizer": {"num_texts_analyzed"}},
+    "fertility": {"global": {"sum", "std_err", "min", "max"}},
+    "token_length": {"global": {"sum", "std_err", "min", "max"}},
+    "numeric_magnitude_consistency": {"metric": {"summary"}},
+    "operator_isolation_rate": {
+        "per_tokenizer": {"per_category"},
+        "metric": {"domain_operator_counts", "summary"},
+    },
+    "reconstruction_fidelity": {"metric": {"summary"}},
+    "renyi_efficiency": {"per_tokenizer": {"token_counts"}},
+    "three_digit_boundary_alignment": {"metric": {"summary"}},
+    "tokenizer_fairness_gini": {
+        "per_tokenizer": {
+            "least_efficient_language",
+            "most_efficient_language",
+            "sorted_language_costs",
+        },
+        "global": {"min_cost", "max_cost"},
+    },
+    "utf8_token_integrity": {"metric": {"summary"}},
+    "ast_boundary_alignment": {"per_tokenizer": {"per_category"}},
+}
+
+
+def _is_allowed_drop(metric, scope, key):
+    """Whether *key* is a declared drop for *metric* at *scope*.
+
+    renyi_efficiency publishes one dict per configured alpha, named
+    renyi_<alpha>, so the alpha values come from the run's configuration rather
+    than from a fixed list. Matching them by prefix keeps a configuration change
+    from failing this test for a reason that has nothing to do with slimming.
+    """
+    if metric == "renyi_efficiency" and scope == "per_tokenizer":
+        if key.startswith("renyi_"):
+            return True
+    return key in _DELIBERATELY_UNPUBLISHED.get(metric, {}).get(scope, set())
+
+
+@requires_flores
+def test_the_slim_file_drops_only_what_it_declares(full_and_slim_results):
+    """Nothing may disappear from the published file without being declared.
+
+    test_slim_file_is_a_strict_projection_of_the_full_file checks the other
+    direction, and deleting a key is legal under that property, so it cannot see
+    a field that stopped being published. That is not hypothetical: the
+    tokenizer_fairness_gini branch of _select_tokenizer_entry enumerates the
+    fields it copies, so per_line_normalization reached
+    analysis_results_full.json and never analysis_results.json until the branch
+    was changed to carry it.
+
+    Most branches of _select_tokenizer_entry enumerate fields the same way, so
+    the same thing happens to any field added to a metric that has a named
+    branch. This test fails when that happens, and the fix is either to publish
+    the field or to add it to _DELIBERATELY_UNPUBLISHED with a note saying where
+    the same information is still readable.
+
+    A key whose value in the full file is an empty container is not reported: it
+    carries nothing to lose, and whether the selection keeps it depends on the
+    corpus rather than on the code.
+
+    This covers the metrics the bundled demo run produces. The code metrics are
+    off in that run (--no-code-ast), so ast_boundary_alignment's entry below is
+    declared from its branch rather than observed here.
+    """
+    slim, full = full_and_slim_results
+    undeclared = []
+
+    for metric, full_block in full.items():
+        if metric == "run_metadata" or not isinstance(full_block, dict):
+            continue
+        slim_block = slim.get(metric, {})
+
+        for key, value in full_block.items():
+            if key == "per_tokenizer" or key in slim_block:
+                continue
+            if value in ({}, [], None):
+                continue
+            if not _is_allowed_drop(metric, "metric", key):
+                undeclared.append(f"{metric}.{key}")
+
+        full_toks = full_block.get("per_tokenizer") or {}
+        slim_toks = slim_block.get("per_tokenizer") or {}
+        for tok, full_entry in full_toks.items():
+            if not isinstance(full_entry, dict):
+                continue
+            slim_entry = slim_toks.get(tok) or {}
+            for key, value in full_entry.items():
+                if key in slim_entry or value in ({}, [], None):
+                    continue
+                if not _is_allowed_drop(metric, "per_tokenizer", key):
+                    undeclared.append(f"{metric}.per_tokenizer.{tok}.{key}")
+
+            # The global block is checked one level in because OUTPUT.md calls
+            # it the headline block, and because the branch for
+            # tokenizer_fairness_gini rebuilds it field by field, which is the
+            # same shape of hazard one level down.
+            full_global = full_entry.get("global")
+            slim_global = slim_entry.get("global")
+            if isinstance(full_global, dict) and isinstance(slim_global, dict):
+                for key, value in full_global.items():
+                    if key in slim_global or value in ({}, [], None):
+                        continue
+                    if not _is_allowed_drop(metric, "global", key):
+                        undeclared.append(
+                            f"{metric}.per_tokenizer.{tok}.global.{key}"
+                        )
+
+    assert not undeclared, (
+        f"{len(undeclared)} field(s) are in analysis_results_full.json, absent "
+        "from analysis_results.json, and not declared in "
+        "_DELIBERATELY_UNPUBLISHED: "
+        f"{sorted(set(undeclared))}"
+    )
+
+
 def test_merge_is_a_no_op_when_the_secondary_is_absent():
     """A run that disabled a metric family must not trip the merge step."""
     results = {"compression_rate": {"per_tokenizer": {"t": {"global": {}}}}}
@@ -579,6 +724,138 @@ def test_cer_skipped_survives_slimming():
         "mean_cer from one that had nothing to measure"
     )
     assert entry["global"]["mean_cer"] is None
+
+
+class TestProseBatchPairing:
+    """A short batch must not silently shrink the prose corpus.
+
+    RawTokenizationProvider pairs a batch with its texts through ``zip``, which
+    stops at the shorter side. A backend returning fewer encodings than it was
+    given therefore drops the trailing texts, and every metric downstream is
+    computed over a corpus smaller than the one the run declared, with nothing
+    in the output saying so. Nothing else in the repository covers this
+    provider.
+    """
+
+    class _ShortBatch:
+        """Encodes correctly, but returns one fewer result than it was given."""
+
+        def __init__(self, drop=1):
+            self._drop = drop
+
+        def can_encode(self):
+            return True
+
+        def encode(self, text):
+            return list(range(len(text.split())))
+
+        def encode_with_offsets(self, text):
+            return self.encode(text), None
+
+        def encode_batch_with_offsets(self, texts):
+            kept = list(texts)[: len(texts) - self._drop]
+            return [(self.encode(t), None) for t in kept]
+
+        def get_vocab_size(self):
+            return 100
+
+    def _provider(self, tokenizer):
+        from tokenizer_analysis.core.input_providers import RawTokenizationProvider
+        from tokenizer_analysis.core.input_types import InputSpecification
+
+        return RawTokenizationProvider({
+            "tok": InputSpecification(
+                tokenizer=tokenizer,
+                texts={"eng_Latn": ["one two", "three four", "five six"]},
+            )
+        })
+
+    def test_a_short_batch_raises_naming_both_counts(self):
+        with pytest.raises(ValueError) as excinfo:
+            self._provider(self._ShortBatch()).get_tokenized_data()
+        message = str(excinfo.value)
+        assert "2 encodings" in message and "3 'eng_Latn' texts" in message
+        assert "prose corpus" in message
+
+    def test_a_complete_batch_still_pairs_every_text(self):
+        """The guard must not reject a correct batch."""
+        data = self._provider(self._ShortBatch(drop=0)).get_tokenized_data()
+        assert [d.text for d in data["tok"]] == ["one two", "three four", "five six"]
+
+
+def _gini_entry(per_line):
+    """One tokenizer's raw tokenizer_fairness_gini entry, before normalizing."""
+    return {
+        "tokenizer_fairness_gini": {
+            "per_tokenizer": {
+                "tok": {
+                    "gini_coefficient": 0.0976,
+                    "mean_cost": 0.31,
+                    "std_cost": 0.04,
+                    "min_cost": 0.26,
+                    "max_cost": 0.38,
+                    "cost_ratio": 1.46,
+                    "num_languages": 2,
+                    "language_costs": {"eng_Latn": 0.26, "zho_Hans": 0.38},
+                    "most_efficient_language": ["eng_Latn", 0.26],
+                    "least_efficient_language": ["zho_Hans", 0.38],
+                    "sorted_language_costs": [["eng_Latn", 0.26], ["zho_Hans", 0.38]],
+                    "per_line_normalization": per_line,
+                }
+            },
+            "metadata": {"aggregation": "macro_languages"},
+        }
+    }
+
+
+class TestPerLineGiniSurvivesSlimming:
+    """The per-line coefficient has to reach the file everything reads.
+
+    render_report.py opens analysis_results.json, and
+    test_docs_match_results.py resolves documented key paths against it, so a
+    field that only reaches analysis_results_full.json is unreadable by both.
+    The selection branch for this metric enumerates its fields rather than
+    passing the entry through, so a new field is dropped unless it is added
+    there. test_slim_file_is_a_strict_projection_of_the_full_file cannot catch
+    that: deleting a key is exactly what slimming is allowed to do.
+    """
+
+    def test_the_block_reaches_the_slim_file_intact(self):
+        from tokenizer_analysis.cli.run_analysis import slim_results_for_json
+
+        # The real shape: lines_per_language is the single shared count, since
+        # the block is published only when every language has the same one.
+        per_line = {
+            "gini_coefficient": 0.0494,
+            "lines_per_language": 250,
+            "mean_cost": 47.2,
+            "cost_ratio": 1.21,
+            "language_costs": {"eng_Latn": 42.8, "zho_Hans": 51.6},
+            "num_languages": 2,
+        }
+        slimmed = slim_results_for_json(_gini_entry(per_line))
+        entry = slimmed["tokenizer_fairness_gini"]["per_tokenizer"]["tok"]
+
+        assert entry.get("per_line_normalization") == per_line
+        # The two coefficients differ, so a test cannot pass by finding the
+        # per-byte number under the per-line key.
+        assert entry["global"]["gini_coefficient"] == 0.0976
+        assert entry["per_line_normalization"]["gini_coefficient"] == 0.0494
+
+    def test_an_absent_block_is_published_as_null_not_omitted(self):
+        """Unequal line counts are a result, not a missing measurement.
+
+        The metric writes None rather than skipping the key, so a consumer can
+        tell "this corpus is not line-parallel" from "this file predates the
+        field".
+        """
+        from tokenizer_analysis.cli.run_analysis import slim_results_for_json
+
+        slimmed = slim_results_for_json(_gini_entry(None))
+        entry = slimmed["tokenizer_fairness_gini"]["per_tokenizer"]["tok"]
+
+        assert "per_line_normalization" in entry
+        assert entry["per_line_normalization"] is None
 
 
 @pytest.fixture(scope="module")

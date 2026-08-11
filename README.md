@@ -3,6 +3,11 @@
 A toolkit for computing intrinsic quality metrics for tokenizers across natural
 language, code, and math.
 
+**New:** the library also ships a tokenizer health checker and a visualization
+module, documented in [docs/SANITY_CHECKS.md](docs/SANITY_CHECKS.md) and
+[docs/VISUALIZATION.md](docs/VISUALIZATION.md). Both are described under
+[The other two commands](#the-other-two-commands).
+
 This supersedes `tokenizer-analysis-suite`. The install name changed to
 `tokenizer-intrinsic-evals`; the import name is still `tokenizer_analysis`. The
 prior suite is preserved on the `legacy-suite` branch and the
@@ -25,9 +30,11 @@ from the old suite are not comparable with numbers from this one:
 
 Reference material is in [docs/](docs/): [METRICS.md](docs/METRICS.md) defines
 every metric, [CONFIGURATION.md](docs/CONFIGURATION.md) is the flag and config
-reference, [OUTPUT.md](docs/OUTPUT.md) describes the results file, and
-[EXTENDING.md](docs/EXTENDING.md) covers the Python API and adding your own
-tokenizers and metrics.
+reference, [OUTPUT.md](docs/OUTPUT.md) describes the results file,
+[SANITY_CHECKS.md](docs/SANITY_CHECKS.md) documents the 16 tokenizer health
+checks, [VISUALIZATION.md](docs/VISUALIZATION.md) covers the plotting and LaTeX
+tools, and [EXTENDING.md](docs/EXTENDING.md) covers the Python API and adding
+your own tokenizers and metrics.
 
 ## Install
 
@@ -200,8 +207,9 @@ uv run tokenizer-sanity-check huggingface:tokenizers/bpe.json
 The bundled demo tokenizers fail this check on purpose: `bpe.json` covers 94 of
 256 byte values. They exist so the check has something to report.
 
-Both commands' flags are in
-[docs/CONFIGURATION.md](docs/CONFIGURATION.md#cli-reference).
+[docs/SANITY_CHECKS.md](docs/SANITY_CHECKS.md) documents all 16 checks, what
+each severity means, and the flags. [docs/VISUALIZATION.md](docs/VISUALIZATION.md)
+covers `tokenizer-visualize`, the metric plots and the LaTeX table generator.
 
 ## A worked comparison
 
@@ -262,6 +270,8 @@ covered in [docs/EXTENDING.md](docs/EXTENDING.md).
 | [docs/METRICS.md](docs/METRICS.md) | The definition, worked example and caveats for every metric |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Every CLI flag and every config file format |
 | [docs/OUTPUT.md](docs/OUTPUT.md) | The results file: schema, aggregation, null convention, provenance |
+| [docs/SANITY_CHECKS.md](docs/SANITY_CHECKS.md) | The 16 tokenizer health checks, the five severities, the exit codes |
+| [docs/VISUALIZATION.md](docs/VISUALIZATION.md) | Metric plots, `tokenizer-visualize`, the LaTeX table generator |
 | [docs/EXTENDING.md](docs/EXTENDING.md) | Python API, repository layout, adding tokenizers and metrics |
 | [benchmarks/open_source/REPORT.md](benchmarks/open_source/REPORT.md) | Nine open-source tokenizers measured on the full metric set |
 | [CHANGELOG.md](CHANGELOG.md) | Changes from `tokenizer-analysis-suite`, breaking ones first |

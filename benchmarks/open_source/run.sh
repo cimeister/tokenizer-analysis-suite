@@ -70,6 +70,24 @@ uv run tokenizer-analysis \
     --no-plots \
     --output-dir "${OUTPUT_DIR}"
 
+# The health matrix in REPORT.md. --exit-zero is required, not cosmetic: this
+# script runs under `set -e` and the checker exits 1 on any warn and 2 on any
+# fail, which nine real tokenizers produce. The verdict belongs in the report,
+# not in this script's exit code.
+#
+# --use-sample-data adds FLORES probes on top of the built-in ones rather than
+# replacing them, over the same 13 languages and the same math corpus the
+# analysis above used, so the behavioural checks and the metrics describe the
+# same text. About 25 s per tokenizer; the vocabulary-reachability check is the
+# slow part and scales with vocabulary size.
+uv run tokenizer-sanity-check \
+    --tokenizer-config "${HERE_REL}/tokenizers.json" \
+    --language-config configs/core_lang_config.json \
+    --use-sample-data \
+    --use-builtin-math-data \
+    --output-dir "${OUTPUT_DIR}" \
+    --exit-zero --quiet
+
 # Strip the two fields that change on every run, so a diff of the committed
 # results file shows a real change to a measured value rather than timing noise
 # and a new timestamp. Only the copy in this directory is stripped; a run
@@ -92,6 +110,8 @@ fi
 
 uv run python "${HERE}/render_report.py" \
     --results "${OUTPUT_DIR}/analysis_results.json" \
+    --sanity "${OUTPUT_DIR}/sanity_results.json" \
     --output "${HERE}/REPORT.md"
 
-echo "Wrote ${OUTPUT_DIR}/analysis_results.json and ${HERE}/REPORT.md"
+echo "Wrote ${OUTPUT_DIR}/analysis_results.json, ${OUTPUT_DIR}/sanity_results.json"
+echo "and ${HERE}/REPORT.md"

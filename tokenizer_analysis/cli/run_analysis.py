@@ -461,7 +461,10 @@ def _normalize_tokenizer_entry(
     # 'global' and rename language_costs to per_language. The remaining
     # fields (most_efficient_language, least_efficient_language,
     # sorted_language_costs) have no canonical published name, so they stay
-    # where they are. ---
+    # where they are. lorenz_curve and per_line_normalization are already at
+    # their published names; _move below is top-level only, so the
+    # language_costs nested inside per_line_normalization is not renamed and
+    # keeps that name in both output files. ---
     elif metric_name == 'tokenizer_fairness_gini':
         gini_global_fields = (
             'gini_coefficient', 'mean_cost', 'std_cost', 'min_cost',
@@ -687,6 +690,15 @@ def _select_tokenizer_entry(
             out['global'] = tok_data['global']  # {compression_rate, total_units, total_tokens}
         if 'per_language' in tok_data:
             out['per_language'] = tok_data['per_language']
+        # num_texts_analyzed is dropped, and it is the only field this whole
+        # selection drops whose value is not readable somewhere else in
+        # analysis_results.json: the global block gives total_units and
+        # total_tokens but no count of texts. Not published, by decision
+        # (2026-08-09), rather than pending one. Do not add it later on the
+        # assumption it was an oversight; it is a deliberate limit of the
+        # published schema, and adding it would also leave the committed
+        # benchmark artifact a field behind until the next regeneration.
+        # test_the_slim_file_drops_only_what_it_declares pins this.
 
     elif metric_name == 'vocabulary_utilization':
         out['global'] = tok_data.get('global', {})
@@ -733,6 +745,14 @@ def _select_tokenizer_entry(
             out['global']['warning'] = global_full['warning']
         if 'per_language' in tok_data:
             out['per_language'] = tok_data['per_language']
+        # The whole per-line block, including its own language_costs, rather
+        # than the coefficient alone: on a parallel corpus this is the
+        # coefficient to read, and a reader checking it by hand needs the
+        # per-language costs it was computed from. The key is written whether
+        # or not the block exists, because the metric writes None when the
+        # languages have unequal line counts and that absence is a result.
+        if 'per_line_normalization' in tok_data:
+            out['per_line_normalization'] = tok_data['per_line_normalization']
 
     elif metric_name == 'lorenz_curve_data':
         for key, value in tok_data.items():
@@ -1065,11 +1085,10 @@ Examples:
   # Generate per-language plots in addition to standard plots
   uv run tokenizer-analysis --use-sample-data --per-language-plots
   
-  # Generate per-language plots with additional faceted plots (subplots per tokenizer)
+  # Generate faceted plots (one subplot per tokenizer); the two plot flags are
+  # independent, and neither applies to --run-grouped-analysis
+  uv run tokenizer-analysis --use-sample-data --faceted-plots
   uv run tokenizer-analysis --use-sample-data --per-language-plots --faceted-plots
-  
-  # Generate grouped analysis with additional faceted plots for grouped metrics
-  uv run tokenizer-analysis --use-sample-data --run-grouped-analysis --faceted-plots
   
   # Generate custom LaTeX tables from configuration file
   uv run tokenizer-analysis --use-sample-data --custom-latex-config custom_tables.json
@@ -1262,7 +1281,10 @@ Examples:
     parser.add_argument(
         "--faceted-plots",
         action="store_true",
-        help="Generate additional faceted plots (one subplot per tokenizer with shared y-axis) for grouped analysis (--run-grouped-analysis) and per-language plots (--per-language-plots). Normal plots are still generated."
+        help="Generate additional faceted plots (one subplot per tokenizer with shared y-axis) "
+             "for fertility, compression_rate, vocabulary_utilization and bigram_entropy, in "
+             "<output-dir>/faceted_plots. Independent of --per-language-plots, and does not "
+             "apply to grouped analysis. Normal plots are still generated."
     )
     
     parser.add_argument(
@@ -1284,6 +1306,18 @@ Examples:
         help="Use the bundled math sample dataset (285 expressions) for "
              "digit boundary metrics instead of the general input text. "
              "Ignored if --math-data is also provided."
+    )
+    parser.add_argument(
+        "--operator-prose-domain",
+        action="store_true",
+        help="Score the main corpus as a prose domain of "
+             "operator_isolation_rate. Off by default: an operator is a code "
+             "construct, and the operator pattern matches a hyphen, a slash and "
+             "an exclamation mark, which are ordinary punctuation in prose. On "
+             "the nine-tokenizer benchmark prose supplied 568 of 455558 "
+             "operator occurrences, 0.12%%, while being the domain that costs "
+             "the most to score. With this flag, by_domain gains a 'prose' "
+             "entry and the pooled figure includes it."
     )
     parser.add_argument(
         "--code-ast-config",
@@ -1871,7 +1905,8 @@ def run_from_args(args: argparse.Namespace):
             per_language_plots=args.per_language_plots,
             faceted_plots=args.faceted_plots,
             math_data_path=args.math_data,
-            use_builtin_math_data=args.use_builtin_math_data
+            use_builtin_math_data=args.use_builtin_math_data,
+            include_prose_operators=args.operator_prose_domain
         )
     else:
         # Raw tokenizer mode
@@ -1933,7 +1968,8 @@ def run_from_args(args: argparse.Namespace):
             per_language_plots=args.per_language_plots,
             faceted_plots=args.faceted_plots,
             math_data_path=args.math_data,
-            use_builtin_math_data=args.use_builtin_math_data
+            use_builtin_math_data=args.use_builtin_math_data,
+            include_prose_operators=args.operator_prose_domain
         )
     # Run analysis
     logger.info("Starting tokenizer analysis...")

@@ -257,3 +257,38 @@ class InputProvider(ABC):
         except Exception as e:
             logger.error(f"Error validating data: {e}")
             return False
+
+def check_batch_pairing(tokenizer_name: str, language: str, texts, encoded, corpus: str) -> None:
+    """Raise unless a batch result has one entry per text it was given.
+
+    Both corpora pair a batch with its texts by position, which is the batch
+    API's contract. Nothing verifies it. A backend returning fewer results than
+    it was given would otherwise be consumed by ``zip``, which stops at the
+    shorter side: the trailing texts vanish and every remaining pairing is
+    still correct, so the loss is invisible in the output.
+
+    This checks the count and nothing else. A backend that returned the right
+    number of encodings in a different order would attach one text's offsets to
+    another text, and neither this nor anything else in the pipeline catches
+    that.
+
+    Args:
+        tokenizer_name: named in the error, so a multi-tokenizer run says which.
+        language: named in the error for the same reason.
+        texts: what was handed to the backend.
+        encoded: what the backend returned.
+        corpus: which corpus this is, for the error message.
+
+    Raises:
+        ValueError: naming both counts.
+    """
+    if len(encoded) == len(texts):
+        return
+    raise ValueError(
+        f"Tokenizer {tokenizer_name!r} returned {len(encoded)} encodings for "
+        f"the {len(texts)} {language!r} texts of the {corpus}. Pairing them by "
+        "position would attach one text's offsets to another text, so the "
+        "metric would be computed against the wrong source. Only the count is "
+        "checked: a backend that reordered a batch of the right length would "
+        "not be caught here."
+    )

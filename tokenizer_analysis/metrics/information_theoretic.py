@@ -377,8 +377,14 @@ class InformationTheoreticMetrics(BaseMetrics):
                 token_to_rank = {token: rank + 1 for rank, token in enumerate(ranked_tokens)}
                 
                 lang_ranks = [token_to_rank[token] for token in lang_tokens]
-                avg_token_rank = np.mean(lang_ranks) if lang_ranks else 0.0
-                
+                # One rank per token, and lang_tokens is non-empty by the guard
+                # above, so there is no empty case to fall back from. This read
+                # `if lang_ranks else 0.0`, which is a rank no token can have,
+                # since ranks start at 1. The corpus-level value below publishes
+                # None for its empty case; that fallback is reachable, this one
+                # was not.
+                avg_token_rank = float(np.mean(lang_ranks))
+
                 per_lang_metrics[lang] = {
                     'unigram_entropy': unigram_entropy,
                     'avg_token_rank': avg_token_rank,
@@ -589,6 +595,7 @@ class InformationTheoreticMetrics(BaseMetrics):
 
             tok_data = tokenized_data[tok_name]
             per_lang_metrics = {}
+            faithful_per_lang: Dict[str, Any] = {}
             global_right_accessors: Dict[int, Counter] = defaultdict(Counter)
 
             # Group data by language
@@ -613,6 +620,20 @@ class InformationTheoreticMetrics(BaseMetrics):
                     # total_bigrams rather than measuring something else.
                     'count': lang_stats['total_ngrams'],
                 }
+                # Reference variant per language: the accessor domain is this
+                # language's own distinct-successor count, the per-language
+                # analogue of the corpus-wide domain used in the global block.
+                lang_domain = self._accessor_domain_size(lang_right_accessors)
+                lang_faithful = self._compute_weighted_entropy(
+                    lang_right_accessors, min_occ,
+                    accessor_domain=lang_domain, weighted=False,
+                )
+                faithful_per_lang[lang] = {
+                    'bigram_entropy': lang_faithful['entropy'],
+                    'accessor_domain_size': lang_domain,
+                    'types_evaluated': lang_faithful['types_evaluated'],
+                    'count': lang_faithful['total_ngrams'],
+                }
 
             global_stats = self._compute_weighted_entropy(global_right_accessors, min_occ)
             # Poelman et al. 2025 as published: corpus-wide accessor-domain
@@ -627,6 +648,7 @@ class InformationTheoreticMetrics(BaseMetrics):
                 'bigram_entropy': faithful_stats['entropy'],
                 'accessor_domain_size': domain,
                 'types_evaluated': faithful_stats['types_evaluated'],
+                'per_language': faithful_per_lang,
             }
 
             results['per_tokenizer'][tok_name] = {
@@ -657,7 +679,19 @@ class InformationTheoreticMetrics(BaseMetrics):
                     'Successor entropy under the reference normalizer and '
                     'aggregation, for comparison with bigram_entropy above.'
                 ),
-                'normalizer': 'log2(min(corpus-wide accessor domain, context count))',
+                'normalizer': 'log2(min(accessor domain, context count))',
+                'accessor_domain_scope': (
+                    'The top-level value uses the accessor domain of the whole '
+                    'corpus. Each per_language value uses that language\'s own '
+                    'accessor domain, published beside it as '
+                    'accessor_domain_size, which treats the language as its own '
+                    'corpus and is what applying the reference definition per '
+                    'language means. The divisor therefore differs from one '
+                    'language to the next, so two per_language values are not '
+                    'on a common scale; compare a language against the same '
+                    'language under another tokenizer, not against another '
+                    'language.'
+                ),
                 'aggregation': 'unweighted mean over context types',
                 'reference': (
                     'Poelman, Bauwens, de Lhoneux (2025), Confounding Factors in '
@@ -739,6 +773,7 @@ class InformationTheoreticMetrics(BaseMetrics):
 
             tok_data = tokenized_data[tok_name]
             per_lang_metrics = {}
+            faithful_per_lang: Dict[str, Any] = {}
             global_right_accessors: Dict[tuple, Counter] = defaultdict(Counter)
 
             lang_groups = TokenizedDataProcessor.group_by_language(tok_data)
@@ -762,6 +797,20 @@ class InformationTheoreticMetrics(BaseMetrics):
                     # named by count_unit, repeating total_trigrams.
                     'count': lang_stats['total_ngrams'],
                 }
+                # Reference variant per language, as in compute_bigram_entropy:
+                # the accessor domain is this language's own distinct-successor
+                # count.
+                lang_domain = self._accessor_domain_size(lang_right_accessors)
+                lang_faithful = self._compute_weighted_entropy(
+                    lang_right_accessors, min_occ,
+                    accessor_domain=lang_domain, weighted=False,
+                )
+                faithful_per_lang[lang] = {
+                    'trigram_entropy': lang_faithful['entropy'],
+                    'accessor_domain_size': lang_domain,
+                    'types_evaluated': lang_faithful['types_evaluated'],
+                    'count': lang_faithful['total_ngrams'],
+                }
 
             global_stats = self._compute_weighted_entropy(global_right_accessors, min_occ)
             domain = self._accessor_domain_size(global_right_accessors)
@@ -773,6 +822,7 @@ class InformationTheoreticMetrics(BaseMetrics):
                 'trigram_entropy': faithful_stats['entropy'],
                 'accessor_domain_size': domain,
                 'types_evaluated': faithful_stats['types_evaluated'],
+                'per_language': faithful_per_lang,
             }
 
             results['per_tokenizer'][tok_name] = {
@@ -803,7 +853,15 @@ class InformationTheoreticMetrics(BaseMetrics):
                     'Trigram successor entropy under the reference normalizer '
                     'and aggregation, for comparison with trigram_entropy above.'
                 ),
-                'normalizer': 'log2(min(corpus-wide accessor domain, context count))',
+                'normalizer': 'log2(min(accessor domain, context count))',
+                'accessor_domain_scope': (
+                    'The top-level value uses the accessor domain of the whole '
+                    'corpus. Each per_language value uses that language\'s own '
+                    'accessor domain, published beside it as '
+                    'accessor_domain_size. The divisor therefore differs from '
+                    'one language to the next, so two per_language values are '
+                    'not on a common scale.'
+                ),
                 'aggregation': 'unweighted mean over context types',
                 'still_deviating': [
                     'Poelman et al. define the bigram form only, so there is no '

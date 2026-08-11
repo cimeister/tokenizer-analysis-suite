@@ -101,17 +101,46 @@ Three metrics depart from that layout. All three still have `global` and
 | `encoding_speed` | `global` holds `mean_ms`, `total_s`, `num_samples`, duplicating the same three fields already published directly under `per_tokenizer.<tok>`. No `per_language` |
 | `reconstruction_fidelity` | `per_domain` in place of `per_language`, because it also runs on code and math |
 
-`operator_isolation_rate` holds `global`, `per_language` **and** `by_domain`,
-the last splitting the pooled global into `prose`, `code` and `math`. Its
-`per_language` keys natural languages (`arb_Arab`) and programming languages
-(`code:bash`) in one dict.
+`tokenizer_fairness_gini` holds a `per_line_normalization` block beside
+`global`, with the same coefficient computed on tokens per line rather than per
+the configured unit. It is `null` unless every language has the same line count.
+On a parallel corpus it is the one to read.
 
-The slimmed file omits `pairwise_comparisons`, `summary`, `per_category`
-breakdowns, and the derivable stat fields `sum`, `std_err`, `min` and `max`. The
-full results file adds `per_category` for the metrics that have category
-breakdowns (AST node types, operator types). `bigram_entropy` also holds a
+`operator_isolation_rate` holds `global`, `per_language` **and** `by_domain`,
+the last splitting the pooled global by corpus. `by_domain` has `code` and
+`math`, plus `prose` when `--operator-prose-domain` was passed, and `global`
+pools whichever ran. Its `per_language` keys natural languages (`arb_Arab`) and
+programming languages (`code:bash`) in one dict.
+
+The slimmed file omits four kinds of field.
+
+- Metric-level `summary` blocks. The per-tokenizer `global` block holds the same
+  numbers, sometimes under a different name: reconstruction fidelity's
+  `texts_analyzed` is `count` there, and its `total_tokens_analyzed` is
+  `total_tokens`.
+- `per_category` breakdowns, for the metrics that have them (AST node types,
+  operator types). The full results file is the only place these survive.
+- The stat fields `sum`, `std_err`, `min` and `max`, each recoverable from the
+  published mean, standard deviation and count.
+- Duplicates of a value published elsewhere in the same metric: the untransposed
+  Rényi dicts that `global` and `per_language` are built from, operator
+  isolation's `domain_operator_counts`, which repeats each domain's
+  `total_operators`, and the Gini's `most_efficient_language`,
+  `least_efficient_language` and `sorted_language_costs`, all readable from its
+  published per-language costs.
+
+One field is omitted with nothing equivalent left in the file: compression
+rate's `num_texts_analyzed`. `_DELIBERATELY_UNPUBLISHED` in
+`tokenizer_analysis/tests/test_output_contract.py` lists every omission
+alongside the place the same value is still readable, and a test fails when a
+field starts being dropped without an entry there.
+
+`bigram_entropy` and `trigram_entropy` also hold a
 top-level `reference_definition` block with the same measurement under the
-reference normalizer and aggregation.
+reference normalizer and aggregation, per tokenizer and, inside that, per
+language. A per-language entry normalizes by that language's own accessor
+domain, published beside it as `accessor_domain_size`, so two languages there
+are not on a common scale.
 
 Since 1.0.2 the slim file is a strict projection of the full one: every leaf
 is at the same key path with the same value in both, and slimming only

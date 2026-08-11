@@ -361,3 +361,153 @@ def test_utf8_panel_colours_are_keyed_to_the_tokenizer(captured_plots, tmp_path)
         )
     # Distinct tokenizers still get distinct colours.
     assert len(set(split_colors.values())) == 3
+
+
+class TestFacetedAndPerLanguageFlagsAreIndependent:
+    """`--faceted-plots` help text claimed a dependency the code does not have.
+
+    Until 1.0.3 it read "for grouped analysis (--run-grouped-analysis) and
+    per-language plots (--per-language-plots)". Both halves were wrong.
+    `generate_all_plots` gates the two subdirectories on separate `if`
+    statements, and `plotter.plot_grouped_analysis` passes both as `False` on
+    the grouped path, so the flag reaches neither. These assert the behaviour
+    the corrected help text now describes, so the two cannot drift apart again
+    without a test failing.
+    """
+
+    def _dirs(self, captured):
+        return {os.path.basename(os.path.dirname(path)) for path, _ in captured}
+
+    def _results(self):
+        """`_full_results` plus the per-language blocks those plots need.
+
+        Without them every per-language plot returns before drawing, so a test
+        asserting the subdirectory is absent would pass for the wrong reason.
+        """
+        results = _full_results()
+        results['fertility']['per_tokenizer']['A']['per_language'] = {
+            'eng_Latn': {'mean': 1.3}, 'deu_Latn': {'mean': 1.6}}
+        results['fertility']['per_tokenizer']['B']['per_language'] = {
+            'eng_Latn': {'mean': 1.7}, 'deu_Latn': {'mean': 2.1}}
+        return results
+
+    def test_faceted_alone_writes_faceted_and_no_per_language(self, captured_plots, tmp_path):
+        generate_all_plots(self._results(), str(tmp_path), _TOKS,
+                           per_language_plots=False, faceted_plots=True)
+        dirs = self._dirs(captured_plots)
+        assert "faceted_plots" in dirs
+        assert "per-language" not in dirs
+
+    def test_per_language_alone_writes_no_faceted(self, captured_plots, tmp_path):
+        generate_all_plots(self._results(), str(tmp_path), _TOKS,
+                           per_language_plots=True, faceted_plots=False)
+        dirs = self._dirs(captured_plots)
+        assert "per-language" in dirs, "the fixture drew no per-language plot at all"
+        assert "faceted_plots" not in dirs
+
+    def test_grouped_analysis_gets_neither(self, captured_plots, tmp_path):
+        """The outcome, which two separate things in plotter.py guarantee.
+
+        It passes `per_language_plots=False, faceted_plots=False`, and it also
+        passes `{}` as the results dict, so both branches would find nothing to
+        draw even if the flags were forwarded. This asserts the outcome rather
+        than either mechanism, so flipping only the hardcoded `False` leaves it
+        passing.
+        """
+        from tokenizer_analysis.visualization.plotter import TokenizerVisualizer
+
+        viz = TokenizerVisualizer(_TOKS, str(tmp_path),
+                                  per_language_plots=True, faceted_plots=True)
+        viz.plot_grouped_analysis({"script": {"latin": self._results()}})
+        dirs = self._dirs(captured_plots)
+        assert "faceted_plots" not in dirs
+        assert "per-language" not in dirs
+
+    def test_the_help_text_does_not_promise_either_link(self):
+        """The help string is the thing that was wrong; assert on it directly."""
+        from tokenizer_analysis.cli.run_analysis import build_parser
+
+        help_text = next(
+            a.help for a in build_parser()._actions
+            if "--faceted-plots" in (a.option_strings or [])
+        )
+        lowered = help_text.lower()
+        assert "independent of --per-language-plots" in lowered
+        assert "does not apply to grouped analysis" in lowered
+
+
+class TestGiniPerLanguageIsDrawn:
+    """The Gini per-language plot was never written, and nothing said so.
+
+    `main.run_analysis` calls `generate_all_plots` with the raw results, before
+    `normalize_results` renames anything, and `tokenizer_fairness_gini` calls its
+    per-language costs `language_costs` at that point. Both the standalone plot
+    and the combined-subplot panel looked only for `per_language`, found
+    nothing, and returned without drawing or logging. Measured on a real
+    `--per-language-plots` run before the fix: five files in `per-language/`,
+    with `tokenizer_fairness_gini_per_language.svg` the one missing.
+    """
+
+    def _raw_results(self):
+        """`_full_results` with per-language blocks under their pre-rename names."""
+        results = _full_results()
+        results['fertility']['per_tokenizer']['A']['per_language'] = {
+            'eng_Latn': {'mean': 1.3}, 'deu_Latn': {'mean': 1.6}}
+        results['fertility']['per_tokenizer']['B']['per_language'] = {
+            'eng_Latn': {'mean': 1.7}, 'deu_Latn': {'mean': 2.1}}
+        # The name the metric actually emits, which is what the plots are given.
+        results['tokenizer_fairness_gini']['per_tokenizer']['A']['language_costs'] = {
+            'eng_Latn': 4.1, 'deu_Latn': 4.9}
+        results['tokenizer_fairness_gini']['per_tokenizer']['B']['language_costs'] = {
+            'eng_Latn': 5.2, 'deu_Latn': 6.6}
+        return results
+
+    def _written(self, captured):
+        return {os.path.basename(path) for path, _ in captured}
+
+    def test_language_costs_produces_the_per_language_gini_plot(
+            self, captured_plots, tmp_path):
+        generate_all_plots(self._raw_results(), str(tmp_path), _TOKS,
+                           per_language_plots=True, faceted_plots=False)
+        assert "tokenizer_fairness_gini_per_language.svg" in self._written(captured_plots)
+
+    def test_the_renamed_block_produces_it_too(self, captured_plots, tmp_path):
+        """A results dict read back from analysis_results.json has been renamed."""
+        results = self._raw_results()
+        for tok in ("A", "B"):
+            entry = results['tokenizer_fairness_gini']['per_tokenizer'][tok]
+            entry['per_language'] = entry.pop('language_costs')
+        generate_all_plots(results, str(tmp_path), _TOKS,
+                           per_language_plots=True, faceted_plots=False)
+        assert "tokenizer_fairness_gini_per_language.svg" in self._written(captured_plots)
+
+    def test_the_costs_reach_the_bars_rather_than_an_empty_panel(
+            self, captured_plots, tmp_path):
+        """A written SVG proves nothing on its own; check the drawn heights."""
+        generate_all_plots(self._raw_results(), str(tmp_path), _TOKS,
+                           per_language_plots=True, faceted_plots=False)
+        fig = next(f for path, f in captured_plots
+                   if os.path.basename(path)
+                   == "tokenizer_fairness_gini_per_language.svg")
+        heights = sorted(
+            round(bar.get_height(), 6)
+            for ax in fig.axes for bar in getattr(ax, "patches", [])
+            if not np.isnan(bar.get_height())
+        )
+        assert heights == [4.1, 4.9, 5.2, 6.6], heights
+
+    def test_a_metric_with_no_per_language_data_says_so(
+            self, captured_plots, tmp_path, caplog):
+        """Silence was the original defect, so the empty case has to be audible."""
+        results = self._raw_results()
+        for tok in ("A", "B"):
+            results['tokenizer_fairness_gini']['per_tokenizer'][tok].pop(
+                'language_costs')
+        with caplog.at_level("WARNING", logger=plots.__name__):
+            generate_all_plots(results, str(tmp_path), _TOKS,
+                               per_language_plots=True, faceted_plots=False)
+        assert "tokenizer_fairness_gini_per_language.svg" not in self._written(
+            captured_plots)
+        assert any("tokenizer_fairness_gini" in r.message
+                   and "no per-language data" in r.message
+                   for r in caplog.records), [r.message for r in caplog.records]
