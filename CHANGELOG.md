@@ -202,7 +202,19 @@ conflicting flags.
   per-language costs under the name the metric emits them under.
   `docs/OUTPUT.md` now lists which fields the slimmed file omits and where each
   omitted value is still readable. `docs/SANITY_CHECKS.md` and
-  `docs/VISUALIZATION.md` are new.
+  `docs/VISUALIZATION.md` are new. The README cites the paper,
+  [arXiv:2608.18062](https://arxiv.org/abs/2608.18062), in place of the previous
+  software entry. A mistake in a flag or a config file prints one line and exits
+  1 instead of a traceback: eleven user errors raised a bare `ValueError`, which
+  `main()` deliberately lets through with its stack, and a malformed config
+  reported a line and a column without naming the file. `--quiet` logs warnings
+  and errors to the console while `tokenizer_analysis.log` keeps everything, and
+  that file is written at all for the first time: `setup_environment()`
+  configured logging first, so the file handler was built and dropped on every
+  run and the log was left empty. `reconstruction_fidelity` encodes code and
+  math snippets with `encode()` rather than `encode_with_offsets()`, since it
+  reads only the ids; measured at 2.16x the cost of encoding for the
+  `script_bpe` wrappers, and free for the rest.
 - **1.0.2** Fifteen fields that published a number where nothing was measured
   now publish `null`. `analysis_results.json` became a strict projection of the
   full file. `run_metadata` gained a timestamp, per-tokenizer Hub revisions and
