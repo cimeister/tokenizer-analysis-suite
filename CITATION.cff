@@ -13,11 +13,23 @@ authors:
     given-names: Clara
 repository-code: "https://github.com/cimeister/tokenizer-intrinsic-evals"
 license: MIT
-version: 1.0.2
-date-released: "2026-08-04"
+version: 1.0.3
+date-released: "2026-08-19"
 keywords:
   - tokenization
   - subword
   - evaluation
   - multilingual
   - natural language processing
+preferred-citation:
+  type: article
+  title: "TokEval: A Tokenizer Evaluation Suite"
+  authors:
+    - family-names: Meister
+      given-names: Clara
+  year: 2026
+  url: "https://arxiv.org/abs/2608.18062"
+  identifiers:
+    - type: other
+      value: "arXiv:2608.18062"
+      description: "arXiv preprint"

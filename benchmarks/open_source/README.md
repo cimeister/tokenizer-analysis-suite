@@ -50,6 +50,17 @@ change on every run, so leaving them in meant every regeneration produced a
 diff of roughly ninety lines in which a real change to a measured value was not
 visible. Your own run writes both.
 
+Regenerate on a clean working tree. `run_metadata.git_tree_modified` is computed
+when the run ends, from `git status --porcelain --untracked-files=no`, so editing
+a tracked file while the run is in progress records the results as coming from a
+modified tree. Untracked and git-excluded files do not count.
+
+`run_metadata.package_version` names the version that produced this file, which
+is not always the current release: the file is regenerated when a change moves a
+measured value, not on every version bump. A version here older than the one in
+`pyproject.toml` means no released change since then altered what this run
+measures.
+
 ## Reading the CER column
 
 Which tokenizers report `mean_cer` depends on how fast the machine is. The

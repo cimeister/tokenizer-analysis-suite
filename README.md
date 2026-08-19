@@ -3,6 +3,10 @@
 A toolkit for computing intrinsic quality metrics for tokenizers across natural
 language, code, and math.
 
+The metrics, and the pretraining experiments that check which of them predict
+downstream behaviour, are described in
+[TokEval: A Tokenizer Evaluation Suite](https://arxiv.org/abs/2608.18062).
+
 **New:** the library also ships a tokenizer health checker and a visualization
 module, documented in [docs/SANITY_CHECKS.md](docs/SANITY_CHECKS.md) and
 [docs/VISUALIZATION.md](docs/VISUALIZATION.md). Both are described under
@@ -38,7 +42,9 @@ your own tokenizers and metrics.
 
 ## Install
 
-Python 3.10 or newer, tested on Linux.
+Python 3.10 or newer, tested on Linux. The commands below use
+[uv](https://docs.astral.sh/uv/getting-started/installation/); install that
+first if it is not already on your path.
 
 ```bash
 git clone https://github.com/cimeister/tokenizer-intrinsic-evals.git
@@ -204,8 +210,11 @@ non-zero exit code, so it can gate a tokenizer before a full run.
 uv run tokenizer-sanity-check huggingface:tokenizers/bpe.json
 ```
 
-The bundled demo tokenizers fail this check on purpose: `bpe.json` covers 94 of
-256 byte values. They exist so the check has something to report.
+Both bundled demo tokenizers fail this check on purpose: `bpe.json` and
+`unigramlm.json` each cover 94 of 256 byte values. `unigramlm.json` also logs a
+warning that it cannot report its declared special tokens, so the check falls
+back to the 13 generic ones; that is expected for this file and not a second
+defect. They exist so the check has something to report.
 
 [docs/SANITY_CHECKS.md](docs/SANITY_CHECKS.md) documents all 16 checks, what
 each severity means, and the flags. [docs/VISUALIZATION.md](docs/VISUALIZATION.md)
@@ -286,11 +295,13 @@ not redistributed here.
 ## Citation
 
 ```bibtex
-@software{meister_tokeval_2026,
-  title   = {TokEval: intrinsic evaluation metrics for tokenizers},
-  author  = {Meister, Clara},
-  year    = {2026},
-  version = {1.0.2},
-  url     = {https://github.com/cimeister/tokenizer-intrinsic-evals}
+@misc{meister2026tokeval,
+  title         = {TokEval: A Tokenizer Evaluation Suite},
+  author        = {Meister, Clara},
+  year          = {2026},
+  eprint        = {2608.18062},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.CL},
+  url           = {https://arxiv.org/abs/2608.18062}
 }
 ```
