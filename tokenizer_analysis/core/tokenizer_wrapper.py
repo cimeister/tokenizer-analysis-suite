@@ -17,6 +17,7 @@ import warnings
 
 from ..config.language_metadata import PACKAGE_ROOT
 from ..constants import GENERIC_SPECIAL_TOKENS, UNK_CANDIDATES
+from ..exceptions import ConfigurationError
 
 logger = logging.getLogger(__name__)
 
@@ -1951,8 +1952,13 @@ def create_tokenizer_wrapper(name: str, config: Dict[str, Any]) -> TokenizerWrap
     
     if tokenizer_class_name not in _TOKENIZER_REGISTRY:
         available_classes = list(_TOKENIZER_REGISTRY.keys())
-        raise ValueError(f"Unknown tokenizer class: {tokenizer_class_name}. "
-                        f"Available classes: {available_classes}")
+        # ConfigurationError, not ValueError: a class name that is not in the
+        # registry is the user's typo in a config file, and the console script
+        # prints this without a traceback. It subclasses ValueError, so a caller
+        # catching that still catches this.
+        raise ConfigurationError(
+            f"Unknown tokenizer class: {tokenizer_class_name}. "
+            f"Available classes: {available_classes}")
     
     tokenizer_class = _TOKENIZER_REGISTRY[tokenizer_class_name]
     return tokenizer_class.from_config(name, _resolve_config_path(name, config))

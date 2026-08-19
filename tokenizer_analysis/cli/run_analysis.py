@@ -41,13 +41,10 @@ from tokenizer_analysis.constants import (
 from tokenizer_analysis.visualization.visualization_config import LaTeXFormatting
 
 
-class ConfigurationError(ValueError):
-    """A config file the user named has the wrong shape or contents.
-
-    Kept separate from the package's own exceptions so main() can print it
-    without a traceback: the message names the flag, the file and the expected
-    shape, which is the whole of what a caller needs.
-    """
+# Defined in tokenizer_analysis/exceptions.py since 1.0.3, so that core/ can
+# raise it without importing from cli/. Re-exported here because callers and
+# tests import it from this module.
+from tokenizer_analysis.exceptions import ConfigurationError
 
 
 class OutputGenerationError(RuntimeError):
@@ -62,7 +59,8 @@ class OutputGenerationError(RuntimeError):
 logger = logging.getLogger(__name__)
 
 
-def _configure_cli_logging(log_file: str = "tokenizer_analysis.log") -> None:
+def _configure_cli_logging(log_file: str = "tokenizer_analysis.log",
+                           quiet: bool = False) -> None:
     """Configure root logging for the console script.
 
     Called from ``main()``, never at import. Doing this at module scope meant
@@ -70,22 +68,52 @@ def _configure_cli_logging(log_file: str = "tokenizer_analysis.log") -> None:
     program reconfigured that program's root logger and created a log file in
     whatever directory it happened to be running in. A library must leave
     logging configuration to the application.
+
+    *quiet* raises the console handler to WARNING and leaves the file handler at
+    INFO, so quietening the terminal never costs the record. The root logger
+    stays at INFO for the same reason: raising it would silence the file too.
     """
     setup_environment()
+    console = logging.StreamHandler()
+    if quiet:
+        console.setLevel(logging.WARNING)
+    # force=True because setup_environment() above calls basicConfig itself, and
+    # basicConfig returns without doing anything when the root already has a
+    # handler. The file handler was therefore constructed and dropped on every
+    # run: tokenizer_analysis.log was created and left empty, so the log this
+    # function exists to write has never been written. Found while adding
+    # --quiet, whose contract is that the file keeps what the console drops.
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
             logging.FileHandler(log_file),
-            logging.StreamHandler(),
+            console,
         ],
+        force=True,
     )
 
 
 def load_config_from_file(config_path: str) -> Dict:
-    """Load configuration from JSON file."""
-    with open(config_path, 'r') as f:
-        return json.load(f)
+    """Load one JSON config, naming the file when it cannot be read or parsed.
+
+    Every ``--*-config`` flag resolves through here, so a run with several of
+    them used to report a bare JSONDecodeError giving a line and column and no
+    file. With more than one config flag in play the user had to guess which one
+    it meant.
+    """
+    try:
+        with open(config_path, 'r') as f:
+            return json.load(f)
+    except json.JSONDecodeError as e:
+        raise ConfigurationError(
+            f"{config_path} is not valid JSON: {e.msg} at line {e.lineno} "
+            f"column {e.colno}."
+        ) from e
+    except OSError as e:
+        raise ConfigurationError(
+            f"{config_path} could not be read: {e.strerror or e}."
+        ) from e
 
 
 def create_sample_configs() -> Dict[str, Dict]:
@@ -1223,6 +1251,13 @@ Examples:
         help="Enable verbose output"
     )
     parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Log warnings and errors to the console instead of every progress "
+             "line. tokenizer_analysis.log still records everything at INFO, so "
+             "this changes what the terminal shows and not what is kept."
+    )
+    parser.add_argument(
         "--save-full-results",
         action="store_true",
         help="Save full detailed results (large file) in addition to summary"
@@ -1530,7 +1565,7 @@ _OUTPUT_ONLY_ARGS = frozenset({
     "output_dir", "latex_output_dir", "tokenized_data_output_path",
     "save_full_results", "save_tokenized_data", "no_plots", "per_language_plots",
     "faceted_plots", "no_global_lines", "generate_latex_tables",
-    "latex_table_types", "custom_latex_config", "verbose",
+    "latex_table_types", "custom_latex_config", "verbose", "quiet",
 })
 
 
@@ -1664,14 +1699,14 @@ def _corpus_source_from_input(input_path: str, label: Optional[str]) -> str:
 
     path = Path(input_path)
     if not path.exists():
-        raise ValueError(
+        raise ConfigurationError(
             f"--input path does not exist: {input_path}. Pass a text file "
             "(.txt/.json/.jsonl/.parquet) or a directory containing them."
         )
 
     corpus_label = label or path.stem or path.name
     if not corpus_label:
-        raise ValueError(
+        raise ConfigurationError(
             f"Could not derive a corpus label from --input {input_path!r}; "
             "pass --input-label explicitly."
         )
@@ -1712,7 +1747,7 @@ def _validate_corpus_source(args: argparse.Namespace) -> None:
         ) if value
     ]
     if args.use_sample_data and overridden:
-        raise ValueError(
+        raise ConfigurationError(
             "--use-sample-data supplies its own tokenizers, corpus and "
             "measurement settings, so it conflicts with "
             + ", ".join(overridden)
@@ -1723,14 +1758,14 @@ def _validate_corpus_source(args: argparse.Namespace) -> None:
         )
 
     if args.input and args.language_config:
-        raise ValueError(
+        raise ConfigurationError(
             "--input analyzes a single corpus and --language-config analyzes a "
             "set of them; pass one or the other. To analyze several corpora, list "
             "them under 'languages' in the --language-config file."
         )
 
     if not (args.use_sample_data or args.input or args.language_config):
-        raise ValueError(
+        raise ConfigurationError(
             "No corpus given. Pass --input PATH for a single corpus, "
             "--language-config FILE for several, or --use-sample-data for the "
             "bundled demo. Earlier versions fell back to the bundled five-language "
@@ -1789,7 +1824,7 @@ def run_from_args(args: argparse.Namespace):
     elif use_tokenized_data:
         # Pre-tokenized data mode
         if not args.tokenized_data_file:
-            raise ValueError("Must specify --tokenized-data-file for pre-tokenized mode")
+            raise ConfigurationError("Must specify --tokenized-data-file for pre-tokenized mode")
         
         # Load tokenized data
         tokenized_data = InputLoader.load_from_file(args.tokenized_data_file)
@@ -1821,7 +1856,7 @@ def run_from_args(args: argparse.Namespace):
         # than substituting the bundled five-language sample, which would label
         # the user's data with FLORES+ language codes it has nothing to do with.
         if not args.language_config:
-            raise ValueError(
+            raise ConfigurationError(
                 "--tokenized-data-file needs --language-config: the pickle holds "
                 "token ids, not the language labels or groupings the metrics "
                 "report against. Pass the same language config used when the "
@@ -1849,7 +1884,7 @@ def run_from_args(args: argparse.Namespace):
     else:
         # Raw tokenizer mode
         if not args.tokenizer_config:
-            raise ValueError(
+            raise ConfigurationError(
                 "Must specify --tokenizer-config (a JSON file mapping tokenizer "
                 "names to {\"class\": ..., \"path\": ...}), or --use-sample-data "
                 "to run the bundled demo."
@@ -1912,12 +1947,12 @@ def run_from_args(args: argparse.Namespace):
         # Raw tokenizer mode
         # Validate tokenizer configs
         if not tokenizer_configs or len(tokenizer_configs) < 1:
-            raise ValueError("At least one tokenizer must be configured")
+            raise ConfigurationError("At least one tokenizer must be configured")
         
         if args.pairwise and len(args.pairwise) == 2:
             tok1, tok2 = args.pairwise
             if tok1 not in tokenizer_configs or tok2 not in tokenizer_configs:
-                raise ValueError(f"Pairwise tokenizers {tok1}, {tok2} must be in configuration")
+                raise ConfigurationError(f"Pairwise tokenizers {tok1}, {tok2} must be in configuration")
             # Filter to only these two tokenizers
             tokenizer_configs = {tok1: tokenizer_configs[tok1], tok2: tokenizer_configs[tok2]}
         
@@ -1951,7 +1986,7 @@ def run_from_args(args: argparse.Namespace):
             raise ConfigurationError(message)
         
         if not language_texts:
-            raise ValueError("No valid language texts loaded")
+            raise ConfigurationError("No valid language texts loaded")
         
         # Initialize unified analyzer using convenience function
         analyzer = create_analyzer_from_raw_inputs(
@@ -2192,7 +2227,7 @@ def main(argv: Optional[List[str]] = None):
     """Parse CLI arguments and run tokenizer analysis."""
     parser = build_parser()
     args = parser.parse_args(argv)
-    _configure_cli_logging()
+    _configure_cli_logging(quiet=args.quiet)
     try:
         run_from_args(args)
     except (ParquetEngineMissing, ConfigurationError, OutputGenerationError,
