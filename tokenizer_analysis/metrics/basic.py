@@ -753,7 +753,14 @@ class BasicTokenizationMetrics(BaseMetrics):
                 texts_processed += 1
                 stats = domain_stats[domain]
 
-                token_ids, _ = tokenizer.encode_with_offsets(text)
+                # encode(), not encode_with_offsets(): this loop reads the ids
+                # and throws the offsets away. Both return the same ids, which
+                # TestEncodeConsistency asserts for every wrapper. For a
+                # HuggingFace tokenizer the offsets come free, but the script_bpe
+                # wrappers compute them by replaying the pretokenizer, measured
+                # at 2.16x the cost of encoding on this corpus shape, so this
+                # loop was paying that for nothing.
+                token_ids = tokenizer.encode(text)
                 stats['total_tokens'] += len(token_ids)
 
                 if unk_id is not None:
