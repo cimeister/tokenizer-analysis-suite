@@ -6,7 +6,7 @@ Supports both pairwise and multi-tokenizer comparisons with various metrics
 including information-theoretic measures and segmentation analysis.
 """
 
-__version__ = "1.0.2"
+__version__ = "1.0.3"
 __author__ = "Clara Meister"
 
 from .metrics.base import BaseMetrics

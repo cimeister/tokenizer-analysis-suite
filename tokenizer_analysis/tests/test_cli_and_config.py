@@ -293,3 +293,144 @@ class TestCorpusSegmentationIsNotCumulative:
         )
         source = "\n".join(f"Sentence number {i} is here." for i in range(20)) + "\n"
         assert len(extract_texts_with_fallback_strategies(source, 2000)) == 20
+
+
+class TestUserErrorsReachTheNoTracebackPath:
+    """A mistake in a flag or a config must print one line, not a stack.
+
+    `main()` catches ConfigurationError and prints it without a traceback,
+    on the reasoning that anything else is a defect in this package whose stack
+    is the useful part. A first-time-user report found three user errors that
+    missed that path and surfaced as raw tracebacks: a malformed config, a
+    missing --input, and an unknown tokenizer class. Their messages were already
+    good; only the exception type was wrong.
+
+    ConfigurationError subclasses ValueError, so each of these still satisfies
+    anything that catches ValueError.
+    """
+
+    def _run(self, tmp_path, *argv):
+        """Invoke the console script the way a user does, in a subprocess."""
+        proc = subprocess.run(
+            [sys.executable, "-m", "tokenizer_analysis.cli.run_analysis",
+             "--no-plots", "--output-dir", str(tmp_path / "out"), *argv],
+            cwd=REPO_ROOT, capture_output=True, timeout=300,
+        )
+        return proc.returncode, proc.stderr.decode(errors="replace")
+
+    def test_a_malformed_config_names_the_file_it_could_not_parse(self, tmp_path):
+        """A run with several --*-config flags must say which one failed.
+
+        json.JSONDecodeError gives a line and a column and no filename, so a
+        user passing more than one config had to guess.
+        """
+        bad = tmp_path / "tokenizers.json"
+        bad.write_text('{"bpe": {"class": "huggingface",', encoding="utf-8")
+        code, err = self._run(tmp_path, "--tokenizer-config", str(bad),
+                              "--input", "README.md")
+        assert code == 1
+        assert "Traceback" not in err, err[-2000:]
+        assert str(bad) in err and "not valid JSON" in err, err[-2000:]
+
+    def test_an_unknown_tokenizer_class_is_not_a_package_defect(self, tmp_path):
+        """This one is raised in core/, which never imports from cli/.
+
+        It is why ConfigurationError lives in tokenizer_analysis/exceptions.py
+        rather than in the CLI module.
+        """
+        cfg = tmp_path / "tokenizers.json"
+        cfg.write_text(json.dumps({"t": {"class": "not_a_real_class", "path": "x"}}),
+                       encoding="utf-8")
+        code, err = self._run(tmp_path, "--tokenizer-config", str(cfg),
+                              "--input", "README.md")
+        assert code == 1
+        assert "Traceback" not in err, err[-2000:]
+        assert "not_a_real_class" in err and "Available classes" in err
+
+    def test_a_missing_input_path_prints_the_path_and_the_remedy(self, tmp_path):
+        code, err = self._run(
+            tmp_path, "--tokenizer-config", "configs/sample_tokenizers.json",
+            "--input", str(tmp_path / "no-such-corpus"))
+        assert code == 1
+        assert "Traceback" not in err, err[-2000:]
+        assert "--input path does not exist" in err
+
+    def test_the_exception_is_reachable_under_its_old_import_path(self):
+        """Moving it must not break `from ...cli.run_analysis import ConfigurationError`."""
+        from tokenizer_analysis.cli.run_analysis import ConfigurationError as from_cli
+        from tokenizer_analysis.exceptions import ConfigurationError as from_pkg
+
+        assert from_cli is from_pkg
+        assert issubclass(from_pkg, ValueError)
+
+
+class TestQuietChangesTheConsoleAndNotTheRecord:
+    """--quiet must not cost the log file.
+
+    The console handler goes to WARNING and the file handler stays at INFO, so a
+    quiet terminal still leaves a complete tokenizer_analysis.log behind. Raising
+    the root logger instead would have silenced both.
+    """
+
+    def _levels(self, tmp_path, quiet):
+        """(console level, file level, root level) after configuring.
+
+        Read inside the block and returned as plain ints: the teardown below puts
+        pytest's own root handlers and level back, so reading the objects
+        afterwards would report pytest's state rather than the CLI's.
+        """
+        import logging
+        from tokenizer_analysis.cli.run_analysis import _configure_cli_logging
+
+        root = logging.getLogger()
+        saved_handlers, saved_level = root.handlers[:], root.level
+        try:
+            _configure_cli_logging(str(tmp_path / "run.log"), quiet=quiet)
+            console = [h for h in root.handlers
+                       if isinstance(h, logging.StreamHandler)
+                       and not isinstance(h, logging.FileHandler)]
+            files = [h for h in root.handlers if isinstance(h, logging.FileHandler)]
+            assert len(console) == 1 and len(files) == 1, root.handlers
+            logging.getLogger("probe").info("written to the file, not the console")
+            return console[0].level, files[0].level, root.level
+        finally:
+            for h in root.handlers:
+                h.close()
+            root.handlers, root.level = saved_handlers, saved_level
+
+    def test_quiet_raises_the_console_and_leaves_the_file_at_info(self, tmp_path):
+        import logging
+
+        console, file_level, root_level = self._levels(tmp_path, quiet=True)
+        assert console == logging.WARNING
+        assert file_level == logging.NOTSET  # inherits the root level below
+        assert root_level == logging.INFO
+        # The point of the flag: what the console drops, the file keeps.
+        assert "written to the file" in (tmp_path / "run.log").read_text(encoding="utf-8")
+
+    def test_without_quiet_the_console_is_unfiltered(self, tmp_path):
+        import logging
+
+        console, _file_level, root_level = self._levels(tmp_path, quiet=False)
+        assert console == logging.NOTSET
+        assert root_level == logging.INFO
+
+    def test_the_log_file_is_actually_written(self, tmp_path):
+        """setup_environment() calls basicConfig, which used to win.
+
+        basicConfig returns without acting when the root already has a handler,
+        so the FileHandler this function builds was constructed and dropped:
+        tokenizer_analysis.log was created and left empty on every run.
+        """
+        log = tmp_path / "run.log"
+        self._levels(tmp_path, quiet=False)
+        assert log.stat().st_size > 0, "the file handler was dropped again"
+
+    def test_quiet_is_not_recorded_as_a_measurement_setting(self):
+        """Two runs differing only in --quiet must have identical provenance."""
+        from tokenizer_analysis.cli.run_analysis import (
+            _OUTPUT_ONLY_ARGS, _non_default_arguments,
+        )
+
+        assert "quiet" in _OUTPUT_ONLY_ARGS
+        assert "quiet" not in _non_default_arguments(_args(quiet=True))

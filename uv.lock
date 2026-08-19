@@ -2393,7 +2393,7 @@ wheels = [
 
 [[package]]
 name = "tokenizer-intrinsic-evals"
-version = "1.0.2"
+version = "1.0.3"
 source = { editable = "." }
 dependencies = [
     { name = "matplotlib" },
