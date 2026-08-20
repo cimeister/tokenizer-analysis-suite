@@ -172,7 +172,11 @@ class BaseMetrics(ABC):
         anything shipped here.
         """
         corpus_names = getattr(self.input_provider, 'corpus_names', None)
-        if not callable(corpus_names) or name not in corpus_names():
+        if not callable(corpus_names):
+            return None
+        # set(), not the list: corpus_names() builds a fresh list on every call
+        # and this runs once per corpus per metric construction.
+        if name not in set(corpus_names()):
             return None
         return self.input_provider.get_corpus(name)
 

@@ -540,15 +540,20 @@ class TestTheCodeAndMathCorporaAreEncodedOncePerRun:
         assert domain["exact_match_rate"] == pytest.approx(1.0)
 
 
-class TestATokenizerThatCannotEncodeRawTextIsSkipped:
+class TestATokenizerThatCannotEncodeRawTextGetsNoCodeOrMathDomain:
     """Decided 2026-08-19, and the one deliberate behaviour change of this
     refactor.
 
     This metric selects tokenizers on can_decode() alone and then encodes the
     code and math texts, so a tokenizer that decodes but cannot encode raw text
-    used to raise out of the whole analysis. It is now skipped with a warning
-    naming it, which is what InputProvider._encode_corpus already does with the
-    same tokenizer.
+    used to raise out of the whole analysis. It now loses the code and math
+    domains with a warning naming it, which is what
+    InputProvider._encode_corpus already does with the same tokenizer.
+
+    Only those domains. An earlier version of this dropped the tokenizer from
+    the results entirely, which took its prose numbers with it even though
+    those are computed from the ids already in the TokenizedData and need no
+    encoder.
     """
 
     @staticmethod
@@ -599,10 +604,25 @@ class TestATokenizerThatCannotEncodeRawTextIsSkipped:
         assert set(per_tokenizer) == {"encoder"}
         assert per_tokenizer["encoder"]["by_domain"]["code_python"]["count"] == 1
         assert any(
-            "Reconstruction fidelity: skipping ids_only" in record.getMessage()
+            "ids_only" in record.getMessage()
             and "cannot encode raw text" in record.getMessage()
             for record in caplog.records
         ), [record.getMessage() for record in caplog.records]
+
+    def test_it_keeps_its_prose_domains(self):
+        """The prose numbers need no encoder, so losing them was avoidable."""
+        tokenizer = self._decode_only_tokenizer()
+        provider = self._provider({"ids_only": tokenizer})
+        metrics = BasicTokenizationMetrics(provider)
+
+        prose = {"ids_only": [_make_td("ids_only", "hi", [ord("h"), ord("i")])]}
+        results = metrics.compute_reconstruction_fidelity_analysis(prose)
+
+        by_domain = results["reconstruction_fidelity"]["per_tokenizer"]["ids_only"]["by_domain"]
+        assert by_domain["en"]["exact_match_rate"] == pytest.approx(1.0)
+        assert not [d for d in by_domain if d.startswith("code_") or d == "math"], (
+            f"the code corpus needs an encoder this tokenizer lacks, got {sorted(by_domain)}"
+        )
 
     def test_it_is_not_skipped_when_there_is_no_code_or_math_text(self):
         """With nothing to encode the loop never calls encode(), so such a

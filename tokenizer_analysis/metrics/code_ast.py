@@ -354,6 +354,24 @@ class ASTBoundaryMetrics(BaseMetrics):
             self.code_loader.code_snippets.update(
                 {lang: list(texts) for lang, texts in self._code_corpus.texts.items()}
             )
+            # A registered corpus with no texts is refused rather than scored.
+            # The synthetic fallback below is reachable only when nothing was
+            # registered, so an empty registered corpus used to leave this
+            # metric with zero snippets and publish empty per-language blocks
+            # for every tokenizer, with no error and no warning saying that
+            # nothing had been measured. code_corpus_from_texts drops labels
+            # whose list is empty, so code_texts={"python": []} produces exactly
+            # this.
+            if not self.code_loader.code_snippets:
+                raise ValueError(
+                    f"The registered {CODE_CORPUS!r} corpus from "
+                    f"{self._code_corpus.source!r} holds no texts, so these "
+                    "metrics have nothing to measure. Publishing an empty "
+                    "result for every tokenizer would read as a corpus that "
+                    "scored nothing rather than one that was never there. "
+                    "Register a corpus with texts, or register none and let "
+                    "this metric load its own."
+                )
         else:
             if code_config:
                 self.code_loader.load_all()

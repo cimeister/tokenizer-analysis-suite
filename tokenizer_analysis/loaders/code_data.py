@@ -123,10 +123,14 @@ class CodeDataLoader:
         # Per-language counts of files dropped by max_snippets_per_lang,
         # characters discarded by max_snippet_chars, and snippets dropped
         # because truncating them to max_snippet_chars left only whitespace,
-        # filled in by _load_language. Lets a caller (e.g. run metadata)
-        # report what a cap actually did without re-scanning the corpus; all
-        # three are 0 for every language when no cap is active, which is the
-        # default.
+        # filled in by _load_language. All three are 0 for every language when
+        # no cap is active, which is the default.
+        #
+        # Nothing reads them today. In a pipeline run the loader that does the
+        # loading is the one loaders/corpora.py builds and discards, so the
+        # loader a caller can reach through ASTBoundaryMetrics.code_loader has
+        # empty counters whatever the caps did. The record of a cap discarding
+        # data is the warning each of the three logs, not these attributes.
         self.dropped_file_counts: Dict[str, int] = {}
         self.truncated_char_counts: Dict[str, int] = {}
         self.dropped_whitespace_only_counts: Dict[str, int] = {}

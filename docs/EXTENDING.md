@@ -181,8 +181,10 @@ the failure that check exists to prevent.
 
 Subclasses should also implement `get_tokenizer(name)`, which returns the
 `TokenizerWrapper` for a name. `InputProvider` defines it, but the definition
-raises `NotImplementedError`, so a provider that omits it fails at the class
-rather than several frames later. Callers do not all treat that the same way.
+raises `NotImplementedError`. The method is concrete, so a provider that omits
+it still constructs; the failure comes at the first call, with a message naming
+the provider class rather than an `AttributeError` about a missing attribute.
+Callers do not all treat that the same way.
 `_encode_corpus` leaves the tokenizer out of the encoded corpus and
 reconstruction fidelity skips it, both with a logged warning; MorphScore records
 an `error` for that tokenizer in its results; and the digit, AST and UTF-8

@@ -205,6 +205,12 @@ conflicting flags.
   raises `ImportError`. It was not exported from `tokenizer_analysis.core` and
   no CLI path constructed it.
 
+  **Breaking**: building a second `UnifiedTokenizerAnalyzer` over an input
+  provider that already has one raises `A corpus named 'code' is already
+  registered`. The analyzer registers the code and math corpora on the provider,
+  and a name is registered once so that two loaders cannot disagree about what
+  a corpus holds. Build the second analyzer over its own provider.
+
   `BasicTokenizationMetrics`, `DigitBoundaryMetrics` and `ASTBoundaryMetrics`
   raise when given corpus arguments while a corpus of that name is registered
   on the input provider.

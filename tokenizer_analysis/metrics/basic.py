@@ -763,12 +763,25 @@ class BasicTokenizationMetrics(BaseMetrics):
                     'whitespace_definition': WHITESPACE_DEFINITION,
                     'aggregation': AGGREGATION_MICRO_POOLED,
                     'count_unit': 'documents',
+                    # Conditional, because a grouped run reports prose only.
+                    # A fixed string here described code and math domains that
+                    # every grouped block is now guaranteed not to contain, so a
+                    # consumer reading the metadata to decide which keys to
+                    # expect got a contract the output did not meet.
                     'per_domain': (
                         'This metric breaks down by domain rather than by '
                         'language: per_domain holds one entry per language of '
                         'the prose corpus, one per programming language and '
                         'one for math. Each entry carries count in documents, '
                         'so it is the per_language block under another name.'
+                        if include_code_math else
+                        'This metric breaks down by domain rather than by '
+                        'language: per_domain holds one entry per language of '
+                        'the prose corpus. This run reports no code or math '
+                        'domain, because it covers one group of prose '
+                        'languages and the code and math corpora belong to no '
+                        'language. Each entry carries count in documents, so '
+                        'it is the per_language block under another name.'
                     ),
                 },
             }
@@ -821,6 +834,10 @@ class BasicTokenizationMetrics(BaseMetrics):
                 logger.info("Reconstruction fidelity: skipping %s (no decode support)", tok_name)
                 continue
 
+            # Whether this tokenizer gets the code and math domains. Its prose
+            # domains are computed either way, from the ids already in the
+            # TokenizedData it was handed, which need no encoder.
+            tokenizer_code_math = bool(total_code_math_texts)
             if total_code_math_texts:
                 # This metric selects on can_decode() alone, and the code/math
                 # loop below then needs raw text encoded. A tokenizer that
@@ -830,26 +847,26 @@ class BasicTokenizationMetrics(BaseMetrics):
                 # can_decode() false and the check above already skipped it, so
                 # this is reachable through a caller's own tokenizer object
                 # rather than through anything shipped here.
-                # Decided 2026-08-19: skip it with a warning instead,
-                # which is what InputProvider._encode_corpus already does with
-                # the same tokenizer, so it is left out of the encoded corpus
-                # rather than crashing the run. The check is conditional on
-                # there being code or math text because with none the loop
-                # encodes nothing, and such a tokenizer's prose numbers are
-                # measurable exactly as they have always been.
+                # Decided 2026-08-19: skip rather than crash the run, which is
+                # what InputProvider._encode_corpus already does with the same
+                # tokenizer. Only the code and math domains are skipped: this
+                # used to `continue`, which dropped the tokenizer from the
+                # results entirely and took its prose numbers with it, though
+                # those come from ids that are already in hand.
                 if not InputProvider.can_encode_raw_text(tokenizer):
                     logger.warning(
-                        "Reconstruction fidelity: skipping %s (it decodes but "
-                        "cannot encode raw text, and this run has %d code/math "
-                        "texts to encode; its prose domains are skipped with "
-                        "it). Pre-tokenized input supplies ids, not an encoder.",
+                        "Reconstruction fidelity: %s decodes but cannot encode "
+                        "raw text, so it gets no code or math domain from the "
+                        "%d code/math texts in this run. Its prose domains are "
+                        "reported as usual. Pre-tokenized input supplies ids, "
+                        "not an encoder.",
                         tok_name, total_code_math_texts,
                     )
-                    continue
+                    tokenizer_code_math = False
                 missing = sorted(
                     corpus_name for corpus_name, per_corpus in shared_ids.items()
                     if tok_name not in per_corpus
-                )
+                ) if tokenizer_code_math else []
                 if missing:
                     raise ValueError(
                         f"Tokenizer {tok_name!r} passes "
@@ -981,12 +998,14 @@ class BasicTokenizationMetrics(BaseMetrics):
             # InputProvider._encode_corpus applies, so every text kept here has
             # an entry in shared_ids and a text it drops has none.
             code_math_pairs: List[Tuple[str, str, str, str]] = []
-            for lang, snippets in code_texts.items():
+            # Empty when this tokenizer cannot encode raw text; it still gets
+            # its prose domains from the ids it was handed.
+            for lang, snippets in (code_texts if tokenizer_code_math else {}).items():
                 domain = f"code_{lang}"
                 for snippet in snippets:
                     if snippet and snippet.strip():
                         code_math_pairs.append((snippet, domain, CODE_CORPUS, lang))
-            for label, text in math_items:
+            for label, text in (math_items if tokenizer_code_math else []):
                 if text and text.strip():
                     code_math_pairs.append((text, "math", MATH_CORPUS, label))
 

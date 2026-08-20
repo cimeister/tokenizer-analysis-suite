@@ -155,6 +155,24 @@ class Corpus:
     source: str
     synthetic: bool
 
+    def __post_init__(self):
+        """Copy *texts*, so ``frozen=True`` means what it says.
+
+        The dataclass being frozen stops the four fields being reassigned and
+        does nothing about the dict and the lists inside one of them. A caller
+        who appended to their own list after registering a corpus changed a
+        corpus the provider had already encoded and cached, so ``stats()``
+        reported one size while the published numbers were measured on other
+        contents. Copying here covers every construction site; it used to be
+        done in one of the three factories in loaders/corpora.py.
+
+        A Corpus is still not hashable, because ``texts`` is a dict.
+        """
+        object.__setattr__(
+            self, "texts",
+            {label: list(texts) for label, texts in self.texts.items()},
+        )
+
     def stats(self) -> Dict[str, Any]:
         """Size of this corpus, so a reported domain can be traced to what it measured.
 
