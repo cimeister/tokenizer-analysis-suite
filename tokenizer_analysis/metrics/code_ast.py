@@ -29,7 +29,7 @@ import logging
 
 from .base import BaseMetrics, format_optional
 from ..constants import AGGREGATION_MICRO_POOLED
-from ..core.input_types import CODE_CORPUS, Corpus
+from ..core.input_types import CODE_CORPUS, Corpus, TokenizedData
 from ..core.input_providers import InputProvider
 
 # Import constants and helpers from the lightweight worker module.
@@ -274,8 +274,10 @@ class ASTBoundaryMetrics(BaseMetrics):
 
     The code this metric measures is the corpus the run registered on the input
     provider, or, when there is none, code this metric loads itself from config
-    paths or from the bundled samples. Either way it encodes that code with each
-    tokenizer and does **not** use the ``tokenized_data`` parameter passed to
+    paths or from the bundled samples. A registered corpus is read back from the
+    provider already encoded, so it is encoded once for the whole run rather
+    than once per metric; code this metric loaded itself is encoded here. Either
+    way it does **not** use the ``tokenized_data`` parameter passed to
     :meth:`compute`.
     """
 
@@ -355,6 +357,72 @@ class ASTBoundaryMetrics(BaseMetrics):
                 synthetic = CodeDataLoader.generate_synthetic_samples()
                 for lang, snippets in synthetic.items():
                     self.code_loader.code_snippets.setdefault(lang, []).extend(snippets)
+
+    def _shared_code_encodings(
+        self, active_tokenizers: List[Tuple[str, Any]]
+    ) -> Optional[Dict[str, Dict[Tuple[str, str], TokenizedData]]]:
+        """The registered code corpus already encoded, indexed by (language, text).
+
+        Returns None when no code corpus is registered, which tells
+        :meth:`compute` to encode each snippet itself as it always has.
+
+        The provider encodes a registered corpus once and memoizes it, so
+        reading the encoding from there rather than calling
+        ``encode_with_offsets`` per snippet means the corpus is encoded once for
+        the whole run instead of once per metric that reads it. It is also the
+        faster encode, because the provider encodes one batch per language.
+        Measured with tokenizers/bpe.json over the 1500 files the config
+        benchmarks/open_source/code_ast_config.json names: 10.29 s of
+        per-snippet ``encode_with_offsets`` against 4.00 s for the provider's
+        batched encode, and 0.00 s for every read after the first.
+        ``HuggingFaceTokenizer`` (with ``UniMixLMTokenizer``, which subclasses
+        it) and ``CustomBPETokenizer`` are the wrappers with a native batch
+        path. For every other wrapper ``encode_batch_with_offsets`` is a
+        per-text loop, so only the single-encoding part of this applies.
+
+        The index is keyed by ``(language, text)`` and never by position. The
+        provider's encode keeps only texts satisfying ``text and text.strip()``,
+        so its list for a language is shorter than the loader's snippet list
+        whenever a snippet is whitespace-only, which ``max_snippet_chars``
+        produces by truncating an indented file down to its leading whitespace.
+        Pairing the two lists by index after one such drop would score every
+        later AST span against the following snippet's tokens, and nothing in
+        the results would show it. Two identical snippets collapse onto one
+        entry, which is harmless: identical text encodes to identical ids and
+        identical offsets.
+        """
+        if self._code_corpus is None:
+            return None
+        encoded = self.input_provider.get_tokenized_data(CODE_CORPUS)
+        lookup: Dict[str, Dict[Tuple[str, str], TokenizedData]] = {}
+        for tok_name, records in encoded.items():
+            per_tokenizer: Dict[Tuple[str, str], TokenizedData] = {}
+            for record in records:
+                # A record carrying no text cannot be matched to a snippet.
+                # InputProvider._encode_corpus always sets it; a provider that
+                # supplies its own records for this corpus need not. Such a
+                # record is left out of the index, and the snippet it was meant
+                # for then raises from compute() naming the tokenizer.
+                if record.text is None:
+                    continue
+                per_tokenizer[(record.language, record.text)] = record
+            lookup[tok_name] = per_tokenizer
+        missing = sorted(
+            name for name, _ in active_tokenizers if name not in lookup
+        )
+        if missing:
+            raise ValueError(
+                f"Tokenizer(s) {missing} report can_encode() true, which is how "
+                "this metric selects the tokenizers it scores, but the shared "
+                f"{CODE_CORPUS!r} corpus holds no encoding for them. "
+                "InputProvider._encode_corpus selects on _can_encode_raw_text, "
+                "which additionally requires a callable encode attribute, so "
+                "the two predicates disagree for these tokenizers. Encoding "
+                "them here instead would undo the single encoding this path "
+                "exists for, and skipping them would drop them from the AST "
+                "results with nothing in the output saying they are absent."
+            )
+        return lookup
 
     # ------------------------------------------------------------------
     # Tree-sitter helpers
@@ -1113,6 +1181,7 @@ class ASTBoundaryMetrics(BaseMetrics):
                     tok_name,
                 )
 
+        shared_encodings = self._shared_code_encodings(active_tokenizers)
 
         for code_lang, spans_list in parsed_spans.items():
             snippets = code_snippets[code_lang]
@@ -1179,16 +1248,50 @@ class ASTBoundaryMetrics(BaseMetrics):
 
                 # Per-tokenizer work
                 for tok_name, tokenizer in active_tokenizers:
-                    try:
-                        token_ids, enc_offsets = tokenizer.encode_with_offsets(
-                            snippet
+                    if shared_encodings is None:
+                        # No corpus was registered, so this metric loaded its
+                        # own code and there is nothing to share. It encodes
+                        # here, as it always has. scripts/run_ast_only.py,
+                        # per_example.py and most of the test suite reach this
+                        # branch.
+                        try:
+                            token_ids, enc_offsets = tokenizer.encode_with_offsets(
+                                snippet
+                            )
+                        except Exception as e:
+                            logger.debug(
+                                "Encoding failed for %s on %s snippet: %s",
+                                tok_name, code_lang, e,
+                            )
+                            continue
+                    else:
+                        record = shared_encodings[tok_name].get(
+                            (code_lang, snippet)
                         )
-                    except Exception as e:
-                        logger.debug(
-                            "Encoding failed for %s on %s snippet: %s",
-                            tok_name, code_lang, e,
-                        )
-                        continue
+                        if record is None:
+                            raise ValueError(
+                                f"The shared {CODE_CORPUS!r} corpus holds no "
+                                f"encoding of {code_lang} snippet {si + 1} of "
+                                f"{len(spans_list)} for tokenizer {tok_name!r}. "
+                                "The snippet this metric parsed and the texts "
+                                "the provider encoded are supposed to be the "
+                                "same strings; they are not. The known cause is "
+                                "InputProvider._encode_corpus dropping a text "
+                                "that is empty or whitespace-only, which "
+                                "max_snippet_chars produces when it truncates "
+                                "an indented file down to its leading "
+                                "whitespace. Scoring this snippet against "
+                                "another snippet's tokens is what keying the "
+                                "lookup by text instead of by position "
+                                "prevents, so it fails here rather than "
+                                "reporting a number measured against the wrong "
+                                "source. Snippet starts: "
+                                f"{snippet[:60]!r}"
+                            )
+                        token_ids, enc_offsets = record.tokens, record.offsets
+                    # A record whose tokens are empty lands here too, which is
+                    # the case this skip already covered when the encoding
+                    # happened above.
                     if not token_ids:
                         continue
 

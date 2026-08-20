@@ -3343,3 +3343,82 @@ class TestFastMethodsParity:
             assert ASTBoundaryMetrics._count_identifier_tokens_fast(
                 c_start, c_end, s2r_arr, c2t_arr, c2t_len
             ) is None
+
+
+# ======================================================================
+# One encoding of the registered code corpus per run
+# ======================================================================
+
+class TestTheCodeCorpusIsEncodedOncePerRun:
+    """The registered code corpus is encoded once, not once per metric.
+
+    ASTBoundaryMetrics and DigitBoundaryMetrics both measure the code corpus.
+    Each used to encode it itself, so a run with both active encoded every
+    snippet twice. Both now read the encoding the provider memoizes.
+    """
+
+    @pytest.fixture(scope="class")
+    def ts_pack(self):
+        try:
+            import tree_sitter_language_pack
+            return tree_sitter_language_pack
+        except ImportError:
+            pytest.skip("tree-sitter-language-pack not installed")
+
+    def test_both_metrics_read_one_encoding_of_each_snippet(self, ts_pack):
+        from collections import Counter
+
+        from tokenizer_analysis.core.input_types import (
+            CODE_CORPUS, MATH_CORPUS, Corpus,
+        )
+        from tokenizer_analysis.metrics.math import DigitBoundaryMetrics
+
+        class _CountingCharTokenizer(_CharTokenizer):
+            """Records every text it is asked to encode."""
+
+            def __init__(self):
+                super().__init__()
+                self.encoded_texts = []
+
+            def encode_with_offsets(self, text):
+                self.encoded_texts.append(text)
+                return super().encode_with_offsets(text)
+
+            def get_vocab_size(self):
+                return 256
+
+        code_texts = {
+            "python": [
+                "def add(a, b):\n    return a + b\n",
+                "total = 12 + 345\n",
+            ],
+        }
+        tokenizer = _CountingCharTokenizer()
+        provider = _MockProvider("tok", tokenizer)
+        provider.add_corpus(Corpus(
+            name=CODE_CORPUS, texts=code_texts,
+            source="test code", synthetic=False,
+        ))
+        provider.add_corpus(Corpus(
+            name=MATH_CORPUS, texts={MATH_CORPUS: ["12 + 345 = 357"]},
+            source="test math", synthetic=False,
+        ))
+
+        ast_result = ASTBoundaryMetrics(provider).compute()
+        digit_result = DigitBoundaryMetrics(provider).compute()
+
+        counts = Counter(tokenizer.encoded_texts)
+        assert [counts[text] for text in code_texts["python"]] == [1, 1], (
+            "each code snippet is encoded once for the whole run"
+        )
+
+        # Both metrics have to have measured something, or the count above is
+        # one because a metric produced nothing rather than because the two
+        # share an encoding.
+        ast = ast_result["ast_boundary_alignment"]
+        assert "error" not in ast
+        assert ast["per_tokenizer"]["tok"]["overall"]["count"] > 0
+        code_domain = (
+            digit_result["operator_isolation_rate"]["by_domain"][CODE_CORPUS]
+        )
+        assert code_domain["summary"]["tok"]["total_operators"] > 0
