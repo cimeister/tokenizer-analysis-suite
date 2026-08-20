@@ -324,6 +324,122 @@ class TestReconstructionFidelity:
 
 
 # ======================================================================
+# T8b: Reconstruction fidelity, code/math branch (basic.py:740-826)
+# ======================================================================
+
+class TestReconstructionFidelityCodeMath:
+    """Pins compute_reconstruction_fidelity_analysis's code_texts/math_texts
+    branch, which no other test exercises: nothing else in this file passes
+    code_texts= to BasicTokenizationMetrics or a math corpus, so the
+    code_<lang> and math per_domain entries, and the encode()/decode() calls
+    that build them, run under no test but this one.
+    """
+
+    @staticmethod
+    def _char_roundtrip_tokenizer():
+        """A tokenizer whose encode/decode is exactly reversible per
+        character: encode(text) is ord() of each character, decode(ids) is
+        chr() of each id. Round-tripping is lossless by construction, so
+        exact_match_rate is 1.0 regardless of the snippet content, and the
+        token count for a snippet is exactly its character count.
+        """
+        return _MockDecodableTokenizer(
+            encode_fn=lambda t: [ord(c) for c in t],
+            decode_fn=lambda ids: "".join(chr(i) for i in ids),
+        )
+
+    @pytest.fixture
+    def code_math_setup(self, tmp_path):
+        tok_name = "mock_tok"
+        tok = self._char_roundtrip_tokenizer()
+        provider = _MockDecodableProvider(tok_name, tok)
+
+        math_text = "2 + 2 = 4"
+        math_file = tmp_path / "math.txt"
+        math_file.write_text(math_text + "\n", encoding="utf-8")
+
+        code_texts = {"python": ["print(1)"], "cpp": ["int x = 1;"]}
+        metrics = BasicTokenizationMetrics(
+            provider,
+            code_texts=code_texts,
+            math_data_path=str(math_file),
+        )
+        return tok_name, metrics, code_texts, math_text
+
+    def test_per_domain_keys_are_code_lang_and_math(self, code_math_setup):
+        """by_domain has exactly one code_<lang> entry per language passed to
+        code_texts=, plus one "math" entry.
+
+        If the code changed the label it writes -- dropping the "code_"
+        prefix, using the raw language name, or lumping code and math into a
+        single "code_math" bucket -- the key set here would no longer match,
+        and a report reader could no longer tell which language a code
+        reconstruction number belongs to.
+        """
+        tok_name, metrics, code_texts, _math_text = code_math_setup
+        results = metrics.compute_reconstruction_fidelity_analysis({tok_name: []})
+
+        by_domain = results["reconstruction_fidelity"]["per_tokenizer"][tok_name]["by_domain"]
+        expected_keys = {f"code_{lang}" for lang in code_texts} | {"math"}
+        assert set(by_domain.keys()) == expected_keys
+
+    def test_lossless_tokenizer_reconstructs_every_snippet(self, code_math_setup):
+        """A lossless tokenizer's exact_match_rate is 1.0 in every code/math
+        domain and overall, since decode(encode(text)) == text for all of
+        them by construction of the fixture tokenizer.
+
+        If the code/math loop stopped calling decode() on these texts, or
+        compared against the wrong reference string, this would report
+        something less than 1.0 even though nothing was actually lost.
+        """
+        tok_name, metrics, code_texts, _math_text = code_math_setup
+        results = metrics.compute_reconstruction_fidelity_analysis({tok_name: []})
+
+        by_domain = results["reconstruction_fidelity"]["per_tokenizer"][tok_name]["by_domain"]
+        for lang in code_texts:
+            assert by_domain[f"code_{lang}"]["exact_match_rate"] == pytest.approx(1.0)
+        assert by_domain["math"]["exact_match_rate"] == pytest.approx(1.0)
+
+        summary = results["reconstruction_fidelity"]["summary"][tok_name]
+        assert summary["exact_match_rate"] == pytest.approx(1.0)
+
+    def test_math_token_count_is_the_encoded_id_count(self, code_math_setup):
+        """math's total_tokens is len(tokenizer.encode(math_text)): with the
+        char-roundtrip fixture tokenizer that is exactly len(math_text),
+        one id per character.
+
+        This pins that total_tokens is read from the ids tokenizer.encode()
+        actually returns rather than, say, a word or character count computed
+        independently of the tokenizer. If encode() ever returned a different
+        id sequence for the same text, this count would move with it.
+        """
+        tok_name, metrics, _code_texts, math_text = code_math_setup
+        results = metrics.compute_reconstruction_fidelity_analysis({tok_name: []})
+
+        math_domain = results["reconstruction_fidelity"]["per_tokenizer"][tok_name]["by_domain"]["math"]
+        assert math_domain["count"] == 1
+        assert math_domain["total_tokens"] == len(math_text)
+
+    def test_code_domain_counts_and_tokens_per_language(self, code_math_setup):
+        """Each code_<lang> domain's count is the number of snippets supplied
+        for that language, and total_tokens sums each snippet's encoded id
+        count -- here, its character count, one id per character.
+
+        This pins that snippets are grouped by their code_texts= key rather
+        than merged into one shared "code" bucket, and that each language's
+        token total is specific to that language's snippets.
+        """
+        tok_name, metrics, code_texts, _math_text = code_math_setup
+        results = metrics.compute_reconstruction_fidelity_analysis({tok_name: []})
+
+        by_domain = results["reconstruction_fidelity"]["per_tokenizer"][tok_name]["by_domain"]
+        for lang, snippets in code_texts.items():
+            domain = by_domain[f"code_{lang}"]
+            assert domain["count"] == len(snippets)
+            assert domain["total_tokens"] == sum(len(s) for s in snippets)
+
+
+# ======================================================================
 # T9: _character_error_rate edge cases
 # ======================================================================
 
