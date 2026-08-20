@@ -25,7 +25,7 @@ import scipy.stats
 from collections import defaultdict
 import logging
 
-from ..core.input_types import TokenizedData
+from ..core.input_types import Corpus, TokenizedData
 from ..core.input_providers import InputProvider
 from ..core.tokenizer_wrapper import resolve_special_token_strings
 from ..constants import (
@@ -153,6 +153,46 @@ class BaseMetrics(ABC):
         # unresolved or undetected marker set both mean "strip nothing".
         self._subword_markers: Optional[Set[str]] = None
         self._subword_marker_cache: Dict[int, Tuple[Any, Set[str]]] = {}
+
+    def _registered_corpus(self, name: str) -> Optional['Corpus']:
+        """The corpus registered under *name* on the input provider, or None.
+
+        None means the run registered nothing, and the metric then builds the
+        corpus from its own constructor arguments. That path is what keeps the
+        classes constructible on their own: per_example.py and
+        scripts/run_ast_only.py both build a metric against a provider that
+        carries no corpora, and so does most of the test suite.
+
+        The registry is looked up by attribute rather than assumed, because a
+        provider need not be an ``InputProvider`` subclass. The two stand-ins in
+        this package that are not (``per_example._StubInputProvider`` and the
+        test suite's ``MockProvider``) reach the metric classes the same way a
+        caller's own duck-typed provider would.
+        """
+        corpus_names = getattr(self.input_provider, 'corpus_names', None)
+        if not callable(corpus_names) or name not in corpus_names():
+            return None
+        return self.input_provider.get_corpus(name)
+
+    def _register_corpus(self, corpus: 'Corpus') -> 'Corpus':
+        """Register a corpus this metric built itself, and return it.
+
+        The provider is where a corpus is encoded and memoized per tokenizer, so
+        a metric that had to build its own still puts it there rather than
+        keeping it. A provider that does not implement the registry is named
+        here, rather than reaching the encode call three frames later as an
+        AttributeError on a method nobody mentioned.
+        """
+        add_corpus = getattr(self.input_provider, 'add_corpus', None)
+        if not callable(add_corpus):
+            raise TypeError(
+                f"{type(self.input_provider).__name__} does not implement "
+                f"add_corpus, so the {corpus.name!r} corpus this metric built "
+                "cannot be encoded. Subclass InputProvider, which implements "
+                "the corpus registry."
+            )
+        add_corpus(corpus)
+        return corpus
 
     def _resolve_special_tokens(self, tokenizer: Any) -> Set[str]:
         """Special-token strings declared by *tokenizer*, memoized per object.

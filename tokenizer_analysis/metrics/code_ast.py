@@ -29,6 +29,7 @@ import logging
 
 from .base import BaseMetrics, format_optional
 from ..constants import AGGREGATION_MICRO_POOLED
+from ..core.input_types import CODE_CORPUS, Corpus
 from ..core.input_providers import InputProvider
 
 # Import constants and helpers from the lightweight worker module.
@@ -271,15 +272,24 @@ def parse_snippets_fenced(
 class ASTBoundaryMetrics(BaseMetrics):
     """AST boundary alignment metrics for code tokenization.
 
-    This metric loads its own code data (from config paths or synthetic
-    samples) and encodes it with each tokenizer.  It does **not** use the
-    ``tokenized_data`` parameter passed to :meth:`compute`.
+    The code this metric measures is the corpus the run registered on the input
+    provider, or, when there is none, code this metric loads itself from config
+    paths or from the bundled samples. Either way it encodes that code with each
+    tokenizer and does **not** use the ``tokenized_data`` parameter passed to
+    :meth:`compute`.
     """
 
     _CATEGORIES = _CATEGORIES_TUPLE
 
     # Timeout (seconds) for each per-language tree-sitter subprocess.
     _PER_LANG_TIMEOUT = DEFAULT_PARSE_TIMEOUT_S
+
+    # The registered code corpus, or None when this metric loaded its own. A
+    # class attribute rather than an instance one because the tests build this
+    # class with object.__new__ and set only the attributes they exercise; an
+    # attribute that exists only after __init__ ran turns those into
+    # AttributeError.
+    _code_corpus: Optional[Corpus] = None
 
     def __init__(
         self,
@@ -309,27 +319,42 @@ class ASTBoundaryMetrics(BaseMetrics):
         self.max_snippets_per_lang = self.code_loader.max_snippets_per_lang
         self.max_snippet_chars = self.code_loader.max_snippet_chars
 
-        if code_config:
-            self.code_loader.load_all()
-            # Synthetic samples are the documented behaviour for an empty
-            # code_config only. Substituting them for a config that named real
-            # paths reports code metrics computed on toy snippets under the name
-            # of the corpus the user asked for: measured 0.562 full AST
-            # alignment on synthetic against 0.493 on StarCoder for the same
-            # tokenizer.
-            if not self.code_loader.code_snippets:
-                raise ValueError(
-                    "The code config named "
-                    f"{', '.join(sorted(code_config))} but no snippet was read "
-                    "from any of those paths. Check that the directories hold "
-                    "files with the expected extensions."
-                )
+        self._code_corpus = self._registered_corpus(CODE_CORPUS)
+        if self._code_corpus is not None:
+            # The run resolved the code corpus once and registered it. Loading
+            # it again here read every configured file a second time and applied
+            # the caps a second time, with nothing checking that the two loads
+            # agreed, while this metric and the code domain of operator
+            # isolation both reported on "the" code corpus.
+            #
+            # It still goes through the loader rather than being read straight
+            # off the corpus, so that get_code_snippets keeps applying
+            # max_snippets_per_lang as its final safety net.
+            self.code_loader.code_snippets.update(
+                {lang: list(texts) for lang, texts in self._code_corpus.texts.items()}
+            )
+        else:
+            if code_config:
+                self.code_loader.load_all()
+                # Synthetic samples are the documented behaviour for an empty
+                # code_config only. Substituting them for a config that named real
+                # paths reports code metrics computed on toy snippets under the name
+                # of the corpus the user asked for: measured 0.562 full AST
+                # alignment on synthetic against 0.493 on StarCoder for the same
+                # tokenizer.
+                if not self.code_loader.code_snippets:
+                    raise ValueError(
+                        "The code config named "
+                        f"{', '.join(sorted(code_config))} but no snippet was read "
+                        "from any of those paths. Check that the directories hold "
+                        "files with the expected extensions."
+                    )
 
-        # With no code config, synthetic samples are the documented input.
-        if not self.code_loader.code_snippets:
-            synthetic = CodeDataLoader.generate_synthetic_samples()
-            for lang, snippets in synthetic.items():
-                self.code_loader.code_snippets.setdefault(lang, []).extend(snippets)
+            # With no code config, synthetic samples are the documented input.
+            if not self.code_loader.code_snippets:
+                synthetic = CodeDataLoader.generate_synthetic_samples()
+                for lang, snippets in synthetic.items():
+                    self.code_loader.code_snippets.setdefault(lang, []).extend(snippets)
 
     # ------------------------------------------------------------------
     # Tree-sitter helpers
@@ -922,8 +947,9 @@ class ASTBoundaryMetrics(BaseMetrics):
 
         .. note::
 
-           *tokenized_data* is **not used**: the metric loads its own code
-           snippets and encodes them with each tokenizer.
+           *tokenized_data* is **not used**: the metric reads the registered
+           code corpus, or the snippets it loaded itself, and encodes them with
+           each tokenizer.
         """
         if not self._ensure_treesitter():
             return {

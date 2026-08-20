@@ -4,7 +4,9 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import pytest
-from tokenizer_analysis.core.input_types import TokenizedData, InputProvider
+from tokenizer_analysis.core.input_types import (
+    PROSE_CORPUS, InputProvider, TokenizedData,
+)
 
 
 class MockTokenizer:
@@ -17,8 +19,17 @@ class MockTokenizer:
         return [self._map[i] for i in ids]
 
 
-class MockProvider:
-    """Minimal InputProvider stand-in for end-to-end compute() tests."""
+class MockProvider(InputProvider):
+    """Minimal InputProvider stand-in for end-to-end compute() tests.
+
+    It subclasses InputProvider for the corpus registry. A metric that builds
+    its own code or math corpus registers it on the provider, which is where a
+    corpus is encoded and memoized, so a stand-in without the registry cannot
+    construct DigitBoundaryMetrics or ASTBoundaryMetrics at all.
+
+    The prose corpus stays empty: every test using this class passes prose to
+    compute() directly.
+    """
 
     def __init__(self, tok_name, tokenizer):
         self._name = tok_name
@@ -30,6 +41,17 @@ class MockProvider:
     def get_tokenizer(self, name):
         return self._tok
 
+    def get_tokenized_data(self, corpus=PROSE_CORPUS):
+        if corpus != PROSE_CORPUS:
+            return self._tokenized_corpus(corpus)
+        return {}
+
+    def get_vocab_size(self, tokenizer_name):
+        return 0
+
+    def get_languages(self, tokenizer_name=None):
+        return []
+
 
 class SimpleProvider(InputProvider):
     """Minimal InputProvider for unit-testing metric classes."""
@@ -38,7 +60,9 @@ class SimpleProvider(InputProvider):
         self._tok_name = tok_name
         self._vocab_size = vocab_size
 
-    def get_tokenized_data(self) -> Dict[str, List[TokenizedData]]:
+    def get_tokenized_data(self, corpus: str = PROSE_CORPUS) -> Dict[str, List[TokenizedData]]:
+        if corpus != PROSE_CORPUS:
+            return self._tokenized_corpus(corpus)
         return {}
 
     def get_tokenizer_names(self) -> List[str]:

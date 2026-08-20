@@ -80,6 +80,25 @@ class TokenizedData:
 #: every existing call site keeps reading the prose corpus.
 PROSE_CORPUS = "prose"
 
+#: The two corpora the run registers with ``add_corpus``. Both names are also
+#: published: as a domain of ``operator_isolation_rate.by_domain``, and, for
+#: code, as the ``code_<language>`` prefix of a reconstruction-fidelity domain.
+CODE_CORPUS = "code"
+#: Used twice for math: as the corpus name, and as the single label inside it,
+#: because the math corpus has no per-language split. The published
+#: ``by_language`` key for it is therefore "math:math".
+MATH_CORPUS = "math"
+
+#: ``Corpus.source`` for code the caller named with --code-ast-config, as
+#: opposed to the bundled samples. Published as ``by_domain.code.source``,
+#: which is what lets a reported code number be traced to the corpus it
+#: measured, so the two must stay distinguishable.
+CODE_DATASET_SOURCE = "code-ast dataset"
+#: ``Corpus.source`` for prose, published as ``by_domain.prose.source``. The
+#: prose corpus is not registered, so this names the corpus the run was given
+#: rather than one of the corpora it loaded.
+PROSE_SOURCE = "multilingual corpus"
+
 
 @dataclass(frozen=True)
 class Corpus:

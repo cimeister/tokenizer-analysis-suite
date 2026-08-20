@@ -33,9 +33,11 @@ import logging
 
 from .base import BaseMetrics, TokenizedDataProcessor, format_optional
 from ..constants import AGGREGATION_MICRO_POOLED
-from ..core.input_types import TokenizedData, check_batch_pairing
+from ..core.input_types import (
+    CODE_CORPUS, MATH_CORPUS, PROSE_CORPUS, PROSE_SOURCE, Corpus, TokenizedData,
+)
 from ..core.input_providers import InputProvider
-from ..utils.text_utils import load_math_data, BUILTIN_MATH_SAMPLES_PATH
+from ..loaders.corpora import code_corpus_from_texts, resolve_math_corpus
 
 logger = logging.getLogger(__name__)
 
@@ -136,75 +138,46 @@ class DigitBoundaryMetrics(BaseMetrics):
         # documents contain at least one character the regex matches.
         self._include_prose_operators = include_prose_operators
         self._math_data_path = math_data_path
-        self._math_texts: List[str] = []
-        if math_data_path:
-            self._math_texts = load_math_data(math_data_path)
-            if not self._math_texts:
-                raise ValueError(
-                    f"math_data_path {math_data_path!r} loaded 0 texts. Refusing to "
-                    "fall back to the bundled samples: the run would silently measure "
-                    "a different corpus than the one asked for."
-                )
-            logger.info(
-                "Loaded %d math texts from %s", len(self._math_texts), math_data_path
-            )
-        elif use_builtin_math_data:
-            self._math_texts = load_math_data(BUILTIN_MATH_SAMPLES_PATH)
-            logger.info(
-                "Loaded %d built-in math samples", len(self._math_texts)
-            )
 
-        # Corpora for the per-domain operator-isolation split. Prose is the
-        # corpus the metric already ran on; math and code use the caller's
-        # datasets when given and the bundled samples otherwise. The corpus
+        # The corpora for the per-domain operator-isolation split. Prose is the
+        # corpus the metric already ran on; code and math are registered on the
+        # provider by the run, and built here from the constructor arguments
+        # when this class is constructed on its own. Either way the corpus
         # actually used is recorded and reported, so a fallback is never silent.
-        if self._math_texts:
-            self._op_math_texts = self._math_texts
-            self._op_math_source = math_data_path or BUILTIN_MATH_SAMPLES_PATH
-        else:
-            self._op_math_texts = load_math_data(BUILTIN_MATH_SAMPLES_PATH)
-            self._op_math_source = BUILTIN_MATH_SAMPLES_PATH
-        if code_texts:
-            self._op_code_texts = {k: v for k, v in code_texts.items() if v}
-            self._op_code_source = "code-ast dataset"
-        else:
-            from ..loaders.code_data import CodeDataLoader
-            self._op_code_texts = CodeDataLoader.generate_synthetic_samples()
-            self._op_code_source = CodeDataLoader._BUILTIN_CODE_SAMPLES_PATH
+        self._code_corpus = self._registered_corpus(CODE_CORPUS)
+        if self._code_corpus is None:
+            self._code_corpus = self._register_corpus(
+                code_corpus_from_texts(code_texts)
+            )
+        self._math_corpus = self._registered_corpus(MATH_CORPUS)
+        if self._math_corpus is None:
+            self._math_corpus = self._register_corpus(
+                resolve_math_corpus(math_data_path, use_builtin_math_data)
+            )
 
-        # Encoding the derived corpora is the expensive part, and compute() can be
-        # called once per language group. Cache per corpus and per tokenizer.
-        self._encoded_corpus_cache: Dict[str, Dict[str, List[TokenizedData]]] = {}
-        self._decode_table_cache: Dict[str, Any] = {}
+        # The digit metrics run on the math corpus only when the caller asked
+        # for one. The bundled samples are registered as `synthetic` so that the
+        # math operator-isolation domain always has something to score, and the
+        # digit metrics then fall back to the prose corpus, which is what they
+        # have always done. compute() logs what that costs.
+        self._math_texts: List[str] = []
+        if not self._math_corpus.synthetic:
+            self._math_texts = [
+                text for texts in self._math_corpus.texts.values() for text in texts
+            ]
 
         if include_prose_operators:
             logger.info(
                 "Operator isolation domains: prose=multilingual, math=%s, code=%s",
-                self._op_math_source, self._op_code_source,
+                self._math_corpus.source, self._code_corpus.source,
             )
         else:
             logger.info(
                 "Operator isolation domains: math=%s, code=%s. The prose domain "
                 "is off; pass --operator-prose-domain to score the main corpus "
                 "as well.",
-                self._op_math_source, self._op_code_source,
+                self._math_corpus.source, self._code_corpus.source,
             )
-
-    @staticmethod
-    def _corpus_stats(texts_by_lang: Dict[str, List[str]]) -> Dict[str, Any]:
-        """Size of a corpus, so a reported domain can be traced to what it measured.
-
-        The pooled summary is a micro-average, so the domain that contributes the
-        most operators sets it. Publishing each domain's size is what lets a reader
-        see which corpus is doing the work.
-        """
-        per_lang = {lang: len(texts) for lang, texts in texts_by_lang.items()}
-        return {
-            "n_texts": sum(per_lang.values()),
-            "n_chars": sum(len(t) for texts in texts_by_lang.values() for t in texts),
-            "n_languages": len(per_lang),
-            "texts_per_language": dict(sorted(per_lang.items())),
-        }
 
     # ------------------------------------------------------------------
     # Digit-span boundary extraction
@@ -431,11 +404,10 @@ class DigitBoundaryMetrics(BaseMetrics):
         )
 
         if self._math_texts:
-            # _op_math_texts IS _math_texts whenever math texts were supplied, so
-            # the digit corpus and the math operator domain share one encoding.
-            tokenized_data = self._tokenize_texts_cached(
-                "math", {"math": self._math_texts}
-            )
+            # The registered math corpus IS _math_texts whenever the caller
+            # asked for math texts, so the digit corpus and the math operator
+            # domain below share one encoding.
+            tokenized_data = self.input_provider.get_tokenized_data(MATH_CORPUS)
             logger.info(
                 "Using %d dedicated math texts for digit boundary metrics",
                 len(self._math_texts),
@@ -537,7 +509,7 @@ class DigitBoundaryMetrics(BaseMetrics):
                         keep_later_token_on_overlap=True,
                     )
                     if char_to_token is None:
-                        if self._can_encode_raw_text(tokenizer_obj):
+                        if InputProvider._can_encode_raw_text(tokenizer_obj):
                             raise ValueError(
                                 "The digit metrics need character offsets, and "
                                 f"tokenizer {tok_name!r} encodes text but "
@@ -649,12 +621,12 @@ class DigitBoundaryMetrics(BaseMetrics):
         # code-and-math number.
         domain_accs = {}
         if self._include_prose_operators:
-            domain_accs["prose"] = self._accumulate_operators(prose_data)
-        domain_accs["code"] = self._accumulate_operators(
-            self._tokenize_texts_cached("code", self._op_code_texts)
+            domain_accs[PROSE_CORPUS] = self._accumulate_operators(prose_data)
+        domain_accs[CODE_CORPUS] = self._accumulate_operators(
+            self.input_provider.get_tokenized_data(CODE_CORPUS)
         )
-        domain_accs["math"] = self._accumulate_operators(
-            self._tokenize_texts_cached("math", {"math": self._op_math_texts})
+        domain_accs[MATH_CORPUS] = self._accumulate_operators(
+            self.input_provider.get_tokenized_data(MATH_CORPUS)
         )
         # Bundled paths are recorded relative to the package. They are derived
         # from __file__, so the absolute form bakes the author's checkout
@@ -663,17 +635,25 @@ class DigitBoundaryMetrics(BaseMetrics):
         # Keyed on domain_accs, so a domain that did not run is described
         # nowhere rather than being described with an empty result beside it.
         all_sources = {
-            "prose": "multilingual corpus",
-            "code": _relative_to_package(self._op_code_source),
-            "math": _relative_to_package(self._op_math_source),
+            PROSE_CORPUS: PROSE_SOURCE,
+            CODE_CORPUS: _relative_to_package(self._code_corpus.source),
+            MATH_CORPUS: _relative_to_package(self._math_corpus.source),
         }
         domain_sources = {d: all_sources[d] for d in domain_accs}
         # Size of each domain's corpus, so the pooled micro-average can be traced
-        # back to which corpus supplied the operators.
+        # back to which corpus supplied the operators. Prose is described as a
+        # Corpus too, recovered from the data the metric was handed, because the
+        # prose texts are never registered: they are whatever corpus the caller
+        # (or the provider) supplied for this call.
         all_corpora = {
-            "code": lambda: self._corpus_stats(self._op_code_texts),
-            "math": lambda: self._corpus_stats({"math": self._op_math_texts}),
-            "prose": lambda: self._corpus_stats(self._texts_by_language(prose_data)),
+            CODE_CORPUS: lambda: self._code_corpus.stats(),
+            MATH_CORPUS: lambda: self._math_corpus.stats(),
+            PROSE_CORPUS: lambda: Corpus(
+                name=PROSE_CORPUS,
+                texts=self._texts_by_language(prose_data),
+                source=PROSE_SOURCE,
+                synthetic=False,
+            ).stats(),
         }
         domain_corpora = {d: all_corpora[d]() for d in domain_accs}
 
@@ -738,145 +718,6 @@ class DigitBoundaryMetrics(BaseMetrics):
                     by_lang[item.language].append(item.text)
             return dict(by_lang)
         return {}
-
-    def _tokenize_texts_cached(
-        self, key: str, texts_by_lang: Dict[str, List[str]]
-    ) -> Dict[str, List[TokenizedData]]:
-        """``_tokenize_texts`` memoized per corpus.
-
-        ``compute()`` is called once per language group, and the code/math corpora
-        do not change between those calls, so they are encoded once rather than
-        re-encoded for every group.
-        """
-        if key not in self._encoded_corpus_cache:
-            self._encoded_corpus_cache[key] = self._tokenize_texts(texts_by_lang)
-        return self._encoded_corpus_cache[key]
-
-    @staticmethod
-    def _can_encode_raw_text(tokenizer_obj: Any) -> bool:
-        """Whether *tokenizer_obj* can encode raw text.
-
-        ``can_encode()`` is the predicate, not ``hasattr(tok, "encode")``:
-        ``PreTokenizedDataTokenizer`` *defines* ``encode`` and raises from it.
-
-        Used to tell two situations apart when no character offsets are
-        available: a tokenizer that encodes text and reported none is a defect
-        the caller has to know about, while a provider that only supplies
-        pre-tokenized ids never had offsets to give.
-        """
-        can_encode = getattr(tokenizer_obj, "can_encode", None)
-        encode = getattr(tokenizer_obj, "encode", None)
-        if callable(can_encode) and not can_encode():
-            return False
-        return callable(encode)
-
-    def _tokenize_texts(
-        self, texts_by_lang: Dict[str, List[str]]
-    ) -> Dict[str, List[TokenizedData]]:
-        """Tokenize a ``{language: [text, ...]}`` corpus with every tokenizer.
-
-        The code and math domains are derived corpora, so they have to be
-        encoded here. A tokenizer that cannot encode raw text (a provider that
-        only supplies pre-tokenized data) is omitted from the returned corpus
-        and logged; it then simply has no code/math domain rather than crashing
-        the whole metric.
-        """
-        out: Dict[str, List[TokenizedData]] = {}
-        for tok_name in self.tokenizer_names:
-            try:
-                tokenizer_obj = self.input_provider.get_tokenizer(tok_name)
-            except (ValueError, KeyError, AttributeError,
-                    NotImplementedError) as exc:
-                # NotImplementedError since InputProvider declared a concrete
-                # get_tokenizer: a provider that does not supply tokenizer
-                # objects used to fail here with AttributeError because the
-                # attribute was absent. Neither SimpleProvider in the tests nor
-                # _AstOnlyProvider in scripts/ implements it, so without this
-                # they would crash where they used to be skipped.
-                logger.warning(
-                    "No tokenizer available for %r (%s); it gets no code/math "
-                    "operator-isolation domain (prose only).", tok_name, exc,
-                )
-                continue
-            encode = getattr(tokenizer_obj, "encode", None)
-            if not self._can_encode_raw_text(tokenizer_obj):
-                logger.warning(
-                    "Tokenizer %r cannot encode raw text; it gets no code/math "
-                    "operator-isolation domain (prose only).", tok_name,
-                )
-                continue
-            # Encode with offsets where the wrapper supports it. The corpus
-            # loader already does this for prose, and operator isolation resolves
-            # operators to tokens through offsets, so a derived corpus without
-            # them would be skipped entirely and the code and math domains would
-            # silently vanish from the results.
-            encode_batch = getattr(tokenizer_obj, "encode_batch_with_offsets", None)
-            encode_offsets = getattr(tokenizer_obj, "encode_with_offsets", None)
-            items: List[TokenizedData] = []
-            for lang, texts in texts_by_lang.items():
-                usable = [text for text in texts if text and text.strip()]
-                if not usable:
-                    continue
-                # One batch call per language rather than one call per text.
-                # The Rust backends encode a batch across threads, which the
-                # per-text loop this replaced gave up: 4.14 s against 0.98 s
-                # over 300 files of the benchmark code corpus with gpt2, for
-                # the same ids.
-                #
-                # A batch is paired with its texts by position, which is the
-                # batch API's contract and what InputProvider already relies on
-                # for the prose corpus. check_batch_pairing below verifies the
-                # count for both corpora; a backend that returned the right
-                # number of encodings in the wrong order is caught by neither.
-                #
-                # The unpacking sits inside the try, so a backend that returns
-                # something other than (ids, offsets) pairs falls back to the
-                # per-text path rather than raising from the zip below. That is
-                # what the per-text path did with a bad return before this
-                # method encoded in batches.
-                encoded = None
-                if callable(encode_batch):
-                    try:
-                        encoded = [(ids, offsets)
-                                   for ids, offsets in encode_batch(usable)]
-                    except Exception as exc:
-                        logger.debug(
-                            "encode_batch_with_offsets failed for %r (%s); "
-                            "encoding one text at a time instead", tok_name, exc,
-                        )
-                        encoded = None
-                if encoded is None:
-                    encoded = []
-                    for text in usable:
-                        ids, offsets = None, None
-                        if callable(encode_offsets):
-                            try:
-                                ids, offsets = encode_offsets(text)
-                            except Exception as exc:
-                                logger.debug(
-                                    "encode_with_offsets failed for %r: %s",
-                                    tok_name, exc,
-                                )
-                                ids = None
-                        if ids is None:
-                            ids, offsets = encode(text), None
-                        encoded.append((ids, offsets))
-                check_batch_pairing(
-                    tok_name, lang, usable, encoded,
-                    "operator-isolation corpus",
-                )
-                for text, (ids, offsets) in zip(usable, encoded):
-                    items.append(
-                        TokenizedData(
-                            tokenizer_name=tok_name,
-                            language=lang,
-                            tokens=ids,
-                            text=text,
-                            offsets=offsets,
-                        )
-                    )
-            out[tok_name] = items
-        return out
 
     @staticmethod
     def _char_to_token_from_offsets(

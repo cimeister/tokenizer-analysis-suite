@@ -48,6 +48,39 @@ class _CharTokenizer:
         return 1000
 
 
+class _NoBatchTokenizer:
+    """Offsets one text at a time, which is the only API some wrappers expose."""
+
+    def can_encode(self):
+        return True
+
+    def encode(self, text):
+        return [ord(c) for c in text]
+
+    def encode_with_offsets(self, text):
+        return self.encode(text), [(i, i + 1) for i in range(len(text))]
+
+    def get_vocab_size(self):
+        return 1000
+
+
+class _NoOffsetsTokenizer:
+    """Ids and neither offset method, so operator isolation skips it and says so.
+
+    The alternative would be to guess which token covers an operator, which is
+    what the reconstruction the metrics moved off did.
+    """
+
+    def can_encode(self):
+        return True
+
+    def encode(self, text):
+        return [ord(c) for c in text]
+
+    def get_vocab_size(self):
+        return 1000
+
+
 class _IdsOnlyTokenizer:
     """What a pre-tokenized provider carries: ids, and no way to encode text."""
 
@@ -148,14 +181,12 @@ class TestTheCorpusRegistry:
         assert second.corpus_names() == []
 
     def test_corpus_stats_reports_the_size_of_what_was_measured(self):
-        """Equal to DigitBoundaryMetrics._corpus_stats, which publishes it today.
+        """The shape operator isolation publishes as `by_domain.<domain>.corpus`.
 
-        The published field is `by_domain.<domain>.size`; this pins the shape so
-        that moving the metric onto Corpus.stats() cannot change it.
+        It used to be DigitBoundaryMetrics._corpus_stats, whose output this
+        asserted against until that method was deleted and the metric moved onto
+        Corpus.stats(). The literal below is what both produced.
         """
-        from tokenizer_analysis.metrics.math import DigitBoundaryMetrics
-
-        assert CODE.stats() == DigitBoundaryMetrics._corpus_stats(CODE.texts)
         stats = CODE.stats()
         assert stats == {
             "n_texts": 5,
@@ -228,6 +259,7 @@ class TestEncodingARegisteredCorpus:
         assert tokenizer.batch_calls == [
             ["let x = 1;"], ["a = 1", "b = 2", "c = a + b"]
         ]
+        assert tokenizer.single_calls == [], "the per-text path is the fallback"
 
     def test_a_second_call_reuses_the_first_encoding(self):
         """compute() runs once per language group; the corpus does not change.
@@ -247,6 +279,14 @@ class TestEncodingARegisteredCorpus:
         assert len(tokenizer.batch_calls) == calls_after_first
 
     def test_a_failed_batch_call_falls_back_to_one_call_per_text(self):
+        """The plumbing of the fallback, not a claim about any tokenizer.
+
+        Both paths run against the same stub, whose batch method returns what
+        its single method returns, so this checks that the same items are
+        assembled either way. That a real tokenizer's batch encoding equals its
+        per-text encoding is a separate claim, checked in
+        `test_a_real_tokenizer_encodes_a_batch_as_it_encodes_each_text`.
+        """
         tokenizer = _CharTokenizer(batch_raises=True)
         provider = _raw_provider(tokenizer)
         provider.add_corpus(CODE)
@@ -257,6 +297,86 @@ class TestEncodingARegisteredCorpus:
             "let x = 1;", "a = 1", "b = 2", "c = a + b"
         ]
         assert [d.text for d in data["tok"]] == tokenizer.single_calls
+
+        batched = _raw_provider(_CharTokenizer())
+        batched.add_corpus(CODE)
+        assert [(d.text, d.language, d.tokens, d.offsets) for d in data["tok"]] == [
+            (d.text, d.language, d.tokens, d.offsets)
+            for d in batched.get_tokenized_data("code")["tok"]
+        ]
+
+    def test_a_tokenizer_without_the_batch_api_is_encoded_one_text_at_a_time(self):
+        provider = _raw_provider(_NoBatchTokenizer())
+        provider.add_corpus(CODE)
+
+        data = provider.get_tokenized_data("code")
+
+        assert [d.text for d in data["tok"]] == [
+            "let x = 1;", "a = 1", "b = 2", "c = a + b"
+        ]
+        assert all(d.offsets for d in data["tok"])
+
+    def test_a_tokenizer_with_neither_offset_method_yields_items_without_offsets(self):
+        """Ids but no offsets, so operator isolation skips it and says so."""
+        provider = _raw_provider(_NoOffsetsTokenizer())
+        provider.add_corpus(CODE)
+
+        data = provider.get_tokenized_data("code")
+
+        assert [d.text for d in data["tok"]] == [
+            "let x = 1;", "a = 1", "b = 2", "c = a + b"
+        ]
+        assert all(d.offsets is None for d in data["tok"])
+        assert all(d.tokens for d in data["tok"])
+
+    def test_a_malformed_batch_return_falls_back_rather_than_raising(self):
+        """A backend returning something other than (ids, offsets) pairs.
+
+        Before the corpora were encoded in batches, a bad return from
+        `encode_with_offsets` was caught and the text was encoded with `encode()`
+        instead. Unpacking inside the try keeps that: the batch result is
+        rejected and the per-text path runs.
+        """
+        class _BadBatch(_CharTokenizer):
+            def encode_batch_with_offsets(self, texts):
+                self.batch_calls.append(list(texts))
+                return [(self.encode(t), [], "extra") for t in texts]
+
+        tokenizer = _BadBatch()
+        provider = _raw_provider(tokenizer)
+        provider.add_corpus(CODE)
+
+        data = provider.get_tokenized_data("code")
+
+        assert tokenizer.single_calls == [
+            "let x = 1;", "a = 1", "b = 2", "c = a + b"
+        ]
+        assert [d.text for d in data["tok"]] == tokenizer.single_calls
+
+    def test_a_real_tokenizer_encodes_a_batch_as_it_encodes_each_text(self):
+        """Encoding a corpus in batches rests on this, and nothing checked it.
+
+        `C8` in the sanity checker compares the two, but on ids only, over 50
+        prose probes, and reports WARN rather than failing. This compares ids
+        and offsets on the corpus shape the batch call is used for.
+        """
+        from tokenizer_analysis.core.tokenizer_wrapper import create_tokenizer_wrapper
+
+        tokenizer = create_tokenizer_wrapper(
+            "bundled-bpe", {"class": "huggingface", "path": "tokenizers/bpe.json"}
+        )
+        texts = [t for texts in CODE.texts.values() for t in texts if t.strip()]
+        texts += [
+            "def f(a, b): return a <= b and a != 0",
+            "résumé = naïve  # 字符 >= 10",
+            "x" * 500 + " == " + "y" * 500,
+        ]
+        batch = tokenizer.encode_batch_with_offsets(texts)
+        loop = [tokenizer.encode_with_offsets(t) for t in texts]
+
+        assert [ids for ids, _ in batch] == [ids for ids, _ in loop]
+        assert [list(offs) for _, offs in batch] == [list(offs) for _, offs in loop]
+        assert all(offs for _, offs in batch), "the bundled BPE reports offsets"
 
     def test_a_short_batch_raises_naming_the_counts_and_the_corpus(self):
         """Pairing by position would attach one text's offsets to another."""

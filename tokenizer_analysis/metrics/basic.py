@@ -12,7 +12,7 @@ import unicodedata
 import numpy as np
 
 from .base import BaseMetrics, TokenizedDataProcessor, format_optional
-from ..core.input_types import TokenizedData
+from ..core.input_types import CODE_CORPUS, MATH_CORPUS, TokenizedData
 from ..core.input_providers import InputProvider
 from ..config import TextMeasurementConfig, TextMeasurer, DEFAULT_TEXT_MEASUREMENT_CONFIG, DEFAULT_WORD_MEASUREMENT_CONFIG
 from ..config.language_metadata import LanguageMetadata
@@ -73,9 +73,15 @@ class BasicTokenizationMetrics(BaseMetrics):
             input_provider: InputProvider instance
             measurement_config: Configuration for text measurement method
             language_metadata: Optional language metadata for grouping
-            code_texts: Optional pre-loaded code texts mapping languages to snippets
-            math_data_path: Optional path to math-rich text file
-            use_builtin_math_data: Whether to use built-in math samples
+            code_texts: Optional pre-loaded code texts mapping languages to
+                snippets. Read only when the input provider carries no
+                registered code corpus, which is the case when this class is
+                constructed on its own rather than by
+                ``UnifiedTokenizerAnalyzer``.
+            math_data_path: Optional path to math-rich text file. Read under
+                the same condition as *code_texts*.
+            use_builtin_math_data: Whether to use built-in math samples. Read
+                under the same condition as *code_texts*.
             fertility_use_global_config: If True, fertility uses *measurement_config*
                 instead of the default words-based normalization.
         """
@@ -88,15 +94,40 @@ class BasicTokenizationMetrics(BaseMetrics):
             self.fertility_measurement_config = DEFAULT_WORD_MEASUREMENT_CONFIG
         self.fertility_text_measurer = TextMeasurer(self.fertility_measurement_config)
 
-        # Code data for reconstruction fidelity (pre-loaded)
-        self._code_texts: Dict[str, List[str]] = code_texts or {}
-
-        # Load math data for reconstruction fidelity
+        # Code and math data for reconstruction fidelity. The run resolves both
+        # corpora once and registers them on the provider; the constructor
+        # arguments are the path for a caller that builds this class directly.
+        #
+        # A corpus marked synthetic is the bundled samples, which nobody asked
+        # to have measured. Reconstruction fidelity has never scored them: with
+        # no --code-ast-config it reports no code domain at all while the AST
+        # metrics run on the bundled code, and with no --math-data and no
+        # --use-builtin-math-data it reports no math domain while the
+        # operator-isolation math domain runs on the bundled math. Reading
+        # `synthetic` here is what keeps that, and it must stay a separate test
+        # from "is there a corpus at all": one rule covering both would give
+        # this metric a code domain it has never had. Pinned by
+        # TestTheDefaultCodeConfigurationIsAsymmetric in
+        # tests/test_output_contract.py.
+        self._code_texts: Dict[str, List[str]] = {}
         self._math_texts: List[str] = []
-        if math_data_path:
-            self._math_texts = load_math_data(math_data_path)
-        elif use_builtin_math_data:
-            self._math_texts = load_math_data(BUILTIN_MATH_SAMPLES_PATH)
+
+        code_corpus = self._registered_corpus(CODE_CORPUS)
+        if code_corpus is None:
+            self._code_texts = code_texts or {}
+        elif not code_corpus.synthetic:
+            self._code_texts = dict(code_corpus.texts)
+
+        math_corpus = self._registered_corpus(MATH_CORPUS)
+        if math_corpus is None:
+            if math_data_path:
+                self._math_texts = load_math_data(math_data_path)
+            elif use_builtin_math_data:
+                self._math_texts = load_math_data(BUILTIN_MATH_SAMPLES_PATH)
+        elif not math_corpus.synthetic:
+            self._math_texts = [
+                text for texts in math_corpus.texts.values() for text in texts
+            ]
 
     def compute(self, tokenized_data: Optional[Dict[str, List[TokenizedData]]] = None,
                 include_reconstruction: bool = True,

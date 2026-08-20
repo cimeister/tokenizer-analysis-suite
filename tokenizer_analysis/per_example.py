@@ -17,6 +17,7 @@ from .config import (
     TextMeasurementConfig,
     TextMeasurer,
 )
+from .core.input_types import PROSE_CORPUS, InputProvider
 from .core.tokenizer_wrapper import resolve_special_token_strings
 from .metrics.utf8_integrity import (
     UTF8IntegrityMetrics,
@@ -245,10 +246,15 @@ def per_example_all(
 # normally require one. The metric classes we use here (DigitBoundaryMetrics,
 # ASTBoundaryMetrics) only consult ``self.input_provider`` inside their
 # aggregator ``compute()`` paths; the per-text methods do not touch it.
-class _StubInputProvider:
+class _StubInputProvider(InputProvider):
     """Minimal InputProvider stub used solely to satisfy BaseMetrics.__init__.
     Not used by compute_per_text; provided so the metric classes can be
     instantiated outside the standard pipeline.
+
+    It subclasses InputProvider for the corpus registry alone. DigitBoundaryMetrics
+    and ASTBoundaryMetrics build their code and math corpora in __init__ and
+    register them on the provider, which is where a corpus is encoded, so a
+    stub without the registry stops them from being constructed at all.
     """
     def get_tokenizer(self, name):  # pragma: no cover (unused on the per-text path)
         return None
@@ -259,7 +265,12 @@ class _StubInputProvider:
     def get_vocab_size(self, name):  # pragma: no cover
         return 0
 
-    def get_tokenized_data(self):  # pragma: no cover
+    def get_languages(self, tokenizer_name=None):  # pragma: no cover
+        return []
+
+    def get_tokenized_data(self, corpus=PROSE_CORPUS):  # pragma: no cover
+        if corpus != PROSE_CORPUS:
+            return self._tokenized_corpus(corpus)
         return {}
 
 

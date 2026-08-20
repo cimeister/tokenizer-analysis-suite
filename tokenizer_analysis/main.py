@@ -9,7 +9,7 @@ from typing import Dict, List, Any, Optional, Tuple, Union
 import numpy as np
 
 from .constants import AGGREGATION_MICRO_POOLED, DEFAULT_CER_TIME_BUDGET_S
-from .core.input_types import TokenizedData, InputSpecification
+from .core.input_types import InputSpecification, TokenizedData
 from .core.input_providers import InputProvider, create_input_provider
 from .core.input_utils import create_simple_specifications, InputValidator
 from .core.tokenizer_wrapper import create_tokenizer_wrapper
@@ -26,6 +26,7 @@ from .visualization import TokenizerVisualizer
 from .visualization.latex_tables import LaTeXTableGenerator
 from .config import TextMeasurementConfig, DEFAULT_TEXT_MEASUREMENT_CONFIG
 from .config.language_metadata import LanguageMetadata
+from .loaders.corpora import resolve_code_corpus, resolve_math_corpus
 
 logger = logging.getLogger(__name__)
 
@@ -68,12 +69,15 @@ class UnifiedTokenizerAnalyzer:
             per_language_plots: Whether to generate per-language plots
             faceted_plots: Whether to generate faceted plots (one subplot per tokenizer)
             code_ast_config: Mapping of language name to the file, directory or
-                parquet path for that language's code. With ``None`` no code
-                is loaded: the AST boundary metrics are not constructed, and
-                the code domain of operator isolation and of reconstruction
-                fidelity is empty. Construction aborts here when a configured
-                path does not load, rather than continuing with an empty code
-                corpus.
+                parquet path for that language's code. ``None`` and ``{}`` are
+                read differently. With ``None`` the AST boundary metrics are
+                not constructed at all; with ``{}`` they are, and they run on
+                the bundled samples. Either way the code domain of operator
+                isolation runs on the bundled samples and reconstruction
+                fidelity gets no code domain, because a corpus marked
+                ``synthetic`` does not reach it. Construction aborts here when
+                a configured path does not load, rather than continuing with an
+                empty code corpus.
             code_max_snippets_per_lang: Cap on code files loaded per language
                 for the code corpus (feeds both AST metrics and the code
                 domain of operator isolation). ``None`` uses
@@ -118,29 +122,22 @@ class UnifiedTokenizerAnalyzer:
         else:
             self.plot_tokenizers = self.tokenizer_names
         
-        # Pre-load code data once for BasicTokenizationMetrics
-        # No try/except: a code config the caller named explicitly either loads
-        # or aborts. Swallowing the failure here left the operator-isolation
-        # code domain with zero samples and no signal beyond one warning line,
-        # while the same malformed config crashed uncaught 50 lines later with a
-        # raw AttributeError that named neither the flag nor the file.
-        code_texts: Dict[str, List[str]] = {}
-        if code_ast_config:
-            from .loaders.code_data import CodeDataLoader
-            _loader = CodeDataLoader(
-                code_ast_config,
-                max_snippets_per_lang=code_max_snippets_per_lang,
-                max_snippet_chars=code_max_snippet_chars,
-            )
-            _loader.load_all()
-            code_texts = _loader.code_snippets
+        # Resolve the code and math corpora once, here, beside the flags that
+        # select them, and register them on the provider for every metric that
+        # reads them. Two CodeDataLoaders used to be built from the same config
+        # and the same caps, one here and one inside ASTBoundaryMetrics, so
+        # every configured file was read and truncated twice and nothing
+        # checked that the two results agreed.
+        input_provider.add_corpus(resolve_code_corpus(
+            code_ast_config, code_max_snippets_per_lang, code_max_snippet_chars,
+        ))
+        input_provider.add_corpus(resolve_math_corpus(
+            math_data_path, use_builtin_math_data,
+        ))
 
         # Initialize metrics classes
         self.basic_metrics = BasicTokenizationMetrics(
             input_provider, measurement_config, language_metadata,
-            code_texts=code_texts,
-            math_data_path=math_data_path,
-            use_builtin_math_data=use_builtin_math_data,
         )
 
         # Initialize information-theoretic metrics
@@ -165,12 +162,10 @@ class UnifiedTokenizerAnalyzer:
                 logger.warning(f"MorphScore metrics disabled: {e}")
 
         # Initialize digit boundary metrics (always available: no external data).
-        # code_texts feeds the code domain of the operator-isolation split.
+        # The registered code and math corpora feed the domains of the
+        # operator-isolation split.
         self.digit_boundary_metrics = DigitBoundaryMetrics(
             input_provider,
-            math_data_path=math_data_path,
-            use_builtin_math_data=use_builtin_math_data,
-            code_texts=code_texts,
             include_prose_operators=include_prose_operators,
         )
 
@@ -202,7 +197,7 @@ class UnifiedTokenizerAnalyzer:
         for name in self.tokenizer_names:
             vocab_size = self.input_provider.get_vocab_size(name)
             logger.info(f"  {name}: {vocab_size} tokens")
-    
+
     def run_analysis(self,
                     save_plots: bool = True,
                     include_morphscore: bool = True,
