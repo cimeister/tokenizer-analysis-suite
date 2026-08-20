@@ -17,7 +17,7 @@ from tokenizer_analysis.metrics.code_ast import (
 # _WHITESPACE_SIGNIFICANT_LANGS is now defined in code_ast.py (not the worker)
 from tokenizer_analysis.metrics._treesitter_worker import ERROR_SPANS_KEY
 from tokenizer_analysis.loaders.code_data import CodeDataLoader
-from tokenizer_analysis.core.input_types import TokenizedData
+from tokenizer_analysis.core.input_types import CODE_CORPUS, Corpus, TokenizedData
 
 
 # ======================================================================
@@ -3474,3 +3474,72 @@ class TestTheMissingEncodingErrorNamesTheSnippetThatIsActuallyMissing:
 
         with pytest.raises(ValueError, match=r"snippet 2 of 3"):
             ASTBoundaryMetrics(provider).compute()
+
+
+class TestASTMetricsRefuseAConfigTheRegisteredCorpusWouldOverride:
+    """The AST metrics take their code from the registry or from code_config.
+
+    When a run has registered a code corpus, the registry used to win and
+    code_config was dropped without a word, along with max_snippets_per_lang
+    and max_snippet_chars. A caller who named real paths while the bundled
+    synthetic samples were registered got ast_boundary_alignment,
+    identifier_fragmentation and indentation_consistency measured on synthetic
+    code and reported under the name of their own corpus. The measured gap
+    between the two is 0.562 full alignment on synthetic against 0.493 on
+    StarCoder for the same tokenizer, so the substitution is not cosmetic.
+
+    UnifiedTokenizerAnalyzer passes neither the config nor the caps, because it
+    registers the corpus they would have built.
+    """
+
+    def _provider_with_registered_code(self):
+        from tokenizer_analysis.core.input_providers import RawTokenizationProvider
+        from tokenizer_analysis.core.input_types import InputSpecification
+
+        class _Tok:
+            def can_encode(self): return True
+            def encode(self, t): return [ord(c) for c in t]
+            def encode_with_offsets(self, t):
+                return self.encode(t), [(i, i + 1) for i in range(len(t))]
+            def get_vocab_size(self): return 100
+
+        provider = RawTokenizationProvider({
+            "tok": InputSpecification(tokenizer=_Tok(), texts={"eng_Latn": ["hi"]}),
+        })
+        provider.add_corpus(Corpus(
+            name=CODE_CORPUS, texts={"python": ["x = 1\n"]},
+            source="bundled samples", synthetic=True,
+        ))
+        return provider
+
+    def test_a_code_config_alongside_a_registered_corpus_raises(self):
+        provider = self._provider_with_registered_code()
+
+        with pytest.raises(ValueError, match="already registered"):
+            ASTBoundaryMetrics(
+                provider, code_config={"python": "/some/real/corpus"},
+            )
+
+    def test_the_caps_are_accepted_because_they_bound_rather_than_select(self):
+        """max_snippets_per_lang still bounds the registered corpus.
+
+        Only code_config selects which corpus is measured. get_code_snippets
+        re-applies max_snippets_per_lang to whatever the loader holds, and
+        resolve_code_corpus applies neither cap on the synthetic path, so this
+        is where the bundled samples get bounded. Refusing the caps alongside a
+        registered corpus moved ast_boundary_alignment.global.count from 4512
+        to 7018 on the default configuration.
+        """
+        provider = self._provider_with_registered_code()
+        provider.get_corpus(CODE_CORPUS).texts["python"].append("y = 2\n")
+
+        metrics = ASTBoundaryMetrics(provider, max_snippets_per_lang=1)
+        assert metrics.code_loader.get_code_snippets("python") == ["x = 1\n"]
+
+    def test_no_arguments_reads_the_registered_corpus(self):
+        """The path UnifiedTokenizerAnalyzer takes."""
+        provider = self._provider_with_registered_code()
+
+        metrics = ASTBoundaryMetrics(provider)
+        assert metrics.code_loader.get_code_snippets("python") == ["x = 1\n"]
+        assert metrics._code_corpus.source == "bundled samples"

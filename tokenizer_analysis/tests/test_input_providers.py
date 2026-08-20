@@ -429,7 +429,7 @@ class TestTheDeclaredTokenizerAccessor:
         """Eight call sites already required it while the ABC never named it."""
 
         class _NoTokenizers(InputProvider):
-            def get_tokenized_data(self, corpus="prose"):
+            def get_tokenized_data(self):
                 return {}
 
             def get_tokenizer_names(self):
@@ -448,9 +448,7 @@ class TestTheDeclaredTokenizerAccessor:
         """The skip that keeps a missing tokenizer from crashing the whole metric."""
 
         class _NoTokenizers(InputProvider):
-            def get_tokenized_data(self, corpus="prose"):
-                if corpus != "prose":
-                    return self._tokenized_corpus(corpus)
+            def get_tokenized_data(self):
                 return {}
 
             def get_tokenizer_names(self):

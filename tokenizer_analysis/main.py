@@ -176,8 +176,17 @@ class UnifiedTokenizerAnalyzer:
         self.ast_boundary_metrics = None
         if code_ast_config is not None:
             try:
+                # No code_config: the code corpus was resolved from it above
+                # and registered on the provider, so this metric reads it from
+                # there. Passing it as well is refused, because the two could
+                # name different corpora and the registered one would win
+                # without a word. The caps are still passed, because they bound
+                # the corpus rather than select it, and get_code_snippets
+                # applies max_snippets_per_lang to the registered snippets:
+                # resolve_code_corpus does not apply either cap on the synthetic
+                # path, so this is where the bundled samples get bounded.
                 self.ast_boundary_metrics = ASTBoundaryMetrics(
-                    input_provider, code_config=code_ast_config,
+                    input_provider,
                     max_snippets_per_lang=code_max_snippets_per_lang,
                     max_snippet_chars=code_max_snippet_chars,
                 )

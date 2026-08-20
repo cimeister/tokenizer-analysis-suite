@@ -665,8 +665,10 @@ class BasicTokenizationMetrics(BaseMetrics):
         is bounded. For HuggingFaceTokenizer and CustomBPETokenizer the offsets
         come free and the provider encodes one batch per label: 4.00 s against
         10.29 s for per-text calls over the 1500 files
-        benchmarks/open_source/code_ast_config.json names, so those wrappers are
-        faster here than the per-text encode() this replaced. UniMixLMTokenizer
+        benchmarks/open_source/code_ast_config.json names. Both of those figures
+        are encode_with_offsets. The per-text encode() this loop replaced
+        computes no offsets and was not timed, so they do not establish that the
+        shared path is faster for a run where this metric is the only reader. UniMixLMTokenizer
         subclasses HuggingFaceTokenizer but overrides the batch method back to a
         per-text loop, because langspec encoding scores each text against every
         per-language tokenizer, so it is not one of them. The script_bpe
@@ -784,12 +786,18 @@ class BasicTokenizationMetrics(BaseMetrics):
         for tok_name in self.tokenizer_names:
             try:
                 tokenizer = self.input_provider.get_tokenizer(tok_name)
-            except NO_TOKENIZER_ERRORS as e:
-                # The same tuple InputProvider._encode_corpus skips on, so the
-                # two agree on what "this provider cannot supply a tokenizer"
-                # means. This was a bare ``except Exception``, which also
-                # skipped a tokenizer whose loader had a genuine defect and
-                # reported the run as a success with that tokenizer missing.
+            except NO_TOKENIZER_ERRORS + (AttributeError,) as e:
+                # The tuple InputProvider._encode_corpus skips on, so the two
+                # agree on what "this provider cannot supply a tokenizer"
+                # means, plus AttributeError, which _encode_corpus deliberately
+                # excludes. It belongs here and not there: this reads
+                # self.input_provider, which need not be an InputProvider
+                # subclass and so need not have the method at all, while
+                # _encode_corpus calls its own inherited get_tokenizer, where
+                # the attribute always resolves. This was a bare
+                # ``except Exception``, which also skipped a tokenizer whose
+                # loader had a genuine defect and reported the run as a success
+                # with that tokenizer missing.
                 logger.warning(
                     "Reconstruction fidelity: skipping %s (could not load tokenizer: %s)",
                     tok_name, e,

@@ -181,9 +181,14 @@ the failure that check exists to prevent.
 
 Subclasses should also implement `get_tokenizer(name)`, which returns the
 `TokenizerWrapper` for a name. `InputProvider` defines it, but the definition
-raises `NotImplementedError`: a provider that does not supply tokenizer objects
-cannot run the metrics that encode their own corpora, and those metrics skip it
-with a logged warning rather than failing the run.
+raises `NotImplementedError`, so a provider that omits it fails at the class
+rather than several frames later. Callers do not all treat that the same way.
+`_encode_corpus` leaves the tokenizer out of the encoded corpus and
+reconstruction fidelity skips it, both with a logged warning; MorphScore records
+an `error` for that tokenizer in its results; and the digit, AST and UTF-8
+metrics do not catch it at all, so the run fails once one of them is reached.
+Implement `get_tokenizer` unless every metric that needs a tokenizer object is
+turned off.
 
 ## Adding new metrics
 

@@ -310,6 +310,26 @@ class ASTBoundaryMetrics(BaseMetrics):
         # read as a language that scored zero.
         self._dropped_languages: Dict[str, str] = {}
 
+        # Refuse a code_config the registered corpus would override, before
+        # any of it is read. The registry used to win silently, so a caller who
+        # named real paths while a run had registered the bundled samples got
+        # AST numbers measured on synthetic code under the name of their own
+        # corpus: 0.562 full alignment against 0.493 on StarCoder for the same
+        # tokenizer. UnifiedTokenizerAnalyzer passes no code_config, because it
+        # registers the corpus that argument would have built.
+        #
+        # The two caps are not refused, because they do not select a corpus,
+        # they bound one. get_code_snippets re-applies max_snippets_per_lang to
+        # whatever this loader holds, registered corpus included, and the run
+        # passes the same values it resolved the corpus with. That bound is
+        # load-bearing on the synthetic path: resolve_code_corpus returns the
+        # bundled samples without applying either cap, so removing it here
+        # moved ast_boundary_alignment.global.count from 4512 to 7018 on the
+        # default configuration.
+        self._code_corpus = self._corpus_or_refuse_arguments(
+            CODE_CORPUS, {"code_config": code_config},
+        )
+
         # Load code data
         from ..loaders.code_data import CodeDataLoader
 
@@ -321,7 +341,6 @@ class ASTBoundaryMetrics(BaseMetrics):
         self.max_snippets_per_lang = self.code_loader.max_snippets_per_lang
         self.max_snippet_chars = self.code_loader.max_snippet_chars
 
-        self._code_corpus = self._registered_corpus(CODE_CORPUS)
         if self._code_corpus is not None:
             # The run resolved the code corpus once and registered it. Loading
             # it again here read every configured file a second time and applied

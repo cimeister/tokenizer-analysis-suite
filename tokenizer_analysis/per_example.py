@@ -17,7 +17,7 @@ from .config import (
     TextMeasurementConfig,
     TextMeasurer,
 )
-from .core.input_types import PROSE_CORPUS, InputProvider
+from .core.input_types import InputProvider
 from .core.tokenizer_wrapper import resolve_special_token_strings
 from .metrics.utf8_integrity import (
     UTF8IntegrityMetrics,
@@ -268,9 +268,9 @@ class _StubInputProvider(InputProvider):
     def get_languages(self, tokenizer_name=None):  # pragma: no cover
         return []
 
-    def get_tokenized_data(self, corpus=PROSE_CORPUS):  # pragma: no cover
-        if corpus != PROSE_CORPUS:
-            return self._tokenized_corpus(corpus)
+    def get_tokenized_data(self):  # pragma: no cover
+        # Prose only. A registered corpus is served by the concrete
+        # InputProvider.get_corpus_data, which this class inherits.
         return {}
 
 

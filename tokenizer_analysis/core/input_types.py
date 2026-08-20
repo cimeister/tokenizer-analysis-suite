@@ -90,15 +90,22 @@ CODE_CORPUS = "code"
 #: ``by_language`` key for it is therefore "math:math".
 MATH_CORPUS = "math"
 
-#: What a provider raises when it cannot hand back a tokenizer object for a
-#: name it lists. ``InputProvider.get_tokenizer`` raises NotImplementedError, a
-#: provider that never declared the method raises AttributeError, and the two
-#: shipped providers raise ValueError or KeyError for a name they do not carry.
-#: Named once because ``_encode_corpus`` here and reconstruction fidelity in
-#: metrics/basic.py both have to decide "can this tokenizer be scored at all",
-#: and they used to answer it with two different catch clauses: this tuple, and
-#: a bare ``except Exception`` that also swallowed genuine defects.
-NO_TOKENIZER_ERRORS = (ValueError, KeyError, AttributeError, NotImplementedError)
+#: What a provider raises when it cannot supply a tokenizer object for a name
+#: it lists. ``InputProvider.get_tokenizer`` raises NotImplementedError, and the
+#: two shipped providers raise ValueError or KeyError for a name they do not
+#: carry. Named once because ``_encode_corpus`` here and reconstruction fidelity
+#: in metrics/basic.py both have to decide "can this tokenizer be scored at
+#: all", and they used to answer it with two different catch clauses: a tuple,
+#: and a bare ``except Exception`` that also swallowed genuine defects.
+#:
+#: AttributeError is deliberately not a member. This ABC defines
+#: ``get_tokenizer``, so the attribute always resolves and an AttributeError can
+#: only escape from inside a subclass's own implementation, where it is that
+#: subclass's defect rather than a provider declining to supply a tokenizer.
+#: Callers that reach a provider through a duck-typed reference, which may not
+#: have the method at all, add it themselves; metrics/basic.py is the one that
+#: does.
+NO_TOKENIZER_ERRORS = (ValueError, KeyError, NotImplementedError)
 
 #: ``Corpus.source`` for code the caller named with --code-ast-config, as
 #: opposed to the bundled samples. Published as ``by_domain.code.source``,
@@ -115,11 +122,16 @@ PROSE_SOURCE = "multilingual corpus"
 class Corpus:
     """A named set of labelled texts, encoded once per tokenizer.
 
-    Prose, code and math are one concept carrying two names. Prose reaches the
-    metrics through ``InputProvider``; the code and math corpora are loaded and
-    encoded by the metric classes that consume them. Both are a named set of
-    texts, labelled, encoded once per tokenizer, and consumed as
-    ``Dict[tokenizer_name, List[TokenizedData]]``.
+    The code and math corpora are resolved in ``loaders/corpora.py``, registered
+    with ``InputProvider.add_corpus``, encoded by ``_encode_corpus`` and read
+    back by every metric that measures them, as
+    ``Dict[tokenizer_name, List[TokenizedData]]``. Each used to be loaded and
+    encoded separately by each of the three metric classes that consume it.
+
+    Prose is not registered. It is whatever texts the provider was constructed
+    with, served by ``get_tokenized_data()``. A ``Corpus`` is still built for it
+    in one place, ``DigitBoundaryMetrics``, to describe it in the per-domain
+    report; that one is never registered and never looked up by name.
 
     Attributes:
         name: what ``get_corpus_data(name)`` asks for, so "code" or "math".
@@ -469,8 +481,11 @@ class InputProvider(ABC):
         ``RawTokenizationProvider.get_tokenized_data``. The two differ in two
         ways, both of which move published numbers:
 
-        1. The prose loop raises when a tokenizer cannot encode a text; this
-           one skips that tokenizer with a warning.
+        1. The prose loop raises when a tokenizer cannot encode raw text; this
+           one skips that tokenizer with a warning. This covers the check made
+           before encoding starts. If ``encode`` itself raises partway through a
+           corpus, it propagates out of here exactly as it does out of the prose
+           loop.
         2. The prose loop records per-sample encode times, published as
            ``encoding_speed``; this one records none, so a derived corpus does
            not enter that measurement.

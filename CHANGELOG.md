@@ -186,22 +186,35 @@ conflicting flags.
 - **Unreleased** The code and math corpora are read from disk once per run and
   encoded once per tokenizer. They were read twice and encoded three times, by
   `BasicTokenizationMetrics`, `DigitBoundaryMetrics` and `ASTBoundaryMetrics`
-  separately. No measured value changes: `analysis_results_full.json` is
-  identical leaf for leaf across three configurations, at 4794, 5914 and 1338
-  leaves.
+  separately. No metric value changes: `analysis_results_full.json` is identical
+  leaf for leaf across four configurations, at 4794, 5914, 1338 and 14054
+  leaves. With `--max-code-file-chars` set (it is unset by default) and a file
+  whose truncated prefix is whitespace, three corpus-size leaves under
+  `operator_isolation_rate.by_domain.code.corpus` move, because that snippet is
+  now dropped rather than counted; see the truncation change below.
 
   `InputProvider` has two new concrete methods, `add_corpus(Corpus)` and
   `get_corpus_data(name)`, which the code and math corpora travel through.
   `get_tokenized_data()` keeps its 1.0.3 signature and still returns the
   provider's own prose texts, so an existing subclass needs no change. Both new
   methods refuse the name `prose`, which is served only by
-  `get_tokenized_data()`. `MixedInputProvider`, which was neither exported nor
-  reachable from the CLI, is deleted.
+  `get_tokenized_data()`. `Corpus` is exported from `tokenizer_analysis.core`.
 
-  `BasicTokenizationMetrics` and `DigitBoundaryMetrics` raise when given
-  `code_texts`, `math_data_path` or `use_builtin_math_data` while a corpus of
-  the same name is registered on the input provider. The registered corpus
-  previously took precedence and the argument was dropped without a warning.
+  **Breaking**: `MixedInputProvider` is deleted, so
+  `from tokenizer_analysis.core.input_providers import MixedInputProvider`
+  raises `ImportError`. It was not exported from `tokenizer_analysis.core` and
+  no CLI path constructed it.
+
+  `BasicTokenizationMetrics`, `DigitBoundaryMetrics` and `ASTBoundaryMetrics`
+  raise when given corpus arguments while a corpus of that name is registered
+  on the input provider.
+
+  The arguments are `code_texts`, `math_data_path` and `use_builtin_math_data`
+  for the first two, and `code_config`, `max_snippets_per_lang` and
+  `max_snippet_chars` for the AST metrics. The registered corpus previously took
+  precedence and the argument was dropped without a warning, so a caller who
+  named real code paths while the bundled samples were registered got AST
+  numbers measured on synthetic code under the name of their own corpus.
 
   Reconstruction fidelity skips a tokenizer that decodes but cannot encode raw
   text, with a logged warning, when the run has code or math texts to encode.

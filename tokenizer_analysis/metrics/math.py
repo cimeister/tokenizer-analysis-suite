@@ -137,7 +137,6 @@ class DigitBoundaryMetrics(BaseMetrics):
         # score: a web corpus is far larger than a code corpus and 78.5% of its
         # documents contain at least one character the regex matches.
         self._include_prose_operators = include_prose_operators
-        self._math_data_path = math_data_path
 
         # The corpora for the per-domain operator-isolation split. Prose is the
         # corpus the metric already ran on; code and math are registered on the
