@@ -324,7 +324,8 @@ class TestReconstructionFidelity:
 
 
 # ======================================================================
-# T8b: Reconstruction fidelity, code/math branch (basic.py:740-826)
+# T8b: Reconstruction fidelity, the code/math branch of
+# BasicTokenizationMetrics.compute_reconstruction_fidelity_analysis
 # ======================================================================
 
 class TestReconstructionFidelityCodeMath:
@@ -621,6 +622,81 @@ class TestATokenizerThatCannotEncodeRawTextIsSkipped:
 
 
 # ======================================================================
+# CER time-budget projection counts code/math texts before the filter
+# ======================================================================
+
+class TestTheCERBudgetProjectionCountsCodeAndMathTextsBeforeTheStripFilter:
+    """total_code_math_texts, which feeds the CER time-budget projection,
+    counts every code/math text passed to this metric, not just the ones
+    that survive the ``text.strip()`` filter the code/math loop applies.
+
+    The projection extrapolates the CER work still ahead from
+    ``total_all_texts - texts_processed``, the count of texts left. If that
+    count were taken after the filter, a corpus holding whitespace-only or
+    empty snippets (what max_snippet_chars produces truncating an indented
+    file down to its leading whitespace) would under-project the remaining
+    CER work, and cer_skipped could come out False where the correct count
+    would have set it True -- moving a number this repo publishes.
+    """
+
+    def test_whitespace_only_snippets_push_the_projection_over_budget(self):
+        from unittest.mock import patch
+        import itertools
+
+        from tokenizer_analysis.metrics.basic import _CER_WARMUP
+
+        # The budget check fires unconditionally on the _CER_WARMUP-th CER
+        # call (see the "n_cer_calls == _CER_WARMUP" branch), so using exactly
+        # that many real snippets makes the projection point deterministic
+        # regardless of the budget value.
+        n_real = _CER_WARMUP
+        # 20 extra whitespace-only snippets: enough that the projection they
+        # add (n_dropped * time_per_cer = 0.20s below) separates the two
+        # budget outcomes with room either side, not a value load-bearing on
+        # its own.
+        n_dropped = 20
+
+        tok = _MockDecodableTokenizer(
+            encode_fn=lambda t: [1, 2, 3],
+            # Never matches the source text, so every text takes the CER path.
+            decode_fn=lambda ids: "MISMATCH",
+        )
+        provider = _MockDecodableProvider("mock_tok", tok)
+
+        code_texts = {
+            "python": (
+                [f"snippet_{i}\n" for i in range(n_real)]
+                + ["   \n"] * n_dropped
+            ),
+        }
+        metrics = BasicTokenizationMetrics(provider, code_texts=code_texts)
+
+        # Two time.monotonic() reads per CER call (one before, one after
+        # _character_error_rate), 0.01s apart by construction: cer_elapsed
+        # after the _CER_WARMUP-th call is exactly 0.01 * n_real = 0.5s, and
+        # each call's own cost (time_per_cer) is exactly 0.01s.
+        with patch(
+            "tokenizer_analysis.metrics.basic.time.monotonic",
+            side_effect=itertools.count(0.0, 0.01),
+        ):
+            # Strictly between the two projections this budget could compare
+            # against: counting only the n_real texts that survive the filter
+            # gives 0.5 + 0.01 * 0 = 0.5s; counting all n_real + n_dropped, as
+            # this metric does, gives 0.5 + 0.01 * n_dropped = 0.7s.
+            results = metrics.compute_reconstruction_fidelity_analysis(
+                {"mock_tok": []}, cer_time_budget_s=0.6,
+            )
+
+        summary = results["reconstruction_fidelity"]["summary"]["mock_tok"]
+        assert summary.get("cer_skipped") is True, (
+            "the projection must include the dropped whitespace-only "
+            "snippets, which pushes it to 0.7s and over the 0.6s budget; "
+            "counting only the texts that survive the filter would leave "
+            "the projection at 0.5s and cer_skipped unset"
+        )
+
+
+# ======================================================================
 # T9: _character_error_rate edge cases
 # ======================================================================
 
@@ -810,3 +886,63 @@ class TestVocabUtilDispersion:
         big = out["vocabulary_utilization"]["per_tokenizer"][big_tok]
         assert small["per_language_std"] == pytest.approx(big["per_language_std"], abs=1e-9)
         assert small["per_language_cov"] == pytest.approx(big["per_language_cov"], abs=1e-9)
+
+
+class TestSharedCorpusIdsArePairedByTextNotByRecordOrder:
+    """Reconstruction fidelity finds a text's ids by ``(label, text)``.
+
+    Within this package the pairing could also be done by position: the
+    ``text and text.strip()`` filter this metric applies to the code and math
+    corpora is the same one ``InputProvider._encode_corpus`` applies, so the
+    records and the texts come out in the same order and the same number. That
+    agreement is a property of the two filters matching, not something the
+    lookup relies on, and ``get_corpus_data`` is a public method a caller can
+    implement. A provider that returns the same records in a different order is
+    a correct provider, and pairing by position would silently score each text
+    against another text's ids.
+
+    Reversing the records is the smallest way to make the two disagree.
+    """
+
+    def test_records_returned_in_reverse_order_are_still_matched_correctly(self):
+        from tokenizer_analysis.core.input_types import CODE_CORPUS, Corpus
+
+        # Each snippet decodes back to itself, so correct pairing round-trips
+        # exactly and a mispairing decodes to the other snippet.
+        ids_for = {"aaa": [1], "bbb": [2]}
+        text_for = {1: "aaa", 2: "bbb"}
+
+        tok = _MockDecodableTokenizer(
+            encode_fn=lambda t: ids_for[t],
+            decode_fn=lambda ids: text_for[ids[0]],
+        )
+
+        class _ReversedOrderProvider(_MockDecodableProvider):
+            """Returns the corpus records in the opposite order to the texts."""
+
+            def get_corpus_data(self, name):
+                corpus = self.get_corpus(name)
+                records = [
+                    TokenizedData(
+                        tokenizer_name="mock_tok", language=label,
+                        tokens=ids_for[text], text=text,
+                    )
+                    for label, texts in corpus.texts.items()
+                    for text in texts
+                ]
+                return {"mock_tok": list(reversed(records))}
+
+        provider = _ReversedOrderProvider("mock_tok", tok)
+        provider.add_corpus(Corpus(
+            name=CODE_CORPUS, texts={"python": ["aaa", "bbb"]},
+            source="test", synthetic=False,
+        ))
+        metrics = BasicTokenizationMetrics(provider)
+
+        results = metrics.compute_reconstruction_fidelity_analysis({"mock_tok": []})
+        by_domain = results["reconstruction_fidelity"]["per_tokenizer"]["mock_tok"]["by_domain"]
+
+        assert by_domain["code_python"]["exact_match_rate"] == 1.0, (
+            "each snippet must be scored against its own ids; pairing by "
+            "position scores 'aaa' against the ids of 'bbb'"
+        )

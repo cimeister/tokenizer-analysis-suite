@@ -171,6 +171,41 @@ conflicting flags.
 
 ## Releases
 
+- **Unreleased** The code and math corpora are read from disk once per run and
+  encoded once per tokenizer. They were read twice and encoded three times, by
+  `BasicTokenizationMetrics`, `DigitBoundaryMetrics` and `ASTBoundaryMetrics`
+  separately. No measured value changes: `analysis_results_full.json` is
+  identical leaf for leaf across three configurations, at 4794, 5914 and 1338
+  leaves.
+
+  `InputProvider` has two new concrete methods, `add_corpus(Corpus)` and
+  `get_corpus_data(name)`, which the code and math corpora travel through.
+  `get_tokenized_data()` keeps its 1.0.3 signature and still returns the
+  provider's own prose texts, so an existing subclass needs no change. Both new
+  methods refuse the name `prose`, which is served only by
+  `get_tokenized_data()`. `MixedInputProvider`, which was neither exported nor
+  reachable from the CLI, is deleted.
+
+  `BasicTokenizationMetrics` and `DigitBoundaryMetrics` raise when given
+  `code_texts`, `math_data_path` or `use_builtin_math_data` while a corpus of
+  the same name is registered on the input provider. The registered corpus
+  previously took precedence and the argument was dropped without a warning.
+
+  Reconstruction fidelity skips a tokenizer that decodes but cannot encode raw
+  text, with a logged warning, when the run has code or math texts to encode.
+  It reached the encode call and raised out of the whole analysis. No wrapper
+  in this package is both: `PreTokenizedDataTokenizer` reports `can_decode()`
+  false and was already skipped one check earlier, so this affects a caller
+  supplying a tokenizer object of their own. Reconstruction fidelity also no
+  longer skips a tokenizer whose loader raised an unrelated error; it caught
+  every exception and reported the run as a success with that tokenizer
+  absent.
+
+  `--max-code-file-chars` drops a code snippet that truncation leaves
+  whitespace-only, counted per language in
+  `CodeDataLoader.dropped_whitespace_only_counts` and logged. A snippet that
+  survives truncation is unchanged. Truncation is off by default.
+
 - **1.0.3** `tokenizer_fairness_gini` publishes a second coefficient at
   `per_tokenizer.<tok>.per_line_normalization`, normalized by line count rather
   than by the configured unit, and `null` unless every language has the same

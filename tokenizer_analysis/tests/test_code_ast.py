@@ -3422,3 +3422,55 @@ class TestTheCodeCorpusIsEncodedOncePerRun:
             digit_result["operator_isolation_rate"]["by_domain"][CODE_CORPUS]
         )
         assert code_domain["summary"]["tok"]["total_operators"] > 0
+
+
+class TestTheMissingEncodingErrorNamesTheSnippetThatIsActuallyMissing:
+    """_shared_code_encodings's lookup is keyed by (language, text), not by
+    position in the encoded list.
+
+    A corpus supplied directly by a caller (bypassing CodeDataLoader, which
+    now drops a whitespace-only truncation result at the source) can still
+    hold a whitespace-only snippet. The provider's encode drops such a text,
+    so its per-language encoded list is shorter than
+    code_snippets[code_lang], the loader's raw list compute() walks with
+    ``si``: here "python" has 3 raw snippets but only 2 encoded ones. Every
+    snippet, blank or not, reaches the per-tokenizer lookup, so the blank one
+    -- the second of the three -- is the one with no encoding, and the error
+    naming it is the correct, loud failure.
+
+    Were the lookup keyed by (language, si) instead of (language, snippet),
+    the blank snippet's position (1) would collide with the third, real
+    snippet's position in the shorter encoded list, so the blank snippet
+    would silently "succeed" with the real snippet's tokens, and the missing
+    entry would instead be reported for the real, third snippet -- the wrong
+    diagnosis, pointing at a snippet that was never missing anything.
+    """
+
+    @pytest.fixture(scope="class")
+    def ts_pack(self):
+        try:
+            import tree_sitter_language_pack
+            return tree_sitter_language_pack
+        except ImportError:
+            pytest.skip("tree-sitter-language-pack not installed")
+
+    def test_the_error_names_the_blank_snippet_not_the_following_one(
+        self, ts_pack,
+    ):
+        from tokenizer_analysis.core.input_types import CODE_CORPUS, Corpus
+
+        code_texts = {
+            "python": [
+                "def add(a, b):\n    return a + b\n",
+                "    \n",  # whitespace-only: the provider's encode drops it
+                "total = 12 + 345\n",
+            ],
+        }
+        provider = _MockProvider("tok", _CharTokenizer())
+        provider.add_corpus(Corpus(
+            name=CODE_CORPUS, texts=code_texts,
+            source="test code", synthetic=False,
+        ))
+
+        with pytest.raises(ValueError, match=r"snippet 2 of 3"):
+            ASTBoundaryMetrics(provider).compute()

@@ -1532,3 +1532,39 @@ class TestUniMixLMResolvesThroughItsBaseTokenizer:
         assert wrapper.pretokenize_with_spans("hello") is None
         with pytest.raises(NotImplementedError):
             wrapper.pretokenize("hello")
+
+
+class TestUniMixLMBatchEncodingIsPairedWithTheRightText:
+    """UniMixLMTokenizer.encode_batch_with_offsets() must return result i for
+    text i, same as every other wrapper's batch path.
+
+    UniMixLM is not one of ALL_WRAPPER_FIXTURES, so
+    TestEncodeConsistency.test_batch_ids_match_single_encode -- the test that
+    checks exactly this pairing for every other wrapper -- never runs against
+    it. Its override always falls back to a per-text loop rather than a
+    tokenizers.Tokenizer.encode_batch call (langspec needs the per-text
+    scoring; non-langspec does not, but the override does not distinguish
+    the two), so this pins that the loop's output stays in the input order.
+    If it were ever reversed or otherwise reordered, the ids returned for
+    texts[i] would silently belong to a different text -- code and math
+    reconstruction fidelity, which read exactly these ids, would then score
+    every code and math text against another text's tokens.
+    """
+
+    def test_batch_results_are_in_the_same_order_as_the_input_texts(
+        self, trained_hf_tokenizer,
+    ):
+        from tokenizer_analysis.core.tokenizer_wrapper import UniMixLMTokenizer
+
+        wrapper = UniMixLMTokenizer("test-unimix", trained_hf_tokenizer, {})
+        texts = [_TEST_TEXT, _TEST_TEXT_MULTI, _CODE_TEXT, _MATH_TEXT]
+
+        batch_results = wrapper.encode_batch_with_offsets(texts)
+        assert len(batch_results) == len(texts)
+
+        for i, text in enumerate(texts):
+            batch_ids, _batch_offsets = batch_results[i]
+            assert batch_ids == wrapper.encode(text), (
+                f"encode_batch_with_offsets()[{i}][0] != encode(texts[{i}]) "
+                f"for {text!r}; the batch result is paired with the wrong text"
+            )
