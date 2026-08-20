@@ -946,3 +946,66 @@ class TestSharedCorpusIdsArePairedByTextNotByRecordOrder:
             "each snippet must be scored against its own ids; pairing by "
             "position scores 'aaa' against the ids of 'bbb'"
         )
+
+
+class TestAGroupedRunReportsNoCodeOrMathDomain:
+    """A language group contains prose languages, so it reports prose only.
+
+    ``UnifiedTokenizerAnalyzer.run_grouped_analysis`` selects the prose
+    TokenizedData for a group's languages and calls this metric with it, but
+    the code and math loop ran unconditionally off the constructor's corpora.
+    Every group therefore reported the whole code and math corpus. Measured on
+    the bundled demo before this was gated: the Arabic script family reported
+    321 texts in its reconstruction ``global`` of which 6 were Arabic, so 315
+    of the 321 were the same code and math texts that appeared in every other
+    group. The same texts also entered each group's CER budget.
+    """
+
+    def _metrics_with_code(self):
+        tok = _MockDecodableTokenizer(
+            encode_fn=lambda t: [1],
+            decode_fn=lambda ids: "whatever",
+        )
+        provider = _MockDecodableProvider("mock_tok", tok)
+        return BasicTokenizationMetrics(
+            provider, code_texts={"python": ["a = 1", "b = 2"]},
+        )
+
+    def test_include_code_math_false_drops_the_code_domains(self):
+        metrics = self._metrics_with_code()
+        td = {"mock_tok": [_make_td("mock_tok", "hello", [1])]}
+
+        results = metrics.compute_reconstruction_fidelity_analysis(
+            td, include_code_math=False,
+        )
+        by_domain = results["reconstruction_fidelity"]["per_tokenizer"]["mock_tok"]["by_domain"]
+
+        assert not [d for d in by_domain if d.startswith("code_") or d == "math"], (
+            f"a grouped run must report prose only, got {sorted(by_domain)}"
+        )
+
+    def test_the_default_still_reports_them(self):
+        """The ungrouped run is unchanged, which is what keeps published values."""
+        metrics = self._metrics_with_code()
+        td = {"mock_tok": [_make_td("mock_tok", "hello", [1])]}
+
+        results = metrics.compute_reconstruction_fidelity_analysis(td)
+        by_domain = results["reconstruction_fidelity"]["per_tokenizer"]["mock_tok"]["by_domain"]
+
+        assert "code_python" in by_domain
+        assert by_domain["code_python"]["count"] == 2
+
+    def test_the_group_global_counts_only_the_group_texts(self):
+        """The defect was in `global`, not only in the per-domain listing."""
+        metrics = self._metrics_with_code()
+        td = {"mock_tok": [_make_td("mock_tok", "hello", [1])]}
+
+        grouped = metrics.compute_reconstruction_fidelity_analysis(
+            td, include_code_math=False,
+        )["reconstruction_fidelity"]["per_tokenizer"]["mock_tok"]["overall"]
+        ungrouped = metrics.compute_reconstruction_fidelity_analysis(
+            td,
+        )["reconstruction_fidelity"]["per_tokenizer"]["mock_tok"]["overall"]
+
+        assert grouped["count"] == 1, "the one prose text"
+        assert ungrouped["count"] == 3, "the prose text plus the two snippets"

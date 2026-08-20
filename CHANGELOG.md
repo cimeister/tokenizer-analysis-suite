@@ -171,6 +171,18 @@ conflicting flags.
 
 ## Releases
 
+- **Unreleased** `grouped_analysis.<grouping>.<group>.reconstruction_fidelity`
+  reports the group's prose languages only. It reported the whole code and math
+  corpus inside every group, because the group selects prose languages while the
+  code and math loop ran unconditionally. On the bundled demo the Arabic script
+  family reported 321 texts in its `global`, of which 6 were Arabic and 315 were
+  the same code and math texts that appeared in every other group; it now
+  reports 6. The Latin family goes from 333 to 18, and its `whitespace_fidelity`
+  from 0.7641 to 0.9907. **Values under `grouped_analysis` change and are not
+  comparable with an earlier run.** Nothing outside `grouped_analysis` moves:
+  4883 leaves compared, none changed. `benchmarks/open_source/analysis_results.json`
+  contains no `grouped_analysis`, so the published benchmark is unaffected.
+
 - **Unreleased** The code and math corpora are read from disk once per run and
   encoded once per tokenizer. They were read twice and encoded three times, by
   `BasicTokenizationMetrics`, `DigitBoundaryMetrics` and `ASTBoundaryMetrics`

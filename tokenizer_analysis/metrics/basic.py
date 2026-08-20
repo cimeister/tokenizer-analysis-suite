@@ -158,7 +158,8 @@ class BasicTokenizationMetrics(BaseMetrics):
 
     def compute(self, tokenized_data: Optional[Dict[str, List[TokenizedData]]] = None,
                 include_reconstruction: bool = True,
-                cer_time_budget_s: float = DEFAULT_CER_TIME_BUDGET_S) -> Dict[str, Any]:
+                cer_time_budget_s: float = DEFAULT_CER_TIME_BUDGET_S,
+                include_code_math: bool = True) -> Dict[str, Any]:
         """
         Compute basic tokenization metrics.
 
@@ -167,6 +168,10 @@ class BasicTokenizationMetrics(BaseMetrics):
             include_reconstruction: Whether to include reconstruction fidelity analysis.
             cer_time_budget_s: Max seconds to spend on CER per tokenizer before
                 skipping.  0 disables the budget (always compute).
+            include_code_math: Whether reconstruction fidelity reports the code
+                and math corpora. False for a run over one language group,
+                which is a group of prose languages and contains no code or
+                math. See compute_reconstruction_fidelity_analysis.
 
         Returns:
             Dictionary with basic metrics results
@@ -194,7 +199,8 @@ class BasicTokenizationMetrics(BaseMetrics):
         # Compute reconstruction fidelity
         if include_reconstruction:
             results.update(self.compute_reconstruction_fidelity_analysis(
-                tokenized_data, cer_time_budget_s=cer_time_budget_s))
+                tokenized_data, cer_time_budget_s=cer_time_budget_s,
+                include_code_math=include_code_math))
 
         return results
     
@@ -696,6 +702,7 @@ class BasicTokenizationMetrics(BaseMetrics):
     def compute_reconstruction_fidelity_analysis(
         self, tokenized_data: Dict[str, List[TokenizedData]],
         cer_time_budget_s: float = DEFAULT_CER_TIME_BUDGET_S,
+        include_code_math: bool = True,
     ) -> Dict[str, Any]:
         """Compute encode-decode round-trip fidelity metrics.
 
@@ -718,6 +725,13 @@ class BasicTokenizationMetrics(BaseMetrics):
                 budget the CER and whitespace-fidelity computations are skipped
                 for the rest of the tokenizer and reported as ``None``.
                 Set to ``0`` to disable the budget (always compute).
+            include_code_math: Whether to report the code and math corpora
+                alongside the prose languages. False for a run over one
+                language group: the group selects prose languages, the code and
+                math corpora belong to no language, and reporting the whole of
+                both inside every group made each group's ``global`` a figure
+                measured mostly on texts the group does not contain. It also
+                put the same code and math texts into every group's CER budget.
         """
         results: Dict[str, Any] = {
             'reconstruction_fidelity': {
@@ -745,9 +759,16 @@ class BasicTokenizationMetrics(BaseMetrics):
             }
         }
 
+        # The code and math texts this call reports. Both are empty for a
+        # grouped run: see include_code_math above. Read from here on rather
+        # than from self, so the two corpora leave the calculation together,
+        # including the CER budget below.
+        code_texts = self._code_texts if include_code_math else {}
+        math_items = self._math_items if include_code_math else []
+
         # The ids the provider already made for the code and math corpora,
         # empty when the run registered neither.
-        shared_ids = self._shared_corpus_ids()
+        shared_ids = self._shared_corpus_ids() if include_code_math else {}
 
         # Every code and math text, counted before the `text.strip()` filter the
         # loop below applies. This over-counts a whitespace-only text, and that
@@ -756,8 +777,8 @@ class BasicTokenizationMetrics(BaseMetrics):
         # would move published values. It does not depend on the tokenizer, so
         # it is counted once for the whole loop.
         total_code_math_texts = (
-            sum(len(snippets) for snippets in self._code_texts.values())
-            + len(self._math_items)
+            sum(len(snippets) for snippets in code_texts.values())
+            + len(math_items)
         )
 
         for tok_name in self.tokenizer_names:
@@ -939,12 +960,12 @@ class BasicTokenizationMetrics(BaseMetrics):
             # InputProvider._encode_corpus applies, so every text kept here has
             # an entry in shared_ids and a text it drops has none.
             code_math_pairs: List[Tuple[str, str, str, str]] = []
-            for lang, snippets in self._code_texts.items():
+            for lang, snippets in code_texts.items():
                 domain = f"code_{lang}"
                 for snippet in snippets:
                     if snippet and snippet.strip():
                         code_math_pairs.append((snippet, domain, CODE_CORPUS, lang))
-            for label, text in self._math_items:
+            for label, text in math_items:
                 if text and text.strip():
                     code_math_pairs.append((text, "math", MATH_CORPUS, label))
 

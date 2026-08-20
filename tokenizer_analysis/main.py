@@ -430,10 +430,17 @@ class UnifiedTokenizerAnalyzer:
                 # Run analysis on filtered data (same as main analysis)
                 group_result = {}
                 
-                # Basic metrics
+                # Basic metrics. include_code_math=False because a group is a
+                # set of prose languages: _filter_data_by_languages selects the
+                # prose TokenizedData for the group's languages, and the code
+                # and math corpora belong to no language. Reporting the whole of
+                # both inside every group made each group's reconstruction
+                # `global` a figure measured mostly on the same texts in every
+                # group, and put those texts into every group's CER budget.
                 basic_results = self.basic_metrics.compute(
                     filtered_data, include_reconstruction=include_reconstruction,
-                    cer_time_budget_s=cer_time_budget_s)
+                    cer_time_budget_s=cer_time_budget_s,
+                    include_code_math=False)
                 group_result.update(basic_results)
                 
                 # Information-theoretic metrics (includes compression_rate)
