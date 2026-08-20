@@ -109,8 +109,15 @@ class BasicTokenizationMetrics(BaseMetrics):
         # this metric a code domain it has never had. Pinned by
         # TestTheDefaultCodeConfigurationIsAsymmetric in
         # tests/test_output_contract.py.
+        #
+        # The math texts are held as (label, text) pairs rather than as bare
+        # texts. The label is the key a registered corpus is encoded under, and
+        # reconstruction fidelity reads those encodings back by (label, text);
+        # see _shared_corpus_ids. A flat list of texts would leave position as
+        # the only way to pair a text with its encoding, which is the defect
+        # that keying by text prevents.
         self._code_texts: Dict[str, List[str]] = {}
-        self._math_texts: List[str] = []
+        self._math_items: List[Tuple[str, str]] = []
 
         code_corpus = self._registered_corpus(CODE_CORPUS)
         if code_corpus is None:
@@ -120,13 +127,24 @@ class BasicTokenizationMetrics(BaseMetrics):
 
         math_corpus = self._registered_corpus(MATH_CORPUS)
         if math_corpus is None:
+            # No corpus is registered, so nothing indexes these texts and the
+            # label is never used to look one up. MATH_CORPUS is the label
+            # loaders/corpora.py gives the math texts it resolves, so the two
+            # paths agree on it.
             if math_data_path:
-                self._math_texts = load_math_data(math_data_path)
+                self._math_items = [
+                    (MATH_CORPUS, text) for text in load_math_data(math_data_path)
+                ]
             elif use_builtin_math_data:
-                self._math_texts = load_math_data(BUILTIN_MATH_SAMPLES_PATH)
+                self._math_items = [
+                    (MATH_CORPUS, text)
+                    for text in load_math_data(BUILTIN_MATH_SAMPLES_PATH)
+                ]
         elif not math_corpus.synthetic:
-            self._math_texts = [
-                text for texts in math_corpus.texts.values() for text in texts
+            self._math_items = [
+                (label, text)
+                for label, texts in math_corpus.texts.items()
+                for text in texts
             ]
 
     def compute(self, tokenized_data: Optional[Dict[str, List[TokenizedData]]] = None,
@@ -589,6 +607,77 @@ class BasicTokenizationMetrics(BaseMetrics):
     # Reconstruction Fidelity
     # ------------------------------------------------------------------
 
+    def _shared_corpus_ids(
+        self,
+    ) -> Dict[str, Dict[str, Dict[Tuple[str, str], List[int]]]]:
+        """The registered code and math corpora already encoded, ids indexed by (label, text).
+
+        Shape: corpus name -> tokenizer name -> (label, text) -> token ids. A
+        corpus is absent from the result when the run registered none, and the
+        code/math loop in :meth:`compute_reconstruction_fidelity_analysis` then
+        encodes each text itself as it always has. That fallback is what keeps
+        this class constructible on its own: per_example.py, scripts/ and most
+        of the test suite build it against a provider carrying no corpora.
+
+        A corpus this metric measures no text from is absent as well. That is
+        the synthetic corpus, which __init__ leaves out of _code_texts and
+        _math_items, and reading it here would encode a corpus nothing goes on
+        to score.
+
+        The index is keyed by ``(label, text)`` and never by position. The
+        provider's encode keeps only texts satisfying ``text and text.strip()``,
+        so its list for a label is shorter than this metric's whenever one of
+        those texts is whitespace-only, which max_snippet_chars produces by
+        truncating an indented file down to its leading whitespace. Pairing the
+        two lists by index after one such drop would score every later text
+        against the following text's ids, and nothing in the results would show
+        it. Two identical texts collapse onto one entry, which is harmless:
+        identical text encodes to identical ids.
+
+        The provider encodes with offsets, which this metric does not read. In a
+        run where another metric also reads the corpus (the AST metrics and
+        operator isolation both do, and both need the offsets) that costs
+        nothing, and it removes the second encoding of the same texts this loop
+        used to make. In a run where reconstruction fidelity is the only reader,
+        the offsets are paid for and thrown away. That is accepted rather than
+        avoided with an ids-only provider method: such a method would either
+        encode the corpus a second time or need a second cache, and the
+        configuration it would serve is narrow (a real code or math corpus with
+        both the AST metrics and the digit metrics turned off). Its cost there
+        is bounded. For HuggingFaceTokenizer, UniMixLMTokenizer and
+        CustomBPETokenizer the offsets come free and the provider encodes one
+        batch per label: 4.00 s against 10.29 s for per-text calls over the
+        1500 files benchmarks/open_source/code_ast_config.json names, so those
+        wrappers are faster here than the per-text encode() this replaced. The
+        script_bpe wrappers compute offsets by replaying the pretokenizer, at
+        2.16x the cost of the ids alone, and have no batch path, so they are
+        the ones that pay.
+        """
+        lookup: Dict[str, Dict[str, Dict[Tuple[str, str], List[int]]]] = {}
+        measured = (
+            (CODE_CORPUS, bool(self._code_texts)),
+            (MATH_CORPUS, bool(self._math_items)),
+        )
+        for corpus_name, has_texts in measured:
+            if not has_texts or self._registered_corpus(corpus_name) is None:
+                continue
+            encoded = self.input_provider.get_tokenized_data(corpus_name)
+            per_corpus: Dict[str, Dict[Tuple[str, str], List[int]]] = {}
+            for tok_name, records in encoded.items():
+                per_tokenizer: Dict[Tuple[str, str], List[int]] = {}
+                for record in records:
+                    # A record carrying no text cannot be matched to a text of
+                    # this metric's. InputProvider._encode_corpus always sets
+                    # it; a provider supplying its own records for this corpus
+                    # need not. Such a record is left out of the index, and the
+                    # text it was meant for then raises from the loop below.
+                    if record.text is None:
+                        continue
+                    per_tokenizer[(record.language, record.text)] = record.tokens
+                per_corpus[tok_name] = per_tokenizer
+            lookup[corpus_name] = per_corpus
+        return lookup
+
     def compute_reconstruction_fidelity_analysis(
         self, tokenized_data: Dict[str, List[TokenizedData]],
         cer_time_budget_s: float = DEFAULT_CER_TIME_BUDGET_S,
@@ -641,6 +730,21 @@ class BasicTokenizationMetrics(BaseMetrics):
             }
         }
 
+        # The ids the provider already made for the code and math corpora,
+        # empty when the run registered neither.
+        shared_ids = self._shared_corpus_ids()
+
+        # Every code and math text, counted before the `text.strip()` filter the
+        # loop below applies. This over-counts a whitespace-only text, and that
+        # is deliberate: the count feeds the estimate of how much CER work is
+        # left, which decides whether cer_skipped flips, so filtering it here
+        # would move published values. It does not depend on the tokenizer, so
+        # it is counted once for the whole loop.
+        total_code_math_texts = (
+            sum(len(snippets) for snippets in self._code_texts.values())
+            + len(self._math_items)
+        )
+
         for tok_name in self.tokenizer_names:
             try:
                 tokenizer = self.input_provider.get_tokenizer(tok_name)
@@ -654,6 +758,43 @@ class BasicTokenizationMetrics(BaseMetrics):
             if not tokenizer.can_decode():
                 logger.info("Reconstruction fidelity: skipping %s (no decode support)", tok_name)
                 continue
+
+            if total_code_math_texts:
+                # This metric selects on can_decode() alone, and the code/math
+                # loop below then needs raw text encoded. A tokenizer that
+                # decodes but cannot encode (a pre-tokenized provider's) used to
+                # reach that call and raise NotImplementedError out of the whole
+                # analysis. Decided 2026-08-19: skip it with a warning instead,
+                # which is what InputProvider._encode_corpus already does with
+                # the same tokenizer, so it is left out of the encoded corpus
+                # rather than crashing the run. The check is conditional on
+                # there being code or math text because with none the loop
+                # encodes nothing, and such a tokenizer's prose numbers are
+                # measurable exactly as they have always been.
+                if not InputProvider._can_encode_raw_text(tokenizer):
+                    logger.warning(
+                        "Reconstruction fidelity: skipping %s (it decodes but "
+                        "cannot encode raw text, and this run has %d code/math "
+                        "texts to encode; its prose domains are skipped with "
+                        "it). Pre-tokenized input supplies ids, not an encoder.",
+                        tok_name, total_code_math_texts,
+                    )
+                    continue
+                missing = sorted(
+                    corpus_name for corpus_name, per_corpus in shared_ids.items()
+                    if tok_name not in per_corpus
+                )
+                if missing:
+                    raise ValueError(
+                        f"Tokenizer {tok_name!r} passes "
+                        "InputProvider._can_encode_raw_text, which is the same "
+                        "predicate the provider selects on, but the shared "
+                        f"{', '.join(map(repr, missing))} corpus holds no "
+                        "encoding for it. Encoding it here instead would undo "
+                        "the single encoding this path exists for, and skipping "
+                        "it would drop it from the reconstruction results with "
+                        "nothing in the output saying it is absent."
+                    )
 
             unk_id = tokenizer.get_unk_token_id()
 
@@ -680,10 +821,6 @@ class BasicTokenizationMetrics(BaseMetrics):
                     1 for td in tokenized_data[tok_name]
                     if td.text and td.text.strip()
                 )
-            total_code_math_texts = (
-                sum(len(snippets) for snippets in self._code_texts.values())
-                + len(self._math_texts)
-            )
             total_all_texts = total_lang_texts + total_code_math_texts
             texts_processed = 0
 
@@ -768,30 +905,59 @@ class BasicTokenizationMetrics(BaseMetrics):
                                         cer_time_budget_s,
                                     )
 
-            # Code/math data: encode on the fly (not in TokenizedData)
-            code_math_pairs: List[Tuple[str, str]] = []
+            # Code/math data: not in the prose TokenizedData. Each text
+            # carries the corpus and the label it is filed under, which is how
+            # its ids are found in shared_ids, and the domain it is reported
+            # under, which is a different string: "code_python" for the python
+            # label of the code corpus.
+            #
+            # The `text.strip()` filter is the same one
+            # InputProvider._encode_corpus applies, so every text kept here has
+            # an entry in shared_ids and a text it drops has none.
+            code_math_pairs: List[Tuple[str, str, str, str]] = []
             for lang, snippets in self._code_texts.items():
                 domain = f"code_{lang}"
                 for snippet in snippets:
                     if snippet and snippet.strip():
-                        code_math_pairs.append((snippet, domain))
-            for text in self._math_texts:
+                        code_math_pairs.append((snippet, domain, CODE_CORPUS, lang))
+            for label, text in self._math_items:
                 if text and text.strip():
-                    code_math_pairs.append((text, "math"))
+                    code_math_pairs.append((text, "math", MATH_CORPUS, label))
 
-            for text, domain in code_math_pairs:
+            for text, domain, corpus_name, label in code_math_pairs:
                 has_data = True
                 texts_processed += 1
                 stats = domain_stats[domain]
 
-                # encode(), not encode_with_offsets(): this loop reads the ids
-                # and throws the offsets away. Both return the same ids, which
-                # TestEncodeConsistency asserts for every wrapper. For a
-                # HuggingFace tokenizer the offsets come free, but the script_bpe
-                # wrappers compute them by replaying the pretokenizer, measured
-                # at 2.16x the cost of encoding on this corpus shape, so this
-                # loop was paying that for nothing.
-                token_ids = tokenizer.encode(text)
+                per_tokenizer = shared_ids.get(corpus_name)
+                if per_tokenizer is None:
+                    # Nothing registered this corpus, so there is no shared
+                    # encoding to read and this loop encodes as it always has.
+                    #
+                    # encode(), not encode_with_offsets(): this loop reads the
+                    # ids and throws the offsets away. Both return the same ids,
+                    # which TestEncodeConsistency asserts for every wrapper. For
+                    # a HuggingFace tokenizer the offsets come free, but the
+                    # script_bpe wrappers compute them by replaying the
+                    # pretokenizer, measured at 2.16x the cost of encoding on
+                    # this corpus shape, so this loop was paying that for
+                    # nothing.
+                    token_ids = tokenizer.encode(text)
+                else:
+                    token_ids = per_tokenizer[tok_name].get((label, text))
+                    if token_ids is None:
+                        raise ValueError(
+                            f"The shared {corpus_name!r} corpus holds no "
+                            f"encoding of a {label!r} text for tokenizer "
+                            f"{tok_name!r}. The text this metric measures and "
+                            "the texts the provider encoded are supposed to be "
+                            "the same strings; they are not. Scoring this text "
+                            "against another text's ids is what keying the "
+                            "lookup by text instead of by position prevents, so "
+                            "it fails here rather than reporting a number "
+                            "measured against the wrong source. Text starts: "
+                            f"{text[:60]!r}"
+                        )
                 stats['total_tokens'] += len(token_ids)
 
                 if unk_id is not None:

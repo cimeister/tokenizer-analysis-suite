@@ -440,6 +440,187 @@ class TestReconstructionFidelityCodeMath:
 
 
 # ======================================================================
+# Reconstruction fidelity over the registered code and math corpora
+# ======================================================================
+
+class _CountingCharTokenizer(_MockDecodableTokenizer):
+    """Char-level round-trip tokenizer that records every text it encodes.
+
+    encode_with_offsets() on the base class calls encode(), so the record
+    covers the provider's encoding of a registered corpus as well as any
+    encoding the metric does itself.
+    """
+
+    def __init__(self):
+        super().__init__(
+            encode_fn=lambda t: [ord(c) for c in t],
+            decode_fn=lambda ids: "".join(chr(i) for i in ids),
+        )
+        self.encoded_texts: List[str] = []
+
+    def encode(self, text: str) -> List[int]:
+        self.encoded_texts.append(text)
+        return super().encode(text)
+
+
+def _provider_with_corpora(tokenizer, code_texts, math_texts, tok_name="mock_tok"):
+    from tokenizer_analysis.core.input_types import (
+        CODE_CORPUS, MATH_CORPUS, Corpus,
+    )
+
+    provider = _MockDecodableProvider(tok_name, tokenizer)
+    provider.add_corpus(Corpus(
+        name=CODE_CORPUS, texts=code_texts,
+        source="test code", synthetic=False,
+    ))
+    provider.add_corpus(Corpus(
+        name=MATH_CORPUS, texts={MATH_CORPUS: math_texts},
+        source="test math", synthetic=False,
+    ))
+    return provider
+
+
+class TestTheCodeAndMathCorporaAreEncodedOncePerRun:
+    """Reconstruction fidelity reads the ids the provider already made.
+
+    The provider encodes a registered corpus once and memoizes it. This metric
+    used to call encode() on every code and math text on top of that, so a run
+    with the AST or digit metrics active encoded each of those texts twice.
+    """
+
+    def test_each_code_and_math_text_is_encoded_once(self):
+        from collections import Counter
+
+        code_texts = {"python": ["print(1)\n", "total = 12 + 345\n"]}
+        math_texts = ["12 + 345 = 357"]
+        tokenizer = _CountingCharTokenizer()
+        metrics = BasicTokenizationMetrics(
+            _provider_with_corpora(tokenizer, code_texts, math_texts)
+        )
+
+        results = metrics.compute_reconstruction_fidelity_analysis({"mock_tok": []})
+
+        counts = Counter(tokenizer.encoded_texts)
+        assert [counts[text] for text in code_texts["python"] + math_texts] == [1, 1, 1]
+
+        # Each count is one because the metric read the provider's encoding,
+        # not because it measured nothing: with the char tokenizer a text's
+        # token count is its character count.
+        by_domain = results["reconstruction_fidelity"]["per_tokenizer"]["mock_tok"]["by_domain"]
+        assert by_domain["code_python"]["count"] == 2
+        assert by_domain["code_python"]["total_tokens"] == sum(
+            len(text) for text in code_texts["python"]
+        )
+        assert by_domain["math"]["count"] == 1
+        assert by_domain["math"]["total_tokens"] == len(math_texts[0])
+
+    def test_a_whitespace_only_text_is_dropped_on_both_sides(self):
+        """The provider's encode keeps only texts satisfying text.strip(), and
+        so does this metric, so a whitespace-only text is absent from both.
+
+        If the two filters ever disagree, a text this metric measures has no
+        entry in the provider's encoding and compute_reconstruction_fidelity_
+        analysis raises naming it, rather than pairing the surrounding texts
+        with each other's ids. max_snippet_chars produces such a text by
+        truncating an indented file down to its leading whitespace.
+        """
+        code_texts = {"python": ["print(1)\n", "   \n  ", "print(22)\n"]}
+        tokenizer = _CountingCharTokenizer()
+        metrics = BasicTokenizationMetrics(
+            _provider_with_corpora(tokenizer, code_texts, ["1 + 1 = 2"])
+        )
+
+        results = metrics.compute_reconstruction_fidelity_analysis({"mock_tok": []})
+
+        assert "   \n  " not in tokenizer.encoded_texts
+        domain = results["reconstruction_fidelity"]["per_tokenizer"]["mock_tok"]["by_domain"]["code_python"]
+        assert domain["count"] == 2
+        assert domain["total_tokens"] == len("print(1)\n") + len("print(22)\n")
+        assert domain["exact_match_rate"] == pytest.approx(1.0)
+
+
+class TestATokenizerThatCannotEncodeRawTextIsSkipped:
+    """Decided 2026-08-19, and the one deliberate behaviour change of this
+    refactor.
+
+    This metric selects tokenizers on can_decode() alone and then encodes the
+    code and math texts, so a tokenizer that decodes but cannot encode raw text
+    used to raise out of the whole analysis. It is now skipped with a warning
+    naming it, which is what InputProvider._encode_corpus already does with the
+    same tokenizer.
+    """
+
+    @staticmethod
+    def _decode_only_tokenizer():
+        class _DecodeOnly(_MockDecodableTokenizer):
+            def can_encode(self) -> bool:
+                return False
+
+            def encode(self, text: str) -> List[int]:
+                raise NotImplementedError("cannot encode raw text")
+
+        return _DecodeOnly(decode_fn=lambda ids: "".join(chr(i) for i in ids))
+
+    @staticmethod
+    def _provider(tokenizers):
+        from tokenizer_analysis.core.input_types import CODE_CORPUS, Corpus
+
+        class _MultiTokenizerProvider(_SimpleProvider):
+            def __init__(self):
+                super().__init__(next(iter(tokenizers)))
+
+            def get_tokenizer_names(self) -> List[str]:
+                return list(tokenizers)
+
+            def get_tokenizer(self, name: str):
+                return tokenizers[name]
+
+        provider = _MultiTokenizerProvider()
+        provider.add_corpus(Corpus(
+            name=CODE_CORPUS, texts={"python": ["print(1)\n"]},
+            source="test code", synthetic=False,
+        ))
+        return provider
+
+    def test_the_run_completes_and_the_other_tokenizer_still_reports(self, caplog):
+        import logging
+
+        encoder = _CountingCharTokenizer()
+        provider = self._provider({
+            "encoder": encoder, "ids_only": self._decode_only_tokenizer(),
+        })
+        metrics = BasicTokenizationMetrics(provider)
+
+        with caplog.at_level(logging.WARNING):
+            results = metrics.compute_reconstruction_fidelity_analysis({})
+
+        per_tokenizer = results["reconstruction_fidelity"]["per_tokenizer"]
+        assert set(per_tokenizer) == {"encoder"}
+        assert per_tokenizer["encoder"]["by_domain"]["code_python"]["count"] == 1
+        assert any(
+            "Reconstruction fidelity: skipping ids_only" in record.getMessage()
+            and "cannot encode raw text" in record.getMessage()
+            for record in caplog.records
+        ), [record.getMessage() for record in caplog.records]
+
+    def test_it_is_not_skipped_when_there_is_no_code_or_math_text(self):
+        """With nothing to encode the loop never calls encode(), so such a
+        tokenizer's prose numbers are measurable and still reported.
+
+        A can_encode() check applied unconditionally would drop them.
+        """
+        tokenizer = self._decode_only_tokenizer()
+        provider = _MockDecodableProvider("ids_only", tokenizer)
+        metrics = BasicTokenizationMetrics(provider)
+
+        prose = {"ids_only": [_make_td("ids_only", "hi", [ord("h"), ord("i")])]}
+        results = metrics.compute_reconstruction_fidelity_analysis(prose)
+
+        per_tokenizer = results["reconstruction_fidelity"]["per_tokenizer"]
+        assert per_tokenizer["ids_only"]["by_domain"]["en"]["exact_match_rate"] == pytest.approx(1.0)
+
+
+# ======================================================================
 # T9: _character_error_rate edge cases
 # ======================================================================
 
