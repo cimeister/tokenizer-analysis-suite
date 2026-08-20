@@ -151,8 +151,21 @@ class UnifiedTokenizerAnalyzer:
             code_ast_config, code_max_snippets_per_lang, code_max_snippet_chars,
         )
         math_corpus = resolve_math_corpus(math_data_path, use_builtin_math_data)
-        add_corpus(code_corpus)
-        add_corpus(math_corpus)
+        # Registered together, so a refusal on the second does not leave the
+        # first behind. Resolving both first only covers a failure to load;
+        # add_corpus itself refuses a name already registered, and the sequential
+        # calls left the provider holding the code corpus when that happened.
+        registered = []
+        try:
+            for corpus in (code_corpus, math_corpus):
+                add_corpus(corpus)
+                registered.append(corpus.name)
+        except Exception:
+            registry = getattr(input_provider, '_corpora', None)
+            if isinstance(registry, dict):
+                for name in registered:
+                    registry.pop(name, None)
+            raise
 
         # Initialize metrics classes
         self.basic_metrics = BasicTokenizationMetrics(
@@ -515,10 +528,13 @@ class UnifiedTokenizerAnalyzer:
                         group_result['operator_isolation_rate'] = self._filter_operator_results(
                             base_results['operator_isolation_rate'], group_languages
                         )
-                elif base_results is not None:
-                    # The base run produced no digit metrics, which is what
+                elif base_results:
+                    # Truthy base_results without the digit keys means the
+                    # base run produced no digit metrics, which is what
                     # --no-digit-boundary does, so the groups report none
                     # either rather than computing what the caller turned off.
+                    # An empty dict is "nothing precomputed" and falls to the
+                    # branch below, as it did before.
                     logger.info(
                         "No digit boundary results in the base run, so group "
                         "%s reports none either.", group_name,

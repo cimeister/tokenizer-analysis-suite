@@ -410,8 +410,11 @@ class DigitBoundaryMetrics(BaseMetrics):
         Operator isolation is reported per domain under
         ``operator_isolation_rate["by_domain"]``, and the top-level ``summary``
         pools them. Each domain records the corpus it used. **code** and
-        **math** always run. **prose**, the main corpus, runs only when the
-        instance was built with ``include_prose_operators=True``.
+        **math** run unless *include_code_math* is False, which is what a run
+        over one language group passes. **prose**, the main corpus, runs only
+        when the instance was built with ``include_prose_operators=True``. With
+        code and math off and prose off, which is a grouped run at the default
+        settings, ``by_domain`` is empty.
 
         Returns a dict with four top-level keys:
         ``three_digit_boundary_alignment``, ``digit_split_variability``,
@@ -695,11 +698,11 @@ class DigitBoundaryMetrics(BaseMetrics):
         # ``domain_operator_counts`` so that weighting is visible rather than
         # implicit.
         operator_results = self._build_operator_results(
-            self._merge_operator_accs(domain_accs)
+            self._merge_operator_accs(domain_accs), include_code_math,
         )
         operator_results["by_domain"] = {
             domain: dict(
-                self._build_operator_results(acc),
+                self._build_operator_results(acc, include_code_math),
                 source=domain_sources[domain],
                 corpus=domain_corpora[domain],
             )
@@ -1508,18 +1511,33 @@ class DigitBoundaryMetrics(BaseMetrics):
     # ------------------------------------------------------------------
 
     def _build_operator_results(
-        self, acc: Dict[str, Dict[str, Dict[str, Dict[str, int]]]]
+        self, acc: Dict[str, Dict[str, Dict[str, Dict[str, int]]]],
+        include_code_math: bool = True,
     ) -> Dict[str, Any]:
-        """Build the ``operator_isolation_rate`` result dict."""
+        """Build the ``operator_isolation_rate`` result dict.
+
+        *include_code_math* only reaches the published metadata, which has to
+        describe the domains this run actually has.
+        """
         results: Dict[str, Any] = {
             "per_tokenizer": {},
             "summary": {},
             "metadata": {
+                # Conditional for the same reason reconstruction fidelity's
+                # per_domain string is: a grouped run has no code or math
+                # domain, and a fixed string described domains the block cannot
+                # hold.
                 "description": (
                     "How often a mathematical operator is a token of its own, "
                     "pooled over the domains that ran, with the split kept in "
-                    "by_domain. Code and math always run; prose runs only with "
-                    "--operator-prose-domain. Read by_domain to see which."
+                    "by_domain. Code and math always run; prose runs only "
+                    "with --operator-prose-domain. Read by_domain to see which."
+                    if include_code_math else
+                    "How often a mathematical operator is a token of its own, "
+                    "pooled over the domains that ran, with the split kept in "
+                    "by_domain. This run covers one group of prose languages, "
+                    "so the code and math domains do not run; prose runs only "
+                    "with --operator-prose-domain. Read by_domain to see which."
                 ),
                 "aggregation": AGGREGATION_MICRO_POOLED,
                 "count_unit": "operator occurrences",

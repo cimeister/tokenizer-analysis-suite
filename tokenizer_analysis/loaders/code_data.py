@@ -327,7 +327,8 @@ class CodeDataLoader:
             )
             logger.warning(
                 "%s: max_snippets_per_lang=%d dropped %d file(s) found under "
-                "%s (kept %d of %d found).",
+                "%s (%d of %d found were within the cap; the whitespace-only "
+                "line below, if any, reports what was dropped after that).",
                 lang, cap, dropped_files, path,
                 existing + kept_before_whitespace_drop, candidates_found,
             )

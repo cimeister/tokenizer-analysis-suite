@@ -362,6 +362,24 @@ class ASTBoundaryMetrics(BaseMetrics):
             # It still goes through the loader rather than being read straight
             # off the corpus, so that get_code_snippets keeps applying
             # max_snippets_per_lang as its final safety net.
+            # Language names are checked here, because a registered corpus
+            # need not have come through CodeDataLoader._validate_config.
+            # code_corpus_from_texts, which is how DigitBoundaryMetrics turns a
+            # caller's code_texts into a corpus, validates nothing, so a label
+            # like "cobol" reached the parser and was dropped at debug level
+            # with nothing in dropped_languages recording it.
+            unknown = sorted(
+                set(self._code_corpus.texts) - set(CodeDataLoader._LANG_EXTENSIONS)
+            )
+            if unknown:
+                raise ValueError(
+                    f"The registered {CODE_CORPUS!r} corpus from "
+                    f"{self._code_corpus.source!r} holds language(s) "
+                    f"{', '.join(unknown)}, which these metrics have no parser "
+                    "for. They would be dropped from the results with nothing "
+                    "saying so. Supported: "
+                    f"{', '.join(sorted(CodeDataLoader._LANG_EXTENSIONS))}."
+                )
             self.code_loader.code_snippets.update(
                 {lang: list(texts) for lang, texts in self._code_corpus.texts.items()}
             )

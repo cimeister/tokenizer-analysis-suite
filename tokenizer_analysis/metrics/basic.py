@@ -3,7 +3,7 @@ Basic tokenization metrics using unified TokenizedData interface.
 """
 
 from bisect import bisect_left
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional, Tuple, Mapping, Sequence
 from collections import defaultdict
 import logging
 import time
@@ -16,6 +16,7 @@ from ..core.input_types import (
     CODE_CORPUS, MATH_CORPUS, NO_TOKENIZER_ERRORS, TokenizedData,
 )
 from ..core.input_providers import InputProvider
+from ..loaders.corpora import resolve_math_corpus
 from ..config import TextMeasurementConfig, TextMeasurer, DEFAULT_TEXT_MEASUREMENT_CONFIG, DEFAULT_WORD_MEASUREMENT_CONFIG
 from ..config.language_metadata import LanguageMetadata
 from ..constants import (
@@ -119,7 +120,11 @@ class BasicTokenizationMetrics(BaseMetrics):
         # see _shared_corpus_ids. A flat list of texts would leave position as
         # the only way to pair a text with its encoding, which is the defect
         # that keying by text prevents.
-        self._code_texts: Dict[str, List[str]] = {}
+        # Mapping/Sequence, not Dict[str, List[str]]: a registered Corpus hands
+        # back tuples behind a read-only view, and dict() of it keeps the
+        # tuples. Nothing here mutates them, and the annotation should not
+        # invite it.
+        self._code_texts: Mapping[str, Sequence[str]] = {}
         self._math_items: List[Tuple[str, str]] = []
         # Which corpora these texts came out of the registry, decided here and
         # not re-decided at compute time. Constructing DigitBoundaryMetrics
@@ -146,18 +151,20 @@ class BasicTokenizationMetrics(BaseMetrics):
         )
         self._corpus_backed[MATH_CORPUS] = math_corpus is not None
         if math_corpus is None:
-            # No corpus is registered, so nothing indexes these texts and the
-            # label is never used to look one up. MATH_CORPUS is the label
-            # loaders/corpora.py gives the math texts it resolves, so the two
-            # paths agree on it.
-            if math_data_path:
+            if math_data_path or use_builtin_math_data:
+                # resolve_math_corpus, not load_math_data: it is the one
+                # definition of which math corpus a run measures, and it
+                # refuses a path that loads zero texts rather than reporting no
+                # math domain and saying nothing. Reading the file here instead
+                # accepted that silently, while DigitBoundaryMetrics, given the
+                # same argument, aborted.
+                resolved = resolve_math_corpus(
+                    math_data_path, use_builtin_math_data,
+                )
                 self._math_items = [
-                    (MATH_CORPUS, text) for text in load_math_data(math_data_path)
-                ]
-            elif use_builtin_math_data:
-                self._math_items = [
-                    (MATH_CORPUS, text)
-                    for text in load_math_data(BUILTIN_MATH_SAMPLES_PATH)
+                    (label, text)
+                    for label, texts in resolved.texts.items()
+                    for text in texts
                 ]
         elif not math_corpus.synthetic:
             self._math_items = [
