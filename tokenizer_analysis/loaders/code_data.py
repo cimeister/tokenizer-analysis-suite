@@ -290,18 +290,25 @@ class CodeDataLoader:
         # The kept text is not otherwise altered: see the docstring on why
         # this does not rstrip the truncated prefix.
         truncated_chars = 0
+        truncated_snippets = 0
         dropped_whitespace_only = 0
         if char_cap_active:
             capped_snippets: List[str] = []
             for s in snippets:
                 if len(s) > char_cap:
                     truncated_chars += len(s) - char_cap
+                    truncated_snippets += 1
                     capped = s[:char_cap]
+                    # Only a truncated snippet can come out whitespace-only:
+                    # _read_file and _read_parquet both refuse blank content, so
+                    # a snippet that was not cut is non-blank already. Testing
+                    # every snippet would have counted such a drop under a
+                    # message naming a truncation that did not happen.
+                    if not capped.strip():
+                        dropped_whitespace_only += 1
+                        continue
                 else:
                     capped = s
-                if not capped.strip():
-                    dropped_whitespace_only += 1
-                    continue
                 capped_snippets.append(capped)
             snippets = capped_snippets
 
@@ -322,7 +329,7 @@ class CodeDataLoader:
             logger.warning(
                 "%s: max_snippet_chars=%d truncated content under %s, "
                 "discarding %d character(s) total across %d snippet(s).",
-                lang, char_cap, path, truncated_chars, len(snippets),
+                lang, char_cap, path, truncated_chars, truncated_snippets,
             )
         if dropped_whitespace_only > 0:
             self.dropped_whitespace_only_counts[lang] = (

@@ -121,10 +121,19 @@ class BasicTokenizationMetrics(BaseMetrics):
         # that keying by text prevents.
         self._code_texts: Dict[str, List[str]] = {}
         self._math_items: List[Tuple[str, str]] = []
+        # Which corpora these texts came out of the registry, decided here and
+        # not re-decided at compute time. Constructing DigitBoundaryMetrics
+        # against the same provider registers corpora, so a metric built before
+        # it, holding the caller's own texts, would otherwise find a corpus at
+        # compute time and look its texts up in an encoding of a different one.
+        # That failed loudly, but several frames from the constructor that
+        # caused it.
+        self._corpus_backed: Dict[str, bool] = {}
 
         code_corpus = self._corpus_or_refuse_arguments(
             CODE_CORPUS, {"code_texts": code_texts}
         )
+        self._corpus_backed[CODE_CORPUS] = code_corpus is not None
         if code_corpus is None:
             self._code_texts = code_texts or {}
         elif not code_corpus.synthetic:
@@ -135,6 +144,7 @@ class BasicTokenizationMetrics(BaseMetrics):
             {"math_data_path": math_data_path,
              "use_builtin_math_data": use_builtin_math_data},
         )
+        self._corpus_backed[MATH_CORPUS] = math_corpus is not None
         if math_corpus is None:
             # No corpus is registered, so nothing indexes these texts and the
             # label is never used to look one up. MATH_CORPUS is the label
@@ -682,7 +692,10 @@ class BasicTokenizationMetrics(BaseMetrics):
             (MATH_CORPUS, bool(self._math_items)),
         )
         for corpus_name, has_texts in measured:
-            if not has_texts or self._registered_corpus(corpus_name) is None:
+            # self._corpus_backed, not the registry: what this metric measures
+            # was decided in __init__, and a corpus registered after that by
+            # another metric's constructor does not change it.
+            if not has_texts or not self._corpus_backed.get(corpus_name):
                 continue
             encoded = self.input_provider.get_corpus_data(corpus_name)
             per_corpus: Dict[str, Dict[Tuple[str, str], List[int]]] = {}
@@ -824,7 +837,7 @@ class BasicTokenizationMetrics(BaseMetrics):
                 # there being code or math text because with none the loop
                 # encodes nothing, and such a tokenizer's prose numbers are
                 # measurable exactly as they have always been.
-                if not InputProvider._can_encode_raw_text(tokenizer):
+                if not InputProvider.can_encode_raw_text(tokenizer):
                     logger.warning(
                         "Reconstruction fidelity: skipping %s (it decodes but "
                         "cannot encode raw text, and this run has %d code/math "
@@ -840,7 +853,7 @@ class BasicTokenizationMetrics(BaseMetrics):
                 if missing:
                     raise ValueError(
                         f"Tokenizer {tok_name!r} passes "
-                        "InputProvider._can_encode_raw_text, which is the same "
+                        "InputProvider.can_encode_raw_text, which is the same "
                         "predicate the provider selects on, but the shared "
                         f"{', '.join(map(repr, missing))} corpus holds no "
                         "encoding for it. Encoding it here instead would undo "

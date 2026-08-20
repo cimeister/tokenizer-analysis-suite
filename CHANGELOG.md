@@ -210,11 +210,15 @@ conflicting flags.
   on the input provider.
 
   The arguments are `code_texts`, `math_data_path` and `use_builtin_math_data`
-  for the first two, and `code_config`, `max_snippets_per_lang` and
-  `max_snippet_chars` for the AST metrics. The registered corpus previously took
-  precedence and the argument was dropped without a warning, so a caller who
-  named real code paths while the bundled samples were registered got AST
-  numbers measured on synthetic code under the name of their own corpus.
+  for the first two, and `code_config` for the AST metrics. The registered
+  corpus previously took precedence and the argument was dropped without a
+  warning, so a caller who named real code paths while the bundled samples were
+  registered got AST numbers measured on synthetic code under the name of their
+  own corpus. `max_snippets_per_lang` and `max_snippet_chars` are still
+  accepted alongside a registered corpus: they bound a corpus rather than select
+  one, and `CodeDataLoader.get_code_snippets` applies the first to whatever the
+  loader holds. An empty dict counts as a request, not as an absent one, since
+  `--code-ast-config` uses `{}` to mean the bundled samples.
 
   Reconstruction fidelity skips a tokenizer that decodes but cannot encode raw
   text, with a logged warning, when the run has code or math texts to encode.

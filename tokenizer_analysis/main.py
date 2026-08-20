@@ -128,10 +128,23 @@ class UnifiedTokenizerAnalyzer:
         # and the same caps, one here and one inside ASTBoundaryMetrics, so
         # every configured file was read and truncated twice and nothing
         # checked that the two results agreed.
-        input_provider.add_corpus(resolve_code_corpus(
+        #
+        # A provider without add_corpus is named here rather than reaching
+        # `AttributeError: 'X' object has no attribute 'add_corpus'` from inside
+        # this constructor. BaseMetrics._register_corpus gives the same error
+        # for a metric that builds its own corpus.
+        add_corpus = getattr(input_provider, 'add_corpus', None)
+        if not callable(add_corpus):
+            raise TypeError(
+                f"{type(input_provider).__name__} does not implement "
+                "add_corpus, so the code and math corpora this run resolved "
+                "cannot be registered for the metrics that read them. Subclass "
+                "InputProvider, which implements the corpus registry."
+            )
+        add_corpus(resolve_code_corpus(
             code_ast_config, code_max_snippets_per_lang, code_max_snippet_chars,
         ))
-        input_provider.add_corpus(resolve_math_corpus(
+        add_corpus(resolve_math_corpus(
             math_data_path, use_builtin_math_data,
         ))
 

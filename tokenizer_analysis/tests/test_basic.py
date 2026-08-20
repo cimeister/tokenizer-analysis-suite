@@ -1009,3 +1009,38 @@ class TestAGroupedRunReportsNoCodeOrMathDomain:
 
         assert grouped["count"] == 1, "the one prose text"
         assert ungrouped["count"] == 3, "the prose text plus the two snippets"
+
+
+class TestConstructionOrderDoesNotChangeWhatIsMeasured:
+    """Building another metric afterwards must not redirect this one.
+
+    DigitBoundaryMetrics registers the corpora it builds on the shared input
+    provider. A BasicTokenizationMetrics built before it, holding the caller's
+    own code_texts, used to re-read the registry at compute time, find the
+    corpus the other constructor had just registered, and look its own texts up
+    in an encoding of a different corpus. It failed loudly, but several frames
+    from the constructor that caused it and only once compute() ran.
+    """
+
+    def test_a_corpus_registered_afterwards_does_not_redirect_this_metric(self):
+        from tokenizer_analysis.metrics.math import DigitBoundaryMetrics
+
+        tok = _MockDecodableTokenizer(
+            encode_fn=lambda t: [1],
+            decode_fn=lambda ids: "a = 1",
+        )
+        provider = _MockDecodableProvider("mock_tok", tok)
+
+        basic = BasicTokenizationMetrics(provider, code_texts={"python": ["a = 1"]})
+        # Registers the bundled synthetic code and math corpora on the provider.
+        DigitBoundaryMetrics(provider)
+
+        results = basic.compute_reconstruction_fidelity_analysis(
+            {"mock_tok": [_make_td("mock_tok", "a = 1", [1])]},
+        )
+        by_domain = results["reconstruction_fidelity"]["per_tokenizer"]["mock_tok"]["by_domain"]
+
+        assert by_domain["code_python"]["count"] == 1, (
+            "the one snippet this metric was constructed with, not the "
+            "synthetic corpus the other constructor registered"
+        )

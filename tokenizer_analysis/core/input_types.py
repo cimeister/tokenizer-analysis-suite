@@ -452,8 +452,13 @@ class InputProvider(ABC):
         return cache[name]
 
     @staticmethod
-    def _can_encode_raw_text(tokenizer_obj: Any) -> bool:
+    def can_encode_raw_text(tokenizer_obj: Any) -> bool:
         """Whether *tokenizer_obj* can encode raw text.
+
+        Public, and named without a leading underscore, because three metric
+        modules call it and two error messages quote it by name. A predicate
+        that many callers depend on is part of the interface whatever its name
+        suggests, and an underscore only hid that renaming it would break them.
 
         ``can_encode()`` is the predicate, not ``hasattr(tok, "encode")``:
         ``PreTokenizedDataTokenizer`` *defines* ``encode`` and raises from it.
@@ -504,7 +509,7 @@ class InputProvider(ABC):
                 )
                 continue
             encode = getattr(tokenizer_obj, "encode", None)
-            if not self._can_encode_raw_text(tokenizer_obj):
+            if not self.can_encode_raw_text(tokenizer_obj):
                 logger.warning(
                     "Tokenizer %r cannot encode raw text; it gets no %s corpus.",
                     tok_name, corpus.name,
@@ -545,9 +550,17 @@ class InputProvider(ABC):
                         encoded = [(ids, offsets)
                                    for ids, offsets in encode_batch(usable)]
                     except Exception as exc:
-                        logger.debug(
-                            "encode_batch_with_offsets failed for %r (%s); "
-                            "encoding one text at a time instead", tok_name, exc,
+                        # Warning, not debug: the per-text path produces the
+                        # same ids and offsets, so no measured value changes,
+                        # but a run that quietly stopped batching is the sort
+                        # of thing that needs to be visible in a log read hours
+                        # later.
+                        logger.warning(
+                            "encode_batch_with_offsets failed for %r on the %s "
+                            "%s corpus (%s); encoding one text at a time "
+                            "instead. The ids and offsets are the same either "
+                            "way; only the speed changes.",
+                            tok_name, lang, corpus.name, exc,
                         )
                         encoded = None
                 if encoded is None:
@@ -555,14 +568,32 @@ class InputProvider(ABC):
                     for text in usable:
                         ids, offsets = None, None
                         if callable(encode_offsets):
+                            # No fallback to ids-only here. A wrapper that has
+                            # no offsets to give returns (ids, None) from the
+                            # TokenizerWrapper default rather than raising, so
+                            # an exception out of this call is a defect in the
+                            # wrapper, not a tokenizer declining to supply
+                            # offsets. Substituting an ids-only encoding for it
+                            # published operator-isolation and AST numbers
+                            # measured through a different path, and said so
+                            # only at debug level; the AST metric then failed
+                            # further down reporting that the wrapper had
+                            # "returned none", which is not what happened.
                             try:
                                 ids, offsets = encode_offsets(text)
                             except Exception as exc:
-                                logger.debug(
-                                    "encode_with_offsets failed for %r: %s",
-                                    tok_name, exc,
-                                )
-                                ids = None
+                                raise RuntimeError(
+                                    f"encode_with_offsets raised for tokenizer "
+                                    f"{tok_name!r} on a {lang!r} text of the "
+                                    f"{corpus.name} corpus: {exc!r}. This "
+                                    "method is expected to return (ids, None) "
+                                    "when a tokenizer has no offsets, so "
+                                    "raising is a defect in the wrapper. "
+                                    "Encoding the text without offsets instead "
+                                    "would measure it through a different path "
+                                    "from the rest of the corpus. Text starts: "
+                                    f"{text[:60]!r}"
+                                ) from exc
                         if ids is None:
                             ids, offsets = encode(text), None
                         encoded.append((ids, offsets))

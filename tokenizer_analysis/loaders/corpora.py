@@ -56,7 +56,12 @@ def code_corpus_from_texts(
         return synthetic_code_corpus()
     return Corpus(
         name=CODE_CORPUS,
-        texts={lang: texts for lang, texts in code_texts.items() if texts},
+        # list(texts), not texts: Corpus is frozen, and aliasing the
+        # caller's lists let an append after registration change a
+        # corpus the provider had already encoded and cached, so
+        # stats() and the published numbers came from different
+        # contents.
+        texts={lang: list(texts) for lang, texts in code_texts.items() if texts},
         source=CODE_DATASET_SOURCE,
         synthetic=False,
     )

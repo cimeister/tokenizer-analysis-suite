@@ -440,7 +440,7 @@ class ASTBoundaryMetrics(BaseMetrics):
                 f"Tokenizer(s) {missing} report can_encode() true, which is how "
                 "this metric selects the tokenizers it scores, but the shared "
                 f"{CODE_CORPUS!r} corpus holds no encoding for them. "
-                "InputProvider._encode_corpus selects on _can_encode_raw_text, "
+                "InputProvider._encode_corpus selects on can_encode_raw_text, "
                 "which additionally requires a callable encode attribute, so "
                 "the two predicates disagree for these tokenizers. Encoding "
                 "them here instead would undo the single encoding this path "

@@ -194,7 +194,17 @@ class BaseMetrics(ABC):
         corpus = self._registered_corpus(name)
         if corpus is None:
             return None
-        supplied = sorted(key for key, value in arguments.items() if value)
+        # "Supplied" is "not None and not False", not truthiness. An empty dict
+        # is a request in this package, not the absence of one:
+        # cli/run_analysis returns {} for --code-ast-config to mean "use the
+        # bundled samples" and None to mean "disabled", and code_texts={} used
+        # to mean "this metric reports no code domain". Reading either as
+        # unsupplied let the registered corpus override an explicit request,
+        # which is the substitution this check exists to refuse.
+        supplied = sorted(
+            key for key, value in arguments.items()
+            if value is not None and value is not False
+        )
         if supplied:
             raise ValueError(
                 f"{type(self).__name__} was given {', '.join(supplied)}, but a "

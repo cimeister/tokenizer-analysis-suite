@@ -546,6 +546,35 @@ class TestAMetricRefusesArgumentsARegisteredCorpusWouldOverride:
         with pytest.raises(ValueError, match="already registered"):
             DigitBoundaryMetrics(provider, math_data_path="/some/other/math.txt")
 
+    def test_an_explicit_empty_dict_is_a_request_and_is_refused(self):
+        """`{}` means something in this package, so it cannot read as absent.
+
+        cli/run_analysis returns `{}` for --code-ast-config to mean "use the
+        bundled samples" and None to mean "disabled", and `code_texts={}` used
+        to mean "report no code domain". A truthiness test read both as
+        unsupplied and let the registered corpus override them, which is the
+        substitution this check exists to refuse.
+        """
+        from tokenizer_analysis.metrics.basic import BasicTokenizationMetrics
+
+        provider = _raw_provider(_CharTokenizer())
+        provider.add_corpus(CODE)
+
+        with pytest.raises(ValueError, match="already registered"):
+            BasicTokenizationMetrics(provider, code_texts={})
+
+    def test_a_false_boolean_is_not_a_request(self):
+        """use_builtin_math_data=False is the default, not an explicit ask."""
+        from tokenizer_analysis.metrics.basic import BasicTokenizationMetrics
+
+        provider = _raw_provider(_CharTokenizer())
+        provider.add_corpus(
+            Corpus(name="math", texts={"math": ["1 + 1"]},
+                   source="bundled math", synthetic=True)
+        )
+
+        BasicTokenizationMetrics(provider, use_builtin_math_data=False)
+
     def test_the_registry_is_still_used_when_no_argument_is_passed(self):
         """The check must not disturb the path the run itself takes."""
         from tokenizer_analysis.metrics.basic import BasicTokenizationMetrics
@@ -555,3 +584,48 @@ class TestAMetricRefusesArgumentsARegisteredCorpusWouldOverride:
 
         metrics = BasicTokenizationMetrics(provider)
         assert metrics._registered_corpus("code") is CODE
+
+
+class TestAWrapperThatRaisesFromEncodeWithOffsets:
+    """An exception out of encode_with_offsets is a defect, not "no offsets".
+
+    ``TokenizerWrapper.encode_with_offsets`` returns ``(ids, None)`` when a
+    tokenizer has none, so raising is a wrapper defect. The encode used to
+    catch it, log at debug level, and encode the text with ``encode()``
+    instead, which measures that one text through a different path from the
+    rest of its corpus and says so nowhere a default log level shows. The AST
+    metric then failed further down reporting that the wrapper had "returned
+    none", which is not what happened.
+    """
+
+    class _RaisesOnOffsets:
+        def can_encode(self): return True
+        def encode(self, text): return [ord(c) for c in text]
+        def encode_with_offsets(self, text):
+            raise RuntimeError("backend exploded")
+        def get_vocab_size(self): return 1000
+
+    def test_it_raises_naming_the_tokenizer_the_corpus_and_the_text(self):
+        provider = _raw_provider(self._RaisesOnOffsets())
+        provider.add_corpus(Corpus(
+            name="code", texts={"python": ["a = 1"]},
+            source="test", synthetic=False,
+        ))
+
+        with pytest.raises(RuntimeError) as excinfo:
+            provider.get_corpus_data("code")
+        message = str(excinfo.value)
+        assert "'tok'" in message and "python" in message and "code" in message
+        assert "backend exploded" in message
+
+    def test_a_wrapper_that_returns_no_offsets_is_still_fine(self):
+        """The legitimate case must not be caught by the same net."""
+        provider = _raw_provider(_NoOffsetsTokenizer())
+        provider.add_corpus(Corpus(
+            name="code", texts={"python": ["a = 1"]},
+            source="test", synthetic=False,
+        ))
+
+        data = provider.get_corpus_data("code")
+        assert [d.offsets for d in data["tok"]] == [None]
+        assert [d.tokens for d in data["tok"]] == [[ord(c) for c in "a = 1"]]

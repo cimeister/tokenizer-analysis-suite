@@ -515,7 +515,7 @@ class DigitBoundaryMetrics(BaseMetrics):
                         keep_later_token_on_overlap=True,
                     )
                     if char_to_token is None:
-                        if InputProvider._can_encode_raw_text(tokenizer_obj):
+                        if InputProvider.can_encode_raw_text(tokenizer_obj):
                             raise ValueError(
                                 "The digit metrics need character offsets, and "
                                 f"tokenizer {tok_name!r} encodes text but "
