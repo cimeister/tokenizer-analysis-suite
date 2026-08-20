@@ -88,6 +88,15 @@ def resolve_code_corpus(
     # the caller asked for: measured 0.562 full AST alignment on the samples
     # against 0.493 on StarCoder for the same tokenizer.
     if not loader.code_snippets:
+        dropped = sum(loader.dropped_whitespace_only_counts.values())
+        if dropped:
+            raise ValueError(
+                f"The code config named {', '.join(sorted(code_config))} and "
+                f"every snippet read from those paths was dropped: "
+                f"max_snippet_chars={loader.max_snippet_chars} truncated {dropped} "
+                "of them down to leading whitespace. Raise the character cap, "
+                "or drop it to keep each file in full."
+            )
         raise ValueError(
             f"The code config named {', '.join(sorted(code_config))} but no "
             "snippet was read from any of those paths. Check that the "

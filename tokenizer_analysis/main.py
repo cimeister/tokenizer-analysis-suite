@@ -193,15 +193,17 @@ class UnifiedTokenizerAnalyzer:
                 # and registered on the provider, so this metric reads it from
                 # there. Passing it as well is refused, because the two could
                 # name different corpora and the registered one would win
-                # without a word. The caps are still passed, because they bound
-                # the corpus rather than select it, and get_code_snippets
-                # applies max_snippets_per_lang to the registered snippets:
-                # resolve_code_corpus does not apply either cap on the synthetic
-                # path, so this is where the bundled samples get bounded.
+                # without a word. max_snippets_per_lang is still passed, because
+                # it bounds the corpus rather than selects it and
+                # get_code_snippets applies it to the registered snippets:
+                # resolve_code_corpus applies no cap on the synthetic path, so
+                # this is where the bundled samples get bounded.
+                # max_snippet_chars is not passed and is refused, because
+                # nothing on the registered branch can apply it: the corpus was
+                # already truncated when it was resolved.
                 self.ast_boundary_metrics = ASTBoundaryMetrics(
                     input_provider,
                     max_snippets_per_lang=code_max_snippets_per_lang,
-                    max_snippet_chars=code_max_snippet_chars,
                 )
             except ImportError as e:
                 # tree-sitter missing is the one condition that disables these

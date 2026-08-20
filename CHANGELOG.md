@@ -209,7 +209,16 @@ conflicting flags.
   provider that already has one raises `A corpus named 'code' is already
   registered`. The analyzer registers the code and math corpora on the provider,
   and a name is registered once so that two loaders cannot disagree about what
-  a corpus holds. Build the second analyzer over its own provider.
+  a corpus holds. Build the second analyzer over its own provider. Constructing
+  `DigitBoundaryMetrics` twice against one provider raises for the same reason.
+
+  **Breaking**: `DigitBoundaryMetrics` and `ASTBoundaryMetrics` raise `TypeError`
+  against a provider that does not implement `add_corpus`, when they have to
+  build a corpus themselves. A duck-typed provider that satisfied 1.0.3 needs
+  the corpus registry, which subclassing `InputProvider` supplies. This is the
+  one case where the statement above, that an existing subclass needs no change,
+  does not hold: it holds for a subclass, and not for an unrelated class that
+  merely implemented the same method names.
 
   `BasicTokenizationMetrics`, `DigitBoundaryMetrics` and `ASTBoundaryMetrics`
   raise when given corpus arguments while a corpus of that name is registered

@@ -318,16 +318,22 @@ class ASTBoundaryMetrics(BaseMetrics):
         # tokenizer. UnifiedTokenizerAnalyzer passes no code_config, because it
         # registers the corpus that argument would have built.
         #
-        # The two caps are not refused, because they do not select a corpus,
-        # they bound one. get_code_snippets re-applies max_snippets_per_lang to
-        # whatever this loader holds, registered corpus included, and the run
-        # passes the same values it resolved the corpus with. That bound is
-        # load-bearing on the synthetic path: resolve_code_corpus returns the
-        # bundled samples without applying either cap, so removing it here
-        # moved ast_boundary_alignment.global.count from 4512 to 7018 on the
-        # default configuration.
+        # max_snippets_per_lang is not refused, because it does not select a
+        # corpus, it bounds one: get_code_snippets re-applies it to whatever
+        # this loader holds, registered corpus included, and the run passes the
+        # value it resolved the corpus with. That bound is load-bearing on the
+        # synthetic path, where resolve_code_corpus applies no cap at all, so
+        # removing it moved ast_boundary_alignment.global.count from 4512 to
+        # 7018 on the default configuration.
+        #
+        # max_snippet_chars is refused, because nothing here can honour it. It
+        # takes effect only inside CodeDataLoader.load_all, which the registered
+        # branch never calls, and get_code_snippets applies the snippet cap
+        # alone. Accepting it meant self.max_snippet_chars read back the value
+        # the caller passed while every snippet stayed full length.
         self._code_corpus = self._corpus_or_refuse_arguments(
-            CODE_CORPUS, {"code_config": code_config},
+            CODE_CORPUS,
+            {"code_config": code_config, "max_snippet_chars": max_snippet_chars},
         )
 
         # Load code data

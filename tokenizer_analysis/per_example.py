@@ -274,9 +274,10 @@ class _StubInputProvider(InputProvider):
         return {}
 
 
-# Module-level singletons. Instantiation is cheap (no data load required for
-# DigitBoundaryMetrics; ASTBoundaryMetrics loads synthetic samples it doesn't
-# use on the per-text path, which is also cheap).
+# Module-level singletons, built once and kept rather than per call.
+# DigitBoundaryMetrics reads two bundled files on construction, the math samples
+# and the code samples, and ASTBoundaryMetrics loads synthetic samples it does
+# not use on the per-text path.
 #
 # NOT THREAD-SAFE: ``compute_per_text`` snapshots and restores
 # ``self._char_decode_table``, ``self._special_tokens`` and

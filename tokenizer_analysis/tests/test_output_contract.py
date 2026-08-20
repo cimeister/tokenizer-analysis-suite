@@ -1003,11 +1003,16 @@ def default_code_config_results(tmp_path_factory):
     """A run with no --code-ast-config, which is the documented default.
 
     `_resolve_code_ast_config` returns `{}` for this, meaning "use synthetic
-    samples", where `None` would mean "disabled" (cli/run_analysis.py:268). The
-    two are read differently on purpose: `main.py:128` tests truthiness, so the
-    code corpus handed to the other metrics stays empty, while `main.py:182`
-    tests `is not None`, so the AST metric is still built and fills itself with
-    synthetic code.
+    samples", where `None` would mean "disabled". The two are read differently
+    on purpose, and the mechanism changed when the corpora moved onto the input
+    provider. It is now: `resolve_code_corpus` tests truthiness, so `{}` gives
+    the registered corpus the bundled samples with `synthetic=True`;
+    `BasicTokenizationMetrics.__init__` reads that flag and takes no code
+    domain from a synthetic corpus; and `UnifiedTokenizerAnalyzer` tests
+    `is not None` before building the AST metrics, so they are built and score
+    the bundled samples.
+
+    The asymmetry is the same one; only where it is decided has moved.
     """
     out = tmp_path_factory.mktemp("default_code_config")
     proc = subprocess.run(

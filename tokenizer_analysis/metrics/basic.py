@@ -904,7 +904,14 @@ class BasicTokenizationMetrics(BaseMetrics):
                     1 for td in tokenized_data[tok_name]
                     if td.text and td.text.strip()
                 )
-            total_all_texts = total_lang_texts + total_code_math_texts
+            # tokenizer_code_math, not the raw total: a tokenizer that gets no
+            # code or math domain never processes those texts, and counting
+            # them here left the projection of remaining CER work inflated by
+            # the whole corpus, which flips cer_skipped and publishes null for
+            # a tokenizer that had the budget to compute them.
+            total_all_texts = total_lang_texts + (
+                total_code_math_texts if tokenizer_code_math else 0
+            )
             texts_processed = 0
 
             # Language data: reuse tokens/offsets already stored in TokenizedData

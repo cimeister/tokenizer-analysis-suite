@@ -32,9 +32,16 @@ class TokenizedData:
             raise ValueError("language cannot be empty")
         # No emptiness check on tokens. It rejected a legitimate result: a
         # tokenizer that encodes a text to zero tokens has measured something,
-        # and refusing to construct the item turns that into a crash. Every
-        # library construction site filters blank text upstream, so the check
-        # never fired on real input either.
+        # and refusing to construct the item turns that into a crash.
+        #
+        # The construction sites in this package filter blank text upstream, so
+        # the check never fired on what they build. PreTokenizedProvider is the
+        # exception: its records come from a caller's InputSpecification and are
+        # passed through without re-validation, so a dump holding a row with no
+        # ids and non-blank text is now scored (exact-match miss, CER 1.0)
+        # rather than refused at construction. Distinguishing that from a
+        # genuine zero-token encoding is not possible here, and the crash was
+        # the worse of the two.
         if not isinstance(self.tokens, list) or not all(isinstance(t, int) for t in self.tokens):
             raise ValueError("tokens must be a list of integers")
         
@@ -369,7 +376,13 @@ class InputProvider(ABC):
 
     def _corpus_registry(self) -> Dict[str, 'Corpus']:
         """The registered corpora, created on first use."""
-        registry = getattr(self, '_corpora', None)
+        # self.__dict__, not getattr: getattr finds a class attribute as
+        # readily as an instance one, so a subclass written as
+        # `class P(InputProvider): _corpora = {}` would give every instance the
+        # same registry. add_corpus on one provider would then refuse a name
+        # another provider had registered, and get_corpus_data would hand back
+        # encodings made with a different provider's tokenizers.
+        registry = self.__dict__.get('_corpora')
         if registry is None:
             registry = {}
             self._corpora = registry
@@ -461,7 +474,8 @@ class InputProvider(ABC):
         does not change between those calls, so it is encoded once rather than
         re-encoded for every group.
         """
-        cache = getattr(self, '_encoded_corpora', None)
+        # self.__dict__ for the same reason as _corpus_registry above.
+        cache = self.__dict__.get('_encoded_corpora')
         if cache is None:
             cache = {}
             self._encoded_corpora = cache
