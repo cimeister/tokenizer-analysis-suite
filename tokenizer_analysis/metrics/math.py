@@ -785,7 +785,14 @@ class DigitBoundaryMetrics(BaseMetrics):
         for tok_name in self.tokenizer_names:
             try:
                 tokenizer_obj = self.input_provider.get_tokenizer(tok_name)
-            except (ValueError, KeyError, AttributeError) as exc:
+            except (ValueError, KeyError, AttributeError,
+                    NotImplementedError) as exc:
+                # NotImplementedError since InputProvider declared a concrete
+                # get_tokenizer: a provider that does not supply tokenizer
+                # objects used to fail here with AttributeError because the
+                # attribute was absent. Neither SimpleProvider in the tests nor
+                # _AstOnlyProvider in scripts/ implements it, so without this
+                # they would crash where they used to be skipped.
                 logger.warning(
                     "No tokenizer available for %r (%s); it gets no code/math "
                     "operator-isolation domain (prose only).", tok_name, exc,

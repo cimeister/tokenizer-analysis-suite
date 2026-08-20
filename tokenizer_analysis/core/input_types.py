@@ -30,8 +30,11 @@ class TokenizedData:
             raise ValueError("tokenizer_name cannot be empty")
         if not self.language:
             raise ValueError("language cannot be empty")
-        if not self.tokens:
-            raise ValueError("tokens cannot be empty")
+        # No emptiness check on tokens. It rejected a legitimate result: a
+        # tokenizer that encodes a text to zero tokens has measured something,
+        # and refusing to construct the item turns that into a crash. Every
+        # library construction site filters blank text upstream, so the check
+        # never fired on real input either.
         if not isinstance(self.tokens, list) or not all(isinstance(t, int) for t in self.tokens):
             raise ValueError("tokens must be a list of integers")
         
@@ -70,6 +73,58 @@ class TokenizedData:
             offsets=[tuple(o) for o in data['offsets']] if data.get('offsets') else None,
             metadata=data.get('metadata')
         )
+
+
+#: The corpus every provider serves from its own data rather than from the
+#: registry on ``InputProvider``. ``get_tokenized_data()`` defaults to it, so
+#: every existing call site keeps reading the prose corpus.
+PROSE_CORPUS = "prose"
+
+
+@dataclass(frozen=True)
+class Corpus:
+    """A named set of labelled texts, encoded once per tokenizer.
+
+    Prose, code and math are one concept carrying two names. Prose reaches the
+    metrics through ``InputProvider``; the code and math corpora are loaded and
+    encoded by the metric classes that consume them. Both are a named set of
+    texts, labelled, encoded once per tokenizer, and consumed as
+    ``Dict[tokenizer_name, List[TokenizedData]]``.
+
+    Attributes:
+        name: what ``get_tokenized_data(corpus=...)`` asks for. "prose",
+            "code" or "math".
+        texts: label -> texts. The label is a language for prose, a programming
+            language for code, and "math" for math.
+        source: where the texts came from. Already published as
+            ``by_domain.<domain>.source``, which is what lets a reported domain
+            be traced to the corpus it measured.
+        synthetic: True when the texts are the bundled samples rather than real
+            data. This is load-bearing rather than decoration: with no
+            ``--code-ast-config`` the AST metric runs on synthetic code while
+            reconstruction fidelity gets no code domain at all, and a reader
+            cannot tell a synthetic domain from a real one without it.
+    """
+
+    name: str
+    texts: Dict[str, List[str]]
+    source: str
+    synthetic: bool
+
+    def stats(self) -> Dict[str, Any]:
+        """Size of this corpus, so a reported domain can be traced to what it measured.
+
+        The pooled summary is a micro-average, so the domain that contributes
+        the most operators sets it. Publishing each domain's size is what lets
+        a reader see which corpus is doing the work.
+        """
+        per_label = {label: len(texts) for label, texts in self.texts.items()}
+        return {
+            "n_texts": sum(per_label.values()),
+            "n_chars": sum(len(t) for texts in self.texts.values() for t in texts),
+            "n_languages": len(per_label),
+            "texts_per_language": dict(sorted(per_label.items())),
+        }
 
 
 class TokenizerProtocol(Protocol):
@@ -202,10 +257,16 @@ class InputProvider(ABC):
     """Abstract base class for providing tokenized data to analysis pipeline."""
     
     @abstractmethod
-    def get_tokenized_data(self) -> Dict[str, List[TokenizedData]]:
+    def get_tokenized_data(self, corpus: str = PROSE_CORPUS) -> Dict[str, List[TokenizedData]]:
         """
         Get tokenized data organized by tokenizer name.
-        
+
+        Args:
+            corpus: which corpus to return. Defaults to the prose corpus, which
+                every provider serves from its own data. Any other name is a
+                corpus registered with ``add_corpus``, encoded on demand by
+                ``_encode_corpus``.
+
         Returns:
             Dictionary mapping tokenizer names to lists of TokenizedData objects
         """
@@ -226,6 +287,227 @@ class InputProvider(ABC):
         """Get list of languages. If tokenizer_name is None, return all languages."""
         pass
     
+    # ------------------------------------------------------------------
+    # Named corpora
+    # ------------------------------------------------------------------
+    #
+    # These are concrete rather than abstract, for the same reason
+    # validate_data below is. Four classes subclass this ABC: the two providers
+    # in input_providers.py, _AstOnlyProvider in scripts/run_ast_only.py, and
+    # SimpleProvider in the test suite. A new abstract method would stop every
+    # one of them from being instantiated.
+    #
+    # The registry is built on first use rather than in an __init__. This ABC
+    # has no __init__ today and no subclass calls super().__init__(), so an
+    # __init__ added here would run for none of them and every method below
+    # would raise AttributeError on the missing attribute.
+
+    def _corpus_registry(self) -> Dict[str, 'Corpus']:
+        """The registered corpora, created on first use."""
+        registry = getattr(self, '_corpora', None)
+        if registry is None:
+            registry = {}
+            self._corpora = registry
+        return registry
+
+    def add_corpus(self, corpus: 'Corpus') -> None:
+        """Register *corpus* under its own name.
+
+        A name that is already registered is refused rather than overwritten.
+        Two loaders registering "code" would otherwise mean whichever ran
+        second measured a different corpus from the one the first one reported,
+        with nothing in the output saying which corpus produced which number.
+
+        Registering a corpus named "prose" records its texts and its source but
+        does not change what ``get_tokenized_data()`` returns: the prose corpus
+        is served from the provider's own data, not from this registry.
+        """
+        registry = self._corpus_registry()
+        if corpus.name in registry:
+            raise ValueError(
+                f"A corpus named {corpus.name!r} is already registered, with "
+                f"source {registry[corpus.name].source!r}. Refusing to replace "
+                f"it with one from {corpus.source!r}: the metrics that already "
+                "read the first one would then report numbers measured on the "
+                "second."
+            )
+        registry[corpus.name] = corpus
+
+    def corpus_names(self) -> List[str]:
+        """Names of the registered corpora, in registration order."""
+        return list(self._corpus_registry())
+
+    def get_corpus(self, name: str) -> 'Corpus':
+        """The corpus registered under *name*."""
+        registry = self._corpus_registry()
+        if name not in registry:
+            raise ValueError(
+                f"No corpus named {name!r} is registered. Registered corpora: "
+                f"{sorted(registry)}."
+            )
+        return registry[name]
+
+    def get_tokenizer(self, tokenizer_name: str) -> 'TokenizerWrapper':
+        """The tokenizer object for *tokenizer_name*.
+
+        Declared here because eight call sites, in main.py and five of the
+        metric modules, already required it while this ABC never named it, so a
+        provider that omitted it failed at the call site rather than at the
+        class. Both providers in input_providers.py implement it and keep their
+        own version.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not supply tokenizer objects, so the "
+            "metrics that encode their own corpora cannot run against it."
+        )
+
+    def _tokenized_corpus(self, name: str) -> Dict[str, List[TokenizedData]]:
+        """A registered corpus, encoded with every tokenizer, memoized by name.
+
+        ``compute()`` is called once per language group and a registered corpus
+        does not change between those calls, so it is encoded once rather than
+        re-encoded for every group.
+        """
+        cache = getattr(self, '_encoded_corpora', None)
+        if cache is None:
+            cache = {}
+            self._encoded_corpora = cache
+        if name not in cache:
+            cache[name] = self._encode_corpus(self.get_corpus(name))
+        return cache[name]
+
+    @staticmethod
+    def _can_encode_raw_text(tokenizer_obj: Any) -> bool:
+        """Whether *tokenizer_obj* can encode raw text.
+
+        ``can_encode()`` is the predicate, not ``hasattr(tok, "encode")``:
+        ``PreTokenizedDataTokenizer`` *defines* ``encode`` and raises from it.
+
+        Used to tell two situations apart when no character offsets are
+        available: a tokenizer that encodes text and reported none is a defect
+        the caller has to know about, while a provider that only supplies
+        pre-tokenized ids never had offsets to give.
+        """
+        can_encode = getattr(tokenizer_obj, "can_encode", None)
+        encode = getattr(tokenizer_obj, "encode", None)
+        if callable(can_encode) and not can_encode():
+            return False
+        return callable(encode)
+
+    def _encode_corpus(self, corpus: 'Corpus') -> Dict[str, List[TokenizedData]]:
+        """Encode a registered corpus with every tokenizer this provider carries.
+
+        A tokenizer that cannot encode raw text (a provider that only supplies
+        pre-tokenized data) is omitted from the returned corpus and logged; it
+        then simply has no code or math domain rather than crashing the whole
+        metric.
+
+        This is deliberately not the prose loop in
+        ``RawTokenizationProvider.get_tokenized_data``. The two differ in two
+        ways, both of which move published numbers:
+
+        1. The prose loop raises when a tokenizer cannot encode a text; this
+           one skips that tokenizer with a warning.
+        2. The prose loop records per-sample encode times, published as
+           ``encoding_speed``; this one records none, so a derived corpus does
+           not enter that measurement.
+
+        Unifying them would change which tokenizers are skipped and what
+        ``encoding_speed`` measures.
+        """
+        out: Dict[str, List[TokenizedData]] = {}
+        for tok_name in self.get_tokenizer_names():
+            try:
+                tokenizer_obj = self.get_tokenizer(tok_name)
+            except (ValueError, KeyError, AttributeError, NotImplementedError) as exc:
+                # NotImplementedError is caught alongside the rest because the
+                # base get_tokenizer above raises it. A provider that does not
+                # implement get_tokenizer raised AttributeError before that
+                # method existed, and that was already caught here.
+                logger.warning(
+                    "No tokenizer available for %r (%s); it gets no %s corpus.",
+                    tok_name, exc, corpus.name,
+                )
+                continue
+            encode = getattr(tokenizer_obj, "encode", None)
+            if not self._can_encode_raw_text(tokenizer_obj):
+                logger.warning(
+                    "Tokenizer %r cannot encode raw text; it gets no %s corpus.",
+                    tok_name, corpus.name,
+                )
+                continue
+            # Encode with offsets where the wrapper supports it. The prose
+            # corpus is loaded with offsets, and operator isolation and AST
+            # alignment resolve a source span to tokens through offsets, so a
+            # derived corpus without them would be skipped entirely and its
+            # domain would silently vanish from the results.
+            encode_batch = getattr(tokenizer_obj, "encode_batch_with_offsets", None)
+            encode_offsets = getattr(tokenizer_obj, "encode_with_offsets", None)
+            items: List[TokenizedData] = []
+            for lang, texts in corpus.texts.items():
+                usable = [text for text in texts if text and text.strip()]
+                if not usable:
+                    continue
+                # One batch call per label rather than one call per text. The
+                # Rust backends encode a batch across threads, which the
+                # per-text loop this replaced gave up: 4.14 s against 0.98 s
+                # over 300 files of the benchmark code corpus with gpt2, for
+                # the same ids.
+                #
+                # A batch is paired with its texts by position, which is the
+                # batch API's contract and what the prose loop already relies
+                # on. check_batch_pairing below verifies the count for both
+                # corpora; a backend that returned the right number of
+                # encodings in the wrong order is caught by neither.
+                #
+                # The unpacking sits inside the try, so a backend that returns
+                # something other than (ids, offsets) pairs falls back to the
+                # per-text path rather than raising from the zip below. That is
+                # what the per-text path did with a bad return before this
+                # method encoded in batches.
+                encoded = None
+                if callable(encode_batch):
+                    try:
+                        encoded = [(ids, offsets)
+                                   for ids, offsets in encode_batch(usable)]
+                    except Exception as exc:
+                        logger.debug(
+                            "encode_batch_with_offsets failed for %r (%s); "
+                            "encoding one text at a time instead", tok_name, exc,
+                        )
+                        encoded = None
+                if encoded is None:
+                    encoded = []
+                    for text in usable:
+                        ids, offsets = None, None
+                        if callable(encode_offsets):
+                            try:
+                                ids, offsets = encode_offsets(text)
+                            except Exception as exc:
+                                logger.debug(
+                                    "encode_with_offsets failed for %r: %s",
+                                    tok_name, exc,
+                                )
+                                ids = None
+                        if ids is None:
+                            ids, offsets = encode(text), None
+                        encoded.append((ids, offsets))
+                check_batch_pairing(
+                    tok_name, lang, usable, encoded, f"{corpus.name} corpus",
+                )
+                for text, (ids, offsets) in zip(usable, encoded):
+                    items.append(
+                        TokenizedData(
+                            tokenizer_name=tok_name,
+                            language=lang,
+                            tokens=ids,
+                            text=text,
+                            offsets=offsets,
+                        )
+                    )
+            out[tok_name] = items
+        return out
+
     def validate_data(self) -> bool:
         """Validate the provided data."""
         try:

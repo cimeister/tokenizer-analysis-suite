@@ -8,7 +8,7 @@ import logging
 import time
 from .input_types import (
     InputProvider, TokenizedData, InputSpecification,
-    VocabularyProvider, check_batch_pairing
+    VocabularyProvider, check_batch_pairing, PROSE_CORPUS
 )
 
 if TYPE_CHECKING:
@@ -49,8 +49,15 @@ class RawTokenizationProvider(InputProvider):
             if not spec.is_raw_mode:
                 raise ValueError(f"Specification for {name} is not in raw mode")
     
-    def get_tokenized_data(self) -> Dict[str, List[TokenizedData]]:
-        """Get tokenized data by tokenizing raw texts."""
+    def get_tokenized_data(self, corpus: str = PROSE_CORPUS) -> Dict[str, List[TokenizedData]]:
+        """Get tokenized data by tokenizing raw texts.
+
+        *corpus* defaults to the prose corpus, which is what this provider's
+        own specifications carry. Any other name is a corpus registered with
+        ``add_corpus``, encoded by ``InputProvider._encode_corpus``.
+        """
+        if corpus != PROSE_CORPUS:
+            return self._tokenized_corpus(corpus)
         if self._tokenized_cache:
             return self._tokenized_cache
         
@@ -85,7 +92,21 @@ class RawTokenizationProvider(InputProvider):
                     if not valid_texts:
                         continue
 
-                    # Batch-encode all valid texts for this language
+                    # Batch-encode all valid texts for this language.
+                    #
+                    # This loop is deliberately not
+                    # InputProvider._encode_corpus, which encodes the
+                    # registered corpora. The two differ in two ways, both of
+                    # which move published numbers:
+                    #
+                    # 1. This one raises when a tokenizer cannot encode a text;
+                    #    _encode_corpus skips that tokenizer with a warning.
+                    # 2. This one records per-sample encode times, published as
+                    #    encoding_speed; _encode_corpus records none, so a
+                    #    derived corpus does not enter that measurement.
+                    #
+                    # Unifying them would change which tokenizers are skipped
+                    # and what encoding_speed measures.
                     t0 = time.perf_counter()
                     batch_results = spec.tokenizer.encode_batch_with_offsets(valid_texts)
                     batch_elapsed = time.perf_counter() - t0
@@ -211,8 +232,17 @@ class PreTokenizedProvider(InputProvider):
             if not spec.is_pretokenized_mode:
                 raise ValueError(f"Specification for {name} is not in pre-tokenized mode")
     
-    def get_tokenized_data(self) -> Dict[str, List[TokenizedData]]:
-        """Get pre-tokenized data."""
+    def get_tokenized_data(self, corpus: str = PROSE_CORPUS) -> Dict[str, List[TokenizedData]]:
+        """Get pre-tokenized data.
+
+        *corpus* defaults to the prose corpus, which is what the
+        specifications carry. Any other name is a corpus registered with
+        ``add_corpus``; encoding it needs a tokenizer that accepts raw text,
+        which pre-tokenized input does not always supply, so tokenizers
+        without one are left out of the result.
+        """
+        if corpus != PROSE_CORPUS:
+            return self._tokenized_corpus(corpus)
         tokenized_data = {}
         
         for tok_name, spec in self.specifications.items():
@@ -293,101 +323,6 @@ class PreTokenizedProvider(InputProvider):
             raise ValueError(f"No tokenizer wrapper available for {tokenizer_name} (legacy mode)")
 
 
-class MixedInputProvider(InputProvider):
-    """Provider that combines raw and pre-tokenized data."""
-    
-    def __init__(self, 
-                 raw_specifications: Optional[Dict[str, InputSpecification]] = None,
-                 pretokenized_specifications: Optional[Dict[str, InputSpecification]] = None):
-        """
-        Initialize with mixed specifications.
-        
-        Args:
-            raw_specifications: Raw tokenization specs
-            pretokenized_specifications: Pre-tokenized specs
-        """
-        self.raw_provider = None
-        self.pretokenized_provider = None
-        
-        if raw_specifications:
-            self.raw_provider = RawTokenizationProvider(raw_specifications)
-        
-        if pretokenized_specifications:
-            self.pretokenized_provider = PreTokenizedProvider(pretokenized_specifications)
-        
-        if not self.raw_provider and not self.pretokenized_provider:
-            raise ValueError("Must provide at least one type of specification")
-        
-        # Check for tokenizer name conflicts
-        raw_names = set(raw_specifications.keys()) if raw_specifications else set()
-        pretokenized_names = set(pretokenized_specifications.keys()) if pretokenized_specifications else set()
-        
-        conflicts = raw_names & pretokenized_names
-        if conflicts:
-            raise ValueError(f"Tokenizer name conflicts between raw and pre-tokenized: {conflicts}")
-    
-    def get_tokenized_data(self) -> Dict[str, List[TokenizedData]]:
-        """Get combined tokenized data."""
-        combined_data = {}
-        
-        if self.raw_provider:
-            combined_data.update(self.raw_provider.get_tokenized_data())
-        
-        if self.pretokenized_provider:
-            combined_data.update(self.pretokenized_provider.get_tokenized_data())
-        
-        return combined_data
-    
-    @property
-    def encode_times(self) -> Dict[str, List[float]]:
-        """Delegate to the raw sub-provider (pre-tokenized has no times)."""
-        if self.raw_provider:
-            return self.raw_provider.encode_times
-        return {}
-
-    def get_tokenizer_names(self) -> List[str]:
-        """Get list of all tokenizer names."""
-        names = []
-
-        if self.raw_provider:
-            names.extend(self.raw_provider.get_tokenizer_names())
-
-        if self.pretokenized_provider:
-            names.extend(self.pretokenized_provider.get_tokenizer_names())
-
-        return names
-
-    def get_vocab_size(self, tokenizer_name: str) -> int:
-        """Get vocabulary size for a tokenizer."""
-        if self.raw_provider and tokenizer_name in self.raw_provider.get_tokenizer_names():
-            return self.raw_provider.get_vocab_size(tokenizer_name)
-        elif self.pretokenized_provider and tokenizer_name in self.pretokenized_provider.get_tokenizer_names():
-            return self.pretokenized_provider.get_vocab_size(tokenizer_name)
-        else:
-            raise ValueError(f"Unknown tokenizer: {tokenizer_name}")
-
-    def get_languages(self, tokenizer_name: str = None) -> List[str]:
-        """Get list of languages."""
-        if tokenizer_name:
-            if self.raw_provider and tokenizer_name in self.raw_provider.get_tokenizer_names():
-                return self.raw_provider.get_languages(tokenizer_name)
-            elif self.pretokenized_provider and tokenizer_name in self.pretokenized_provider.get_tokenizer_names():
-                return self.pretokenized_provider.get_languages(tokenizer_name)
-            else:
-                raise ValueError(f"Unknown tokenizer: {tokenizer_name}")
-        else:
-            # Return all unique languages across all providers
-            all_languages = set()
-
-            if self.raw_provider:
-                all_languages.update(self.raw_provider.get_languages())
-
-            if self.pretokenized_provider:
-                all_languages.update(self.pretokenized_provider.get_languages())
-
-            return sorted(list(all_languages))
-
-
 def create_input_provider(specifications: Dict[str, InputSpecification]) -> InputProvider:
     """
     Factory function to create appropriate InputProvider based on specifications.
@@ -410,7 +345,17 @@ def create_input_provider(specifications: Dict[str, InputSpecification]) -> Inpu
             raise ValueError(f"Invalid specification for {name}: neither raw nor pre-tokenized mode")
     
     if raw_specs and pretokenized_specs:
-        return MixedInputProvider(raw_specs, pretokenized_specs)
+        # Combining the two modes in one run is unsupported. The provider that
+        # did it was never constructed: the CLI selects one mode for the whole
+        # run, and nothing else builds a mixed specification set. A run that
+        # reached here would mix numbers measured by encoding text with numbers
+        # measured from ids somebody else produced, with nothing in the output
+        # saying which tokenizer came from which.
+        raise ValueError(
+            "Specifications mix raw text and pre-tokenized input: raw "
+            f"{sorted(raw_specs)}, pre-tokenized {sorted(pretokenized_specs)}. "
+            "One run analyses one mode. Build a separate provider for each."
+        )
     elif raw_specs:
         return RawTokenizationProvider(raw_specs)
     elif pretokenized_specs:
