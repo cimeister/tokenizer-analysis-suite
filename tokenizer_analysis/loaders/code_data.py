@@ -286,6 +286,11 @@ class CodeDataLoader:
             dropped_files += len(snippets) - keep
             snippets = snippets[:keep]
 
+        # What the file cap kept, before the whitespace-only drop below. The
+        # warning about the file cap reports this rather than the final count,
+        # which would attribute a truncation drop to the file cap.
+        kept_before_whitespace_drop = len(snippets)
+
         # Truncate oversized snippets and total the characters that costs.
         # A truncated snippet that comes out whitespace-only (e.g. char_cap
         # characters of leading indentation or blank lines) is dropped
@@ -324,7 +329,7 @@ class CodeDataLoader:
                 "%s: max_snippets_per_lang=%d dropped %d file(s) found under "
                 "%s (kept %d of %d found).",
                 lang, cap, dropped_files, path,
-                existing + len(snippets), candidates_found,
+                existing + kept_before_whitespace_drop, candidates_found,
             )
         if truncated_chars > 0:
             self.truncated_char_counts[lang] = (

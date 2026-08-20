@@ -210,7 +210,9 @@ conflicting flags.
   registered`. The analyzer registers the code and math corpora on the provider,
   and a name is registered once so that two loaders cannot disagree about what
   a corpus holds. Build the second analyzer over its own provider. Constructing
-  `DigitBoundaryMetrics` twice against one provider raises for the same reason.
+  `DigitBoundaryMetrics` twice against one provider does not raise: the second
+  finds the corpora the first registered, is passed no arguments, and reuses
+  them.
 
   **Breaking**: `DigitBoundaryMetrics` and `ASTBoundaryMetrics` raise `TypeError`
   against a provider that does not implement `add_corpus`, when they have to
@@ -234,6 +236,20 @@ conflicting flags.
   one, and `CodeDataLoader.get_code_snippets` applies the first to whatever the
   loader holds. An empty dict counts as a request, not as an absent one, since
   `--code-ast-config` uses `{}` to mean the bundled samples.
+
+  **Breaking**: `TokenizedData` no longer rejects an empty `tokens` list. A
+  tokenizer that encodes a text to zero tokens has measured something, and
+  refusing to construct the record turned that into a crash. A caller relying on
+  the constructor to reject a pre-tokenized row with no ids now gets a scored
+  record instead of an error: an exact-match miss with CER 1.0.
+
+  **Breaking**: `encode_with_offsets` raising is no longer caught. It was logged
+  at debug level and the text re-encoded with `encode()` and no offsets, which
+  measured that one text through a different path from the rest of its corpus.
+  `TokenizerWrapper.encode_with_offsets` returns `(ids, None)` when a tokenizer
+  has no offsets, so raising is a defect in the wrapper. A run that used to
+  complete with a degraded encoding now fails, naming the tokenizer, the corpus,
+  the label and the original exception.
 
   Reconstruction fidelity skips a tokenizer that decodes but cannot encode raw
   text, with a logged warning, when the run has code or math texts to encode.

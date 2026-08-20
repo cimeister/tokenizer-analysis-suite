@@ -172,13 +172,25 @@ class BaseMetrics(ABC):
         anything shipped here.
         """
         corpus_names = getattr(self.input_provider, 'corpus_names', None)
+        get_corpus = getattr(self.input_provider, 'get_corpus', None)
         if not callable(corpus_names):
             return None
+        if not callable(get_corpus):
+            # Named here rather than as a bare AttributeError from the line
+            # below. A provider carrying one of the pair and not the other is
+            # half a registry, and _register_corpus already refuses the same
+            # shape of provider by name.
+            raise TypeError(
+                f"{type(self.input_provider).__name__} implements corpus_names "
+                "but not get_corpus, so a registered corpus cannot be read "
+                "back. Subclass InputProvider, which implements the whole "
+                "corpus registry."
+            )
         # set(), not the list: corpus_names() builds a fresh list on every call
         # and this runs once per corpus per metric construction.
         if name not in set(corpus_names()):
             return None
-        return self.input_provider.get_corpus(name)
+        return get_corpus(name)
 
     def _corpus_or_refuse_arguments(
         self, name: str, arguments: Dict[str, bool]

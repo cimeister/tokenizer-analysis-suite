@@ -3,7 +3,7 @@ Input data types and abstractions for tokenizer analysis.
 """
 
 from dataclasses import dataclass
-from typing import Dict, List, Any, Optional, Tuple, Union, Protocol, TYPE_CHECKING
+from typing import Dict, List, Any, Mapping, Optional, Sequence, Tuple, Union, Protocol, TYPE_CHECKING
 from types import MappingProxyType
 from abc import ABC, abstractmethod
 import logging
@@ -126,6 +126,23 @@ CODE_DATASET_SOURCE = "code-ast dataset"
 PROSE_SOURCE = "multilingual corpus"
 
 
+def corpus_size(texts: 'Mapping[str, Sequence[str]]') -> Dict[str, Any]:
+    """The published size block for a labelled set of texts.
+
+    Module-level rather than only a Corpus method, because the prose domain of
+    operator isolation reports the same block for texts that are never a
+    registered corpus. Building a throwaway Corpus for it copied every prose
+    text into a tuple on each compute() call to reach the same four numbers.
+    """
+    per_label = {label: len(t) for label, t in texts.items()}
+    return {
+        "n_texts": sum(per_label.values()),
+        "n_chars": sum(len(t) for group in texts.values() for t in group),
+        "n_languages": len(per_label),
+        "texts_per_language": dict(sorted(per_label.items())),
+    }
+
+
 @dataclass(frozen=True)
 class Corpus:
     """A named set of labelled texts, encoded once per tokenizer.
@@ -159,7 +176,10 @@ class Corpus:
     """
 
     name: str
-    texts: Dict[str, List[str]]
+    #: Read-only after construction: __post_init__ replaces whatever was passed
+    #: with a MappingProxyType of tuples, so the annotation states what the
+    #: class guarantees rather than what the caller may hand in.
+    texts: Mapping[str, Tuple[str, ...]]
     source: str
     synthetic: bool
 
@@ -195,13 +215,7 @@ class Corpus:
         the most operators sets it. Publishing each domain's size is what lets
         a reader see which corpus is doing the work.
         """
-        per_label = {label: len(texts) for label, texts in self.texts.items()}
-        return {
-            "n_texts": sum(per_label.values()),
-            "n_chars": sum(len(t) for texts in self.texts.values() for t in texts),
-            "n_languages": len(per_label),
-            "texts_per_language": dict(sorted(per_label.items())),
-        }
+        return corpus_size(self.texts)
 
 
 class TokenizerProtocol(Protocol):
@@ -563,6 +577,7 @@ class InputProvider(ABC):
             encode_batch = getattr(tokenizer_obj, "encode_batch_with_offsets", None)
             encode_offsets = getattr(tokenizer_obj, "encode_with_offsets", None)
             items: List[TokenizedData] = []
+            warned_no_batch = False
             for lang, texts in corpus.texts.items():
                 usable = [text for text in texts if text and text.strip()]
                 if not usable:
@@ -595,13 +610,19 @@ class InputProvider(ABC):
                         # but a run that quietly stopped batching is the sort
                         # of thing that needs to be visible in a log read hours
                         # later.
-                        logger.warning(
-                            "encode_batch_with_offsets failed for %r on the %s "
-                            "%s corpus (%s); encoding one text at a time "
-                            "instead. The ids and offsets are the same either "
-                            "way; only the speed changes.",
-                            tok_name, lang, corpus.name, exc,
-                        )
+                        # Once per tokenizer, not once per label: one broken
+                        # batch method otherwise logs a copy for each of the 19
+                        # code languages, for every tokenizer.
+                        if not warned_no_batch:
+                            logger.warning(
+                                "encode_batch_with_offsets failed for %r on the "
+                                "%s corpus (first failure on %s: %s); encoding "
+                                "one text at a time for this tokenizer. The ids "
+                                "and offsets are the same either way; only the "
+                                "speed changes.",
+                                tok_name, corpus.name, lang, exc,
+                            )
+                            warned_no_batch = True
                         encoded = None
                 if encoded is None:
                     encoded = []

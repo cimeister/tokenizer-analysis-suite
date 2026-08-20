@@ -34,6 +34,7 @@ import logging
 from .base import BaseMetrics, TokenizedDataProcessor, format_optional
 from ..constants import AGGREGATION_MICRO_POOLED
 from ..core.input_types import (
+    corpus_size,
     CODE_CORPUS, MATH_CORPUS, PROSE_CORPUS, PROSE_SOURCE, Corpus, TokenizedData,
 )
 from ..core.input_providers import InputProvider
@@ -150,19 +151,31 @@ class DigitBoundaryMetrics(BaseMetrics):
             # samples.
             CODE_CORPUS, {"code_texts": bool(code_texts)}
         )
-        if self._code_corpus is None:
-            self._code_corpus = self._register_corpus(
-                code_corpus_from_texts(code_texts)
-            )
         self._math_corpus = self._corpus_or_refuse_arguments(
             MATH_CORPUS,
             {"math_data_path": bool(math_data_path),
              "use_builtin_math_data": bool(use_builtin_math_data)},
         )
-        if self._math_corpus is None:
-            self._math_corpus = self._register_corpus(
-                resolve_math_corpus(math_data_path, use_builtin_math_data)
-            )
+
+        # Both corpora are resolved before either is registered, so a failure
+        # resolving the second leaves the provider untouched. Registering as
+        # they resolved meant a math path that does not exist aborted with the
+        # code corpus already on the provider, and the retry then failed with
+        # "a corpus named 'code' is already registered", naming neither the
+        # original problem nor the fix. UnifiedTokenizerAnalyzer does the same
+        # thing for the same reason.
+        built_code = (
+            code_corpus_from_texts(code_texts)
+            if self._code_corpus is None else None
+        )
+        built_math = (
+            resolve_math_corpus(math_data_path, use_builtin_math_data)
+            if self._math_corpus is None else None
+        )
+        if built_code is not None:
+            self._code_corpus = self._register_corpus(built_code)
+        if built_math is not None:
+            self._math_corpus = self._register_corpus(built_math)
 
         # The digit metrics run on the math corpus only when the caller asked
         # for one. The bundled samples are registered as `synthetic` so that the
@@ -384,7 +397,8 @@ class DigitBoundaryMetrics(BaseMetrics):
     # ------------------------------------------------------------------
 
     def compute(
-        self, tokenized_data: Optional[Dict[str, List[TokenizedData]]] = None
+        self, tokenized_data: Optional[Dict[str, List[TokenizedData]]] = None,
+        include_code_math: bool = True,
     ) -> Dict[str, Any]:
         """Compute digit boundary alignment, digit split variability,
         numeric magnitude consistency, and operator isolation rate.
@@ -631,12 +645,20 @@ class DigitBoundaryMetrics(BaseMetrics):
         domain_accs = {}
         if self._include_prose_operators:
             domain_accs[PROSE_CORPUS] = self._accumulate_operators(prose_data)
-        domain_accs[CODE_CORPUS] = self._accumulate_operators(
-            self.input_provider.get_corpus_data(CODE_CORPUS)
-        )
-        domain_accs[MATH_CORPUS] = self._accumulate_operators(
-            self.input_provider.get_corpus_data(MATH_CORPUS)
-        )
+        # include_code_math is False for a run over one language group. The
+        # group selects prose languages and the code and math corpora belong to
+        # no language, so reporting the whole of both inside every group made
+        # each group's pooled figure a number measured mostly on texts the group
+        # does not contain. With prose operators off, which is the default, a
+        # group then has no operator domain at all, and by_domain is empty
+        # rather than describing corpora the group never saw.
+        if include_code_math:
+            domain_accs[CODE_CORPUS] = self._accumulate_operators(
+                self.input_provider.get_corpus_data(CODE_CORPUS)
+            )
+            domain_accs[MATH_CORPUS] = self._accumulate_operators(
+                self.input_provider.get_corpus_data(MATH_CORPUS)
+            )
         # Bundled paths are recorded relative to the package. They are derived
         # from __file__, so the absolute form bakes the author's checkout
         # directory into every results file, and a reader comparing two files
@@ -657,12 +679,12 @@ class DigitBoundaryMetrics(BaseMetrics):
         all_corpora = {
             CODE_CORPUS: lambda: self._code_corpus.stats(),
             MATH_CORPUS: lambda: self._math_corpus.stats(),
-            PROSE_CORPUS: lambda: Corpus(
-                name=PROSE_CORPUS,
-                texts=self._texts_by_language(prose_data),
-                source=PROSE_SOURCE,
-                synthetic=False,
-            ).stats(),
+            # corpus_size, not a throwaway Corpus: prose is never registered,
+            # and building one copied every prose text into a tuple on each
+            # call to reach the same four numbers.
+            PROSE_CORPUS: lambda: corpus_size(
+                self._texts_by_language(prose_data)
+            ),
         }
         domain_corpora = {d: all_corpora[d]() for d in domain_accs}
 

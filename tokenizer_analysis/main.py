@@ -515,19 +515,25 @@ class UnifiedTokenizerAnalyzer:
                         group_result['operator_isolation_rate'] = self._filter_operator_results(
                             base_results['operator_isolation_rate'], group_languages
                         )
-                elif self.digit_boundary_metrics is not None:
-                    # Filtered from the base results or not reported at all.
-                    # Recomputing here read the whole code and math corpora for
-                    # every group, which is the defect include_code_math=False
-                    # removed from reconstruction fidelity, and it published
-                    # digit metrics for the groups of a run that had asked for
-                    # none: this branch is reached when the base results hold no
-                    # three_digit_boundary_alignment, which is what
-                    # --no-digit-boundary produces.
+                elif base_results is not None:
+                    # The base run produced no digit metrics, which is what
+                    # --no-digit-boundary does, so the groups report none
+                    # either rather than computing what the caller turned off.
                     logger.info(
                         "No digit boundary results in the base run, so group "
                         "%s reports none either.", group_name,
                     )
+                else:
+                    # No base results to filter, so compute them, with
+                    # include_code_math=False for the same reason the basic
+                    # metrics use it: a group is a set of prose languages, and
+                    # reading the whole code and math corpora here put both
+                    # entire corpora into every group's operator isolation.
+                    logger.info(f"Computing digit boundary results for group {group_name}")
+                    db_results = self.digit_boundary_metrics.compute(
+                        filtered_data, include_code_math=False,
+                    )
+                    group_result.update(db_results)
 
                 # Same merge the top-level results get, so a group block and
                 # the whole-corpus block have the same keys. Without it a group
