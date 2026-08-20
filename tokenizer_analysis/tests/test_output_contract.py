@@ -996,3 +996,66 @@ def test_corpus_paths_under_the_working_directory_are_recorded_relative(demo_res
         "corpus paths under the working directory recorded as absolute: "
         + ", ".join(f"{k} -> {v}" for k, v in sorted(absolute.items()))
     )
+
+
+@pytest.fixture(scope="module")
+def default_code_config_results(tmp_path_factory):
+    """A run with no --code-ast-config, which is the documented default.
+
+    `_resolve_code_ast_config` returns `{}` for this, meaning "use synthetic
+    samples", where `None` would mean "disabled" (cli/run_analysis.py:268). The
+    two are read differently on purpose: `main.py:128` tests truthiness, so the
+    code corpus handed to the other metrics stays empty, while `main.py:182`
+    tests `is not None`, so the AST metric is still built and fills itself with
+    synthetic code.
+    """
+    out = tmp_path_factory.mktemp("default_code_config")
+    proc = subprocess.run(
+        [sys.executable, "-m", "tokenizer_analysis.cli.run_analysis",
+         "--use-sample-data", "--samples-per-lang", "5",
+         "--use-builtin-math-data", "--cer-time-budget", "0",
+         "--no-plots", "--output-dir", str(out)],
+        cwd=REPO_ROOT, capture_output=True, timeout=900,
+    )
+    if proc.returncode != 0:
+        pytest.fail(
+            "default-config run failed with exit "
+            f"{proc.returncode}:\n{proc.stderr.decode(errors='replace')[-3000:]}"
+        )
+    return json.loads((out / "analysis_results.json").read_text())
+
+
+@requires_flores
+class TestTheDefaultCodeConfigurationIsAsymmetric:
+    """Omitting --code-ast-config gives the code metrics synthetic data and
+    reconstruction fidelity no code domain at all.
+
+    That asymmetry is deliberate and was confirmed as intended on 2026-08-19.
+    It is pinned here because it emerges from two different truth tests on the
+    same value rather than from anything stated in one place, so a refactor that
+    resolves "which corpus" once, in one rule, would quietly give reconstruction
+    fidelity a code domain it has never had. No test covered this before.
+    """
+
+    def _one_tokenizer(self, block):
+        per_tok = block["per_tokenizer"]
+        return per_tok[sorted(per_tok)[0]]
+
+    def test_reconstruction_fidelity_has_no_code_domain(
+            self, default_code_config_results):
+        entry = self._one_tokenizer(
+            default_code_config_results["reconstruction_fidelity"])
+        domains = sorted(entry.get("per_domain") or {})
+        assert domains, "expected some domains, so the assertion below means something"
+        assert not [d for d in domains if d.startswith("code")], domains
+        # math is present, so this is specific to code rather than a run in
+        # which no derived corpus reached the metric at all.
+        assert "math" in domains, domains
+
+    def test_the_code_metrics_do_get_synthetic_code(
+            self, default_code_config_results):
+        entry = self._one_tokenizer(
+            default_code_config_results["ast_boundary_alignment"])
+        languages = sorted(entry.get("per_language") or {})
+        assert "python" in languages, languages
+        assert len(languages) > 3, languages
