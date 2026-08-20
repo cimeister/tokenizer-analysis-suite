@@ -142,14 +142,21 @@ class DigitBoundaryMetrics(BaseMetrics):
         # The corpora for the per-domain operator-isolation split. Prose is the
         # corpus the metric already ran on; code and math are registered on the
         # provider by the run, and built here from the constructor arguments
-        # when this class is constructed on its own. Either way the corpus
-        # actually used is recorded and reported, so a fallback is never silent.
-        self._code_corpus = self._registered_corpus(CODE_CORPUS)
+        # when this class is constructed on its own. Supplying both is refused
+        # rather than resolved, so the corpus reported is always the corpus the
+        # caller asked for.
+        self._code_corpus = self._corpus_or_refuse_arguments(
+            CODE_CORPUS, {"code_texts": code_texts}
+        )
         if self._code_corpus is None:
             self._code_corpus = self._register_corpus(
                 code_corpus_from_texts(code_texts)
             )
-        self._math_corpus = self._registered_corpus(MATH_CORPUS)
+        self._math_corpus = self._corpus_or_refuse_arguments(
+            MATH_CORPUS,
+            {"math_data_path": math_data_path,
+             "use_builtin_math_data": use_builtin_math_data},
+        )
         if self._math_corpus is None:
             self._math_corpus = self._register_corpus(
                 resolve_math_corpus(math_data_path, use_builtin_math_data)
@@ -407,7 +414,7 @@ class DigitBoundaryMetrics(BaseMetrics):
             # The registered math corpus IS _math_texts whenever the caller
             # asked for math texts, so the digit corpus and the math operator
             # domain below share one encoding.
-            tokenized_data = self.input_provider.get_tokenized_data(MATH_CORPUS)
+            tokenized_data = self.input_provider.get_corpus_data(MATH_CORPUS)
             logger.info(
                 "Using %d dedicated math texts for digit boundary metrics",
                 len(self._math_texts),
@@ -623,10 +630,10 @@ class DigitBoundaryMetrics(BaseMetrics):
         if self._include_prose_operators:
             domain_accs[PROSE_CORPUS] = self._accumulate_operators(prose_data)
         domain_accs[CODE_CORPUS] = self._accumulate_operators(
-            self.input_provider.get_tokenized_data(CODE_CORPUS)
+            self.input_provider.get_corpus_data(CODE_CORPUS)
         )
         domain_accs[MATH_CORPUS] = self._accumulate_operators(
-            self.input_provider.get_tokenized_data(MATH_CORPUS)
+            self.input_provider.get_corpus_data(MATH_CORPUS)
         )
         # Bundled paths are recorded relative to the package. They are derived
         # from __file__, so the absolute form bakes the author's checkout

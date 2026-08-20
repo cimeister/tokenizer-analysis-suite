@@ -164,15 +164,46 @@ class BaseMetrics(ABC):
         carries no corpora, and so does most of the test suite.
 
         The registry is looked up by attribute rather than assumed, because a
-        provider need not be an ``InputProvider`` subclass. The two stand-ins in
-        this package that are not (``per_example._StubInputProvider`` and the
-        test suite's ``MockProvider``) reach the metric classes the same way a
-        caller's own duck-typed provider would.
+        provider need not be an ``InputProvider`` subclass. Every provider in
+        this package is one, including the stand-ins
+        (``per_example._StubInputProvider``, the test suite's ``MockProvider``
+        and ``scripts/run_ast_only._AstOnlyProvider``), so the attribute check
+        is there for a caller's own duck-typed provider rather than for
+        anything shipped here.
         """
         corpus_names = getattr(self.input_provider, 'corpus_names', None)
         if not callable(corpus_names) or name not in corpus_names():
             return None
         return self.input_provider.get_corpus(name)
+
+    def _corpus_or_refuse_arguments(
+        self, name: str, arguments: Dict[str, Any]
+    ) -> Optional['Corpus']:
+        """The registered corpus under *name*, refusing arguments it overrides.
+
+        A metric takes its corpus from the registry when the run put one there,
+        and builds one from its own constructor arguments otherwise. When both
+        are present the registry used to win and the arguments were dropped
+        without a word, so a caller who passed ``math_data_path`` could be
+        handed numbers measured on a different corpus with nothing in the
+        output saying so.
+
+        Returns None when nothing is registered, which is the signal to build
+        the corpus from the arguments instead.
+        """
+        corpus = self._registered_corpus(name)
+        if corpus is None:
+            return None
+        supplied = sorted(key for key, value in arguments.items() if value)
+        if supplied:
+            raise ValueError(
+                f"{type(self).__name__} was given {', '.join(supplied)}, but a "
+                f"{name!r} corpus from {corpus.source!r} is already registered "
+                "on the input provider. Using the registered corpus would "
+                "report numbers measured on it under a request for the other "
+                "one. Pass the arguments or register the corpus, not both."
+            )
+        return corpus
 
     def _register_corpus(self, corpus: 'Corpus') -> 'Corpus':
         """Register a corpus this metric built itself, and return it.

@@ -12,7 +12,9 @@ import unicodedata
 import numpy as np
 
 from .base import BaseMetrics, TokenizedDataProcessor, format_optional
-from ..core.input_types import CODE_CORPUS, MATH_CORPUS, TokenizedData
+from ..core.input_types import (
+    CODE_CORPUS, MATH_CORPUS, NO_TOKENIZER_ERRORS, TokenizedData,
+)
 from ..core.input_providers import InputProvider
 from ..config import TextMeasurementConfig, TextMeasurer, DEFAULT_TEXT_MEASUREMENT_CONFIG, DEFAULT_WORD_MEASUREMENT_CONFIG
 from ..config.language_metadata import LanguageMetadata
@@ -74,14 +76,15 @@ class BasicTokenizationMetrics(BaseMetrics):
             measurement_config: Configuration for text measurement method
             language_metadata: Optional language metadata for grouping
             code_texts: Optional pre-loaded code texts mapping languages to
-                snippets. Read only when the input provider carries no
-                registered code corpus, which is the case when this class is
-                constructed on its own rather than by
-                ``UnifiedTokenizerAnalyzer``.
-            math_data_path: Optional path to math-rich text file. Read under
-                the same condition as *code_texts*.
-            use_builtin_math_data: Whether to use built-in math samples. Read
-                under the same condition as *code_texts*.
+                snippets. For a caller who builds this class on its own rather
+                than through ``UnifiedTokenizerAnalyzer``, which registers the
+                corpus on the input provider instead. Passing this when a code
+                corpus is already registered raises, rather than measuring one
+                and reporting it under a request for the other.
+            math_data_path: Optional path to math-rich text file. Subject to
+                the same conflict check as *code_texts*.
+            use_builtin_math_data: Whether to use built-in math samples.
+                Subject to the same conflict check as *code_texts*.
             fertility_use_global_config: If True, fertility uses *measurement_config*
                 instead of the default words-based normalization.
         """
@@ -119,13 +122,19 @@ class BasicTokenizationMetrics(BaseMetrics):
         self._code_texts: Dict[str, List[str]] = {}
         self._math_items: List[Tuple[str, str]] = []
 
-        code_corpus = self._registered_corpus(CODE_CORPUS)
+        code_corpus = self._corpus_or_refuse_arguments(
+            CODE_CORPUS, {"code_texts": code_texts}
+        )
         if code_corpus is None:
             self._code_texts = code_texts or {}
         elif not code_corpus.synthetic:
             self._code_texts = dict(code_corpus.texts)
 
-        math_corpus = self._registered_corpus(MATH_CORPUS)
+        math_corpus = self._corpus_or_refuse_arguments(
+            MATH_CORPUS,
+            {"math_data_path": math_data_path,
+             "use_builtin_math_data": use_builtin_math_data},
+        )
         if math_corpus is None:
             # No corpus is registered, so nothing indexes these texts and the
             # label is never used to look one up. MATH_CORPUS is the label
@@ -627,12 +636,15 @@ class BasicTokenizationMetrics(BaseMetrics):
         The index is keyed by ``(label, text)`` and never by position. The
         provider's encode keeps only texts satisfying ``text and text.strip()``,
         so its list for a label is shorter than this metric's whenever one of
-        those texts is whitespace-only, which max_snippet_chars produces by
-        truncating an indented file down to its leading whitespace. Pairing the
-        two lists by index after one such drop would score every later text
-        against the following text's ids, and nothing in the results would show
-        it. Two identical texts collapse onto one entry, which is harmless:
-        identical text encodes to identical ids.
+        those texts is empty or whitespace-only. Pairing the two lists by index
+        after one such drop would score every later text against the following
+        text's ids, and nothing in the results would show it. The one cause of
+        such a text this package used to produce, ``max_snippet_chars``
+        truncating an indented file down to its leading whitespace, is fixed
+        where it arose, in ``CodeDataLoader._load_language``. A corpus supplied
+        by a caller can still contain one, so the key stays the text. Two
+        identical texts collapse onto one entry, which is harmless: identical
+        text encodes to identical ids.
 
         The provider encodes with offsets, which this metric does not read. In a
         run where another metric also reads the corpus (the AST metrics and
@@ -644,14 +656,17 @@ class BasicTokenizationMetrics(BaseMetrics):
         encode the corpus a second time or need a second cache, and the
         configuration it would serve is narrow (a real code or math corpus with
         both the AST metrics and the digit metrics turned off). Its cost there
-        is bounded. For HuggingFaceTokenizer, UniMixLMTokenizer and
-        CustomBPETokenizer the offsets come free and the provider encodes one
-        batch per label: 4.00 s against 10.29 s for per-text calls over the
-        1500 files benchmarks/open_source/code_ast_config.json names, so those
-        wrappers are faster here than the per-text encode() this replaced. The
-        script_bpe wrappers compute offsets by replaying the pretokenizer, at
-        2.16x the cost of the ids alone, and have no batch path, so they are
-        the ones that pay.
+        is bounded. For HuggingFaceTokenizer and CustomBPETokenizer the offsets
+        come free and the provider encodes one batch per label: 4.00 s against
+        10.29 s for per-text calls over the 1500 files
+        benchmarks/open_source/code_ast_config.json names, so those wrappers are
+        faster here than the per-text encode() this replaced. UniMixLMTokenizer
+        subclasses HuggingFaceTokenizer but overrides the batch method back to a
+        per-text loop, because langspec encoding scores each text against every
+        per-language tokenizer, so it is not one of them. The script_bpe
+        wrappers compute offsets by replaying the pretokenizer, at 2.16x the
+        cost of the ids alone, and have no batch path, so they are the ones that
+        pay.
         """
         lookup: Dict[str, Dict[str, Dict[Tuple[str, str], List[int]]]] = {}
         measured = (
@@ -661,7 +676,7 @@ class BasicTokenizationMetrics(BaseMetrics):
         for corpus_name, has_texts in measured:
             if not has_texts or self._registered_corpus(corpus_name) is None:
                 continue
-            encoded = self.input_provider.get_tokenized_data(corpus_name)
+            encoded = self.input_provider.get_corpus_data(corpus_name)
             per_corpus: Dict[str, Dict[Tuple[str, str], List[int]]] = {}
             for tok_name, records in encoded.items():
                 per_tokenizer: Dict[Tuple[str, str], List[int]] = {}
@@ -748,7 +763,12 @@ class BasicTokenizationMetrics(BaseMetrics):
         for tok_name in self.tokenizer_names:
             try:
                 tokenizer = self.input_provider.get_tokenizer(tok_name)
-            except Exception as e:
+            except NO_TOKENIZER_ERRORS as e:
+                # The same tuple InputProvider._encode_corpus skips on, so the
+                # two agree on what "this provider cannot supply a tokenizer"
+                # means. This was a bare ``except Exception``, which also
+                # skipped a tokenizer whose loader had a genuine defect and
+                # reported the run as a success with that tokenizer missing.
                 logger.warning(
                     "Reconstruction fidelity: skipping %s (could not load tokenizer: %s)",
                     tok_name, e,
@@ -762,9 +782,13 @@ class BasicTokenizationMetrics(BaseMetrics):
             if total_code_math_texts:
                 # This metric selects on can_decode() alone, and the code/math
                 # loop below then needs raw text encoded. A tokenizer that
-                # decodes but cannot encode (a pre-tokenized provider's) used to
-                # reach that call and raise NotImplementedError out of the whole
-                # analysis. Decided 2026-08-19: skip it with a warning instead,
+                # decodes but cannot encode reaches that call and raises
+                # NotImplementedError out of the whole analysis. No wrapper in
+                # this package is both: PreTokenizedDataTokenizer reports
+                # can_decode() false and the check above already skipped it, so
+                # this is reachable through a caller's own tokenizer object
+                # rather than through anything shipped here.
+                # Decided 2026-08-19: skip it with a warning instead,
                 # which is what InputProvider._encode_corpus already does with
                 # the same tokenizer, so it is left out of the encoded corpus
                 # rather than crashing the run. The check is conditional on

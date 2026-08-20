@@ -375,25 +375,31 @@ class ASTBoundaryMetrics(BaseMetrics):
         benchmarks/open_source/code_ast_config.json names: 10.29 s of
         per-snippet ``encode_with_offsets`` against 4.00 s for the provider's
         batched encode, and 0.00 s for every read after the first.
-        ``HuggingFaceTokenizer`` (with ``UniMixLMTokenizer``, which subclasses
-        it) and ``CustomBPETokenizer`` are the wrappers with a native batch
-        path. For every other wrapper ``encode_batch_with_offsets`` is a
-        per-text loop, so only the single-encoding part of this applies.
+        ``HuggingFaceTokenizer`` and ``CustomBPETokenizer`` are the wrappers
+        with a native batch path. ``UniMixLMTokenizer`` subclasses the first but
+        overrides ``encode_batch_with_offsets`` back to a per-text loop, because
+        langspec encoding scores each text against every per-language tokenizer.
+        For it, and for every wrapper that inherits the base implementation, the
+        method is a per-text loop, so only the single-encoding part of this
+        applies.
 
         The index is keyed by ``(language, text)`` and never by position. The
         provider's encode keeps only texts satisfying ``text and text.strip()``,
         so its list for a language is shorter than the loader's snippet list
-        whenever a snippet is whitespace-only, which ``max_snippet_chars``
-        produces by truncating an indented file down to its leading whitespace.
-        Pairing the two lists by index after one such drop would score every
-        later AST span against the following snippet's tokens, and nothing in
-        the results would show it. Two identical snippets collapse onto one
-        entry, which is harmless: identical text encodes to identical ids and
-        identical offsets.
+        whenever a snippet is empty or whitespace-only. Pairing the two lists by
+        index after one such drop would score every later AST span against the
+        following snippet's tokens, and nothing in the results would show it.
+        The one cause of such a snippet this package used to produce,
+        ``max_snippet_chars`` truncating an indented file down to its leading
+        whitespace, is fixed where it arose, in
+        ``CodeDataLoader._load_language``. A corpus supplied by a caller can
+        still contain one, so the key stays the text. Two identical snippets
+        collapse onto one entry, which is harmless: identical text encodes to
+        identical ids and identical offsets.
         """
         if self._code_corpus is None:
             return None
-        encoded = self.input_provider.get_tokenized_data(CODE_CORPUS)
+        encoded = self.input_provider.get_corpus_data(CODE_CORPUS)
         lookup: Dict[str, Dict[Tuple[str, str], TokenizedData]] = {}
         for tok_name, records in encoded.items():
             per_tokenizer: Dict[Tuple[str, str], TokenizedData] = {}
@@ -1275,12 +1281,14 @@ class ASTBoundaryMetrics(BaseMetrics):
                                 f"{len(spans_list)} for tokenizer {tok_name!r}. "
                                 "The snippet this metric parsed and the texts "
                                 "the provider encoded are supposed to be the "
-                                "same strings; they are not. The known cause is "
+                                "same strings; they are not. The cause is "
                                 "InputProvider._encode_corpus dropping a text "
-                                "that is empty or whitespace-only, which "
-                                "max_snippet_chars produces when it truncates "
-                                "an indented file down to its leading "
-                                "whitespace. Scoring this snippet against "
+                                "that is empty or whitespace-only. This is not "
+                                "reachable through --max-code-file-chars: "
+                                "CodeDataLoader drops a snippet its truncation "
+                                "leaves whitespace-only, so look at the corpus "
+                                "the provider was given. Scoring this snippet "
+                                "against "
                                 "another snippet's tokens is what keying the "
                                 "lookup by text instead of by position "
                                 "prevents, so it fails here rather than "
