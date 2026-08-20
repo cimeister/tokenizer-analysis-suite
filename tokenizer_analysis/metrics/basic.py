@@ -131,7 +131,7 @@ class BasicTokenizationMetrics(BaseMetrics):
         self._corpus_backed: Dict[str, bool] = {}
 
         code_corpus = self._corpus_or_refuse_arguments(
-            CODE_CORPUS, {"code_texts": code_texts}
+            CODE_CORPUS, {"code_texts": bool(code_texts)}
         )
         self._corpus_backed[CODE_CORPUS] = code_corpus is not None
         if code_corpus is None:
@@ -141,8 +141,8 @@ class BasicTokenizationMetrics(BaseMetrics):
 
         math_corpus = self._corpus_or_refuse_arguments(
             MATH_CORPUS,
-            {"math_data_path": math_data_path,
-             "use_builtin_math_data": use_builtin_math_data},
+            {"math_data_path": bool(math_data_path),
+             "use_builtin_math_data": bool(use_builtin_math_data)},
         )
         self._corpus_backed[MATH_CORPUS] = math_corpus is not None
         if math_corpus is None:
@@ -824,6 +824,11 @@ class BasicTokenizationMetrics(BaseMetrics):
                 # ``except Exception``, which also skipped a tokenizer whose
                 # loader had a genuine defect and reported the run as a success
                 # with that tokenizer missing.
+                #
+                # Reachable only when no corpus is registered. With one,
+                # _shared_corpus_ids above has already called get_corpus_data,
+                # and _encode_corpus does not catch AttributeError, so it
+                # propagates out of the analysis before this loop starts.
                 logger.warning(
                     "Reconstruction fidelity: skipping %s (could not load tokenizer: %s)",
                     tok_name, e,

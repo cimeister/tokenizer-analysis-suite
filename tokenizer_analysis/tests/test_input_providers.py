@@ -546,22 +546,46 @@ class TestAMetricRefusesArgumentsARegisteredCorpusWouldOverride:
         with pytest.raises(ValueError, match="already registered"):
             DigitBoundaryMetrics(provider, math_data_path="/some/other/math.txt")
 
-    def test_an_explicit_empty_dict_is_a_request_and_is_refused(self):
-        """`{}` means something in this package, so it cannot read as absent.
+    def test_an_empty_code_config_is_a_request_and_is_refused(self):
+        """`{}` means something for code_config specifically.
 
         cli/run_analysis returns `{}` for --code-ast-config to mean "use the
-        bundled samples" and None to mean "disabled", and `code_texts={}` used
-        to mean "report no code domain". A truthiness test read both as
-        unsupplied and let the registered corpus override them, which is the
-        substitution this check exists to refuse.
+        bundled samples" and None to mean "disabled", so an empty dict there is
+        an explicit request and the registered corpus must not override it
+        silently. Each call site states its own reading, because the empty
+        value does not mean the same thing for every argument: see the next
+        test.
+        """
+        from tokenizer_analysis.metrics.code_ast import ASTBoundaryMetrics
+
+        provider = _raw_provider(_CharTokenizer())
+        provider.add_corpus(CODE)
+
+        with pytest.raises(ValueError, match="already registered"):
+            ASTBoundaryMetrics(provider, code_config={})
+
+    def test_an_empty_code_texts_asks_for_nothing_and_is_not_refused(self):
+        """Unlike code_config, an empty code_texts is not a request.
+
+        It has always meant "this metric reports no code domain". Treating
+        every empty value as a request turned a documented default into an
+        error, which is why the reading is per argument.
         """
         from tokenizer_analysis.metrics.basic import BasicTokenizationMetrics
 
         provider = _raw_provider(_CharTokenizer())
         provider.add_corpus(CODE)
 
-        with pytest.raises(ValueError, match="already registered"):
-            BasicTokenizationMetrics(provider, code_texts={})
+        BasicTokenizationMetrics(provider, code_texts={})
+
+    def test_a_zero_char_cap_asks_for_nothing_either(self):
+        """max_snippet_chars=0 is documented as "keep each file in full"."""
+        from tokenizer_analysis.metrics.code_ast import ASTBoundaryMetrics
+
+        provider = _raw_provider(_CharTokenizer())
+        provider.add_corpus(CODE)
+
+        ASTBoundaryMetrics(provider, max_snippet_chars=0)
 
     def test_a_false_boolean_is_not_a_request(self):
         """use_builtin_math_data=False is the default, not an explicit ask."""

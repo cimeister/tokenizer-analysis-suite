@@ -333,7 +333,12 @@ class ASTBoundaryMetrics(BaseMetrics):
         # the caller passed while every snippet stayed full length.
         self._code_corpus = self._corpus_or_refuse_arguments(
             CODE_CORPUS,
-            {"code_config": code_config, "max_snippet_chars": max_snippet_chars},
+            # code_config is not None, not bool(): {} is a request for the
+            # bundled samples here, which is what --code-ast-config passes when
+            # it is absent. max_snippet_chars=0 disables truncation, so it asks
+            # for nothing.
+            {"code_config": code_config is not None,
+             "max_snippet_chars": bool(max_snippet_chars)},
         )
 
         # Load code data
@@ -1146,8 +1151,18 @@ class ASTBoundaryMetrics(BaseMetrics):
 
         from ..loaders.code_data import CodeDataLoader
 
+        # The `text and text.strip()` filter is the one
+        # InputProvider._encode_corpus applies, so a snippet kept here has an
+        # encoding to look up and a snippet it drops has none. Without it a
+        # blank entry in a registered corpus reached the (language, text) lookup,
+        # missed, and aborted the whole metric. code_corpus_from_texts drops a
+        # label whose list is empty, not a blank string inside one, so
+        # code_texts={"python": ["   ", "x = 1"]} produces exactly that.
+        # basic.py applies the same filter for the same reason, and the
+        # lookup is keyed by text, so skipping carries no mis-pairing risk.
         code_snippets = {
-            lang: self.code_loader.get_code_snippets(lang)
+            lang: [s for s in self.code_loader.get_code_snippets(lang)
+                   if s and s.strip()]
             for lang in self.code_loader.get_languages()
             if lang not in _UNSUPPORTED_CODE_LANGS
         }

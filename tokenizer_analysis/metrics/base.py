@@ -181,7 +181,7 @@ class BaseMetrics(ABC):
         return self.input_provider.get_corpus(name)
 
     def _corpus_or_refuse_arguments(
-        self, name: str, arguments: Dict[str, Any]
+        self, name: str, arguments: Dict[str, bool]
     ) -> Optional['Corpus']:
         """The registered corpus under *name*, refusing arguments it overrides.
 
@@ -192,23 +192,21 @@ class BaseMetrics(ABC):
         handed numbers measured on a different corpus with nothing in the
         output saying so.
 
+        *arguments* maps each argument's name to whether the caller supplied
+        it. The caller decides that, because only the caller knows what each
+        argument's empty value means: ``code_config={}`` is a request for the
+        bundled samples, while ``code_texts={}`` and ``max_snippet_chars=0``
+        ask for nothing. Testing the values here instead got all three wrong in
+        one direction or the other.
+
         Returns None when nothing is registered, which is the signal to build
         the corpus from the arguments instead.
         """
         corpus = self._registered_corpus(name)
         if corpus is None:
             return None
-        # "Supplied" is "not None and not False", not truthiness. An empty dict
-        # is a request in this package, not the absence of one:
-        # cli/run_analysis returns {} for --code-ast-config to mean "use the
-        # bundled samples" and None to mean "disabled", and code_texts={} used
-        # to mean "this metric reports no code domain". Reading either as
-        # unsupplied let the registered corpus override an explicit request,
-        # which is the substitution this check exists to refuse.
-        supplied = sorted(
-            key for key, value in arguments.items()
-            if value is not None and value is not False
-        )
+        supplied = sorted(key for key, was_supplied in arguments.items()
+                          if was_supplied)
         if supplied:
             raise ValueError(
                 f"{type(self).__name__} was given {', '.join(supplied)}, but a "

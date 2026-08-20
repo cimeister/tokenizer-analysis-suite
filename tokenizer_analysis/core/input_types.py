@@ -4,6 +4,7 @@ Input data types and abstractions for tokenizer analysis.
 
 from dataclasses import dataclass
 from typing import Dict, List, Any, Optional, Tuple, Union, Protocol, TYPE_CHECKING
+from types import MappingProxyType
 from abc import ABC, abstractmethod
 import logging
 
@@ -163,21 +164,28 @@ class Corpus:
     synthetic: bool
 
     def __post_init__(self):
-        """Copy *texts*, so ``frozen=True`` means what it says.
+        """Freeze *texts*, so ``frozen=True`` means what it says.
 
         The dataclass being frozen stops the four fields being reassigned and
-        does nothing about the dict and the lists inside one of them. A caller
-        who appended to their own list after registering a corpus changed a
-        corpus the provider had already encoded and cached, so ``stats()``
-        reported one size while the published numbers were measured on other
-        contents. Copying here covers every construction site; it used to be
-        done in one of the three factories in loaders/corpora.py.
+        does nothing about the dict and the lists inside one of them. Copying
+        on construction stopped a caller's later append reaching a corpus
+        through the reference they still held, and left
+        ``provider.get_corpus('code').texts['python'].append(...)`` working,
+        which changes a corpus the provider may already have encoded and
+        memoized: ``stats()`` then reports one size while the published numbers
+        were measured on other contents.
 
-        A Corpus is still not hashable, because ``texts`` is a dict.
+        So the labels map to tuples behind a read-only view, and both routes
+        raise instead. Consumers already build their own list or dict from this
+        (``dict(corpus.texts)``, ``list(texts)``), so they are unaffected.
+
+        A Corpus is still not hashable, because a mapping is not.
         """
         object.__setattr__(
             self, "texts",
-            {label: list(texts) for label, texts in self.texts.items()},
+            MappingProxyType(
+                {label: tuple(texts) for label, texts in self.texts.items()}
+            ),
         )
 
     def stats(self) -> Dict[str, Any]:

@@ -141,12 +141,18 @@ class UnifiedTokenizerAnalyzer:
                 "cannot be registered for the metrics that read them. Subclass "
                 "InputProvider, which implements the corpus registry."
             )
-        add_corpus(resolve_code_corpus(
+        # Both resolved before either is registered, so a failure in the
+        # second leaves the provider untouched. Registering as they resolved
+        # meant a math config that loaded 0 texts aborted with the code corpus
+        # already on the provider, and the retry then failed with "a corpus
+        # named 'code' is already registered", naming neither the original
+        # problem nor the fix.
+        code_corpus = resolve_code_corpus(
             code_ast_config, code_max_snippets_per_lang, code_max_snippet_chars,
-        ))
-        add_corpus(resolve_math_corpus(
-            math_data_path, use_builtin_math_data,
-        ))
+        )
+        math_corpus = resolve_math_corpus(math_data_path, use_builtin_math_data)
+        add_corpus(code_corpus)
+        add_corpus(math_corpus)
 
         # Initialize metrics classes
         self.basic_metrics = BasicTokenizationMetrics(
@@ -509,10 +515,19 @@ class UnifiedTokenizerAnalyzer:
                         group_result['operator_isolation_rate'] = self._filter_operator_results(
                             base_results['operator_isolation_rate'], group_languages
                         )
-                else:
-                    logger.info(f"Computing digit boundary results for group {group_name}")
-                    db_results = self.digit_boundary_metrics.compute(filtered_data)
-                    group_result.update(db_results)
+                elif self.digit_boundary_metrics is not None:
+                    # Filtered from the base results or not reported at all.
+                    # Recomputing here read the whole code and math corpora for
+                    # every group, which is the defect include_code_math=False
+                    # removed from reconstruction fidelity, and it published
+                    # digit metrics for the groups of a run that had asked for
+                    # none: this branch is reached when the base results hold no
+                    # three_digit_boundary_alignment, which is what
+                    # --no-digit-boundary produces.
+                    logger.info(
+                        "No digit boundary results in the base run, so group "
+                        "%s reports none either.", group_name,
+                    )
 
                 # Same merge the top-level results get, so a group block and
                 # the whole-corpus block have the same keys. Without it a group

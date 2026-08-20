@@ -145,7 +145,10 @@ class DigitBoundaryMetrics(BaseMetrics):
         # rather than resolved, so the corpus reported is always the corpus the
         # caller asked for.
         self._code_corpus = self._corpus_or_refuse_arguments(
-            CODE_CORPUS, {"code_texts": code_texts}
+            # bool(): an empty code_texts asks for nothing, unlike the
+            # code_config of the AST metrics, where {} means the bundled
+            # samples.
+            CODE_CORPUS, {"code_texts": bool(code_texts)}
         )
         if self._code_corpus is None:
             self._code_corpus = self._register_corpus(
@@ -153,8 +156,8 @@ class DigitBoundaryMetrics(BaseMetrics):
             )
         self._math_corpus = self._corpus_or_refuse_arguments(
             MATH_CORPUS,
-            {"math_data_path": math_data_path,
-             "use_builtin_math_data": use_builtin_math_data},
+            {"math_data_path": bool(math_data_path),
+             "use_builtin_math_data": bool(use_builtin_math_data)},
         )
         if self._math_corpus is None:
             self._math_corpus = self._register_corpus(

@@ -137,6 +137,18 @@ def resolve_math_corpus(
         )
     texts = load_math_data(BUILTIN_MATH_SAMPLES_PATH)
     if use_builtin_math_data:
+        # The same refusal the math_data_path branch above makes, for the same
+        # reason. A caller who passed --use-builtin-math-data and got 0 texts
+        # back, from a truncated or unreadable bundled file, would otherwise
+        # have the digit metrics fall through to the prose corpus and publish
+        # numbers measured on FLORES under a run that asked for math.
+        if not texts:
+            raise ValueError(
+                f"use_builtin_math_data was set but {BUILTIN_MATH_SAMPLES_PATH} "
+                "loaded 0 texts. Refusing to fall back to the prose corpus: the "
+                "run would silently measure something other than the math data "
+                "it asked for."
+            )
         logger.info("Loaded %d built-in math samples", len(texts))
     return Corpus(
         name=MATH_CORPUS, texts={MATH_CORPUS: texts},

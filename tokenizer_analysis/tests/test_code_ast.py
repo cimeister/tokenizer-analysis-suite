@@ -3424,26 +3424,21 @@ class TestTheCodeCorpusIsEncodedOncePerRun:
         assert code_domain["summary"]["tok"]["total_operators"] > 0
 
 
-class TestTheMissingEncodingErrorNamesTheSnippetThatIsActuallyMissing:
-    """_shared_code_encodings's lookup is keyed by (language, text), not by
+class TestSharedCodeEncodingsArePairedByTextNotByRecordOrder:
+    """_shared_code_encodings's lookup is keyed by (language, text), never by
     position in the encoded list.
 
-    A corpus supplied directly by a caller (bypassing CodeDataLoader, which
-    now drops a whitespace-only truncation result at the source) can still
-    hold a whitespace-only snippet. The provider's encode drops such a text,
-    so its per-language encoded list is shorter than
-    code_snippets[code_lang], the loader's raw list compute() walks with
-    ``si``: here "python" has 3 raw snippets but only 2 encoded ones. Every
-    snippet, blank or not, reaches the per-tokenizer lookup, so the blank one
-    -- the second of the three -- is the one with no encoding, and the error
-    naming it is the correct, loud failure.
+    compute() now applies the same ``text and text.strip()`` filter as
+    InputProvider._encode_corpus, so within this package the two lists agree in
+    order and in length and a positional lookup would happen to work. That
+    agreement is a property of the two filters matching, not something the
+    lookup relies on: ``get_corpus_data`` is public, and a provider that returns
+    the same records in another order is a correct provider.
 
-    Were the lookup keyed by (language, si) instead of (language, snippet),
-    the blank snippet's position (1) would collide with the third, real
-    snippet's position in the shorter encoded list, so the blank snippet
-    would silently "succeed" with the real snippet's tokens, and the missing
-    entry would instead be reported for the real, third snippet -- the wrong
-    diagnosis, pointing at a snippet that was never missing anything.
+    Reversing the records is the smallest way to make the two disagree. With
+    the lookup keyed by text every snippet still finds its own encoding; keyed
+    by position, each would be scored against another snippet's tokens and
+    nothing in the results would show it.
     """
 
     @pytest.fixture(scope="class")
@@ -3454,25 +3449,70 @@ class TestTheMissingEncodingErrorNamesTheSnippetThatIsActuallyMissing:
         except ImportError:
             pytest.skip("tree-sitter-language-pack not installed")
 
-    def test_the_error_names_the_blank_snippet_not_the_following_one(
+    def test_records_returned_in_reverse_order_are_still_matched_correctly(
         self, ts_pack,
     ):
         from tokenizer_analysis.core.input_types import CODE_CORPUS, Corpus
 
+        # Deliberately different lengths. The alignment rate alone cannot tell
+        # the two apart: the char tokenizer emits one token per character, so
+        # every span lands on a token boundary whichever snippet's encoding is
+        # used. What does differ is coverage, because the shorter encoding does
+        # not reach the end of the longer snippet, so the spans past it become
+        # unmappable.
         code_texts = {
             "python": [
-                "def add(a, b):\n    return a + b\n",
-                "    \n",  # whitespace-only: the provider's encode drops it
-                "total = 12 + 345\n",
+                "def calculate_total_amount(first_value, second_value):\n"
+                "    return first_value + second_value\n",
+                "x = 1\n",
             ],
         }
-        provider = _MockProvider("tok", _CharTokenizer())
+
+        class _ReversedOrderProvider(_MockProvider):
+            def get_corpus_data(self, name):
+                data = super().get_corpus_data(name)
+                return {tok: list(reversed(records)) for tok, records in data.items()}
+
+        def _overall(provider_cls):
+            provider = provider_cls("tok", _CharTokenizer())
+            provider.add_corpus(Corpus(
+                name=CODE_CORPUS, texts=code_texts,
+                source="test code", synthetic=False,
+            ))
+            results = ASTBoundaryMetrics(provider).compute()
+            return results["ast_boundary_alignment"]["per_tokenizer"]["tok"]["overall"]
+
+        in_order = _overall(_MockProvider)
+        reversed_order = _overall(_ReversedOrderProvider)
+
+        assert reversed_order == in_order, (
+            "the order a provider returns its records in must not change what "
+            "is measured; pairing by position scores each snippet against the "
+            "other one's tokens"
+        )
+        assert in_order["unmappable"] == 0, (
+            "every span should map, so a non-zero count in the reversed case "
+            "is what the comparison above would catch"
+        )
+
+    def test_a_snippet_with_no_encoding_still_raises(self, ts_pack):
+        """The loud error stays for a miss the filters cannot explain."""
+        from tokenizer_analysis.core.input_types import CODE_CORPUS, Corpus
+
+        class _DropsOneProvider(_MockProvider):
+            def get_corpus_data(self, name):
+                data = super().get_corpus_data(name)
+                return {tok: records[:-1] for tok, records in data.items()}
+
+        provider = _DropsOneProvider("tok", _CharTokenizer())
         provider.add_corpus(Corpus(
-            name=CODE_CORPUS, texts=code_texts,
+            name=CODE_CORPUS,
+            texts={"python": ["def add(a, b):\n    return a + b\n",
+                              "total = 12 + 345\n"]},
             source="test code", synthetic=False,
         ))
 
-        with pytest.raises(ValueError, match=r"snippet 2 of 3"):
+        with pytest.raises(ValueError, match="holds no encoding"):
             ASTBoundaryMetrics(provider).compute()
 
 
@@ -3492,7 +3532,7 @@ class TestASTMetricsRefuseAConfigTheRegisteredCorpusWouldOverride:
     registers the corpus they would have built.
     """
 
-    def _provider_with_registered_code(self):
+    def _provider_with_registered_code(self, texts=None):
         from tokenizer_analysis.core.input_providers import RawTokenizationProvider
         from tokenizer_analysis.core.input_types import InputSpecification
 
@@ -3507,7 +3547,7 @@ class TestASTMetricsRefuseAConfigTheRegisteredCorpusWouldOverride:
             "tok": InputSpecification(tokenizer=_Tok(), texts={"eng_Latn": ["hi"]}),
         })
         provider.add_corpus(Corpus(
-            name=CODE_CORPUS, texts={"python": ["x = 1\n"]},
+            name=CODE_CORPUS, texts=texts or {"python": ["x = 1\n"]},
             source="bundled samples", synthetic=True,
         ))
         return provider
@@ -3530,8 +3570,9 @@ class TestASTMetricsRefuseAConfigTheRegisteredCorpusWouldOverride:
         registered corpus moved ast_boundary_alignment.global.count from 4512
         to 7018 on the default configuration.
         """
-        provider = self._provider_with_registered_code()
-        provider.get_corpus(CODE_CORPUS).texts["python"].append("y = 2\n")
+        provider = self._provider_with_registered_code(
+            texts={"python": ["x = 1\n", "y = 2\n"]},
+        )
 
         metrics = ASTBoundaryMetrics(provider, max_snippets_per_lang=1)
         assert metrics.code_loader.get_code_snippets("python") == ["x = 1\n"]
