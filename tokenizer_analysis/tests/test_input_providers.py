@@ -3,7 +3,7 @@
 Prose reaches the metrics through an ``InputProvider``; the code and math
 corpora are loaded and encoded by the metric classes that consume them. These
 tests cover the shared surface that lets all three arrive the same way: a
-``Corpus`` value, a registry on the provider, and ``get_tokenized_data(corpus)``.
+``Corpus`` value, a registry on the provider, and ``get_corpus_data(name)``.
 
 The prose path must be unaffected, so several of these check that the
 no-argument call still returns exactly what it did.
@@ -214,26 +214,36 @@ class TestTheProseCorpusIsUnaffected:
         ]
         assert all(d.metadata["source"] == "raw_tokenization" for d in data["tok"])
 
-    def test_a_corpus_registered_as_prose_does_not_replace_the_prose_data(self):
-        """The prose corpus is served from the provider's own specifications.
+    def test_registering_a_corpus_named_prose_is_refused(self):
+        """One way to reach the prose texts, not two that could disagree.
 
-        Registering one under the name "prose" records its texts and its source
-        for reporting; routing the default call to it instead would change every
-        prose number in the output.
+        The prose corpus is served from the provider's own specifications, so a
+        corpus registered under that name would have recorded a source and a
+        set of texts that nothing reads, while every prose number came from
+        somewhere else. It used to be accepted and then ignored.
         """
         provider = _raw_provider(_CharTokenizer())
-        provider.add_corpus(Corpus(name="prose", texts={"eng_Latn": ["something else"]},
-                                   source="flores", synthetic=False))
+        with pytest.raises(ValueError, match="cannot be registered"):
+            provider.add_corpus(
+                Corpus(name="prose", texts={"eng_Latn": ["something else"]},
+                       source="flores", synthetic=False)
+            )
 
         data = provider.get_tokenized_data()
         assert [d.text for d in data["tok"]] == ["one two", "three four", "eins zwei"]
+
+    def test_asking_get_corpus_data_for_prose_is_refused(self):
+        """Prose does not come from the registry, so this is a caller error."""
+        provider = _raw_provider(_CharTokenizer())
+        with pytest.raises(ValueError, match="not part of the corpus registry"):
+            provider.get_corpus_data("prose")
 
     def test_the_prose_call_still_records_encode_times(self):
         """encoding_speed is published from these, and only the prose loop keeps them."""
         provider = _raw_provider(_CharTokenizer())
         provider.add_corpus(CODE)
         provider.get_tokenized_data()
-        provider.get_tokenized_data("code")
+        provider.get_corpus_data("code")
 
         assert len(provider.encode_times["tok"]) == 3, (
             "one per prose text, and the code corpus must not enter the count"
@@ -247,7 +257,7 @@ class TestEncodingARegisteredCorpus:
         provider = _raw_provider(tokenizer)
         provider.add_corpus(CODE)
 
-        data = provider.get_tokenized_data("code")
+        data = provider.get_corpus_data("code")
 
         assert [d.text for d in data["tok"]] == [
             "let x = 1;", "a = 1", "b = 2", "c = a + b"
@@ -271,9 +281,9 @@ class TestEncodingARegisteredCorpus:
         provider = _raw_provider(tokenizer)
         provider.add_corpus(CODE)
 
-        first = provider.get_tokenized_data("code")
+        first = provider.get_corpus_data("code")
         calls_after_first = len(tokenizer.batch_calls)
-        second = provider.get_tokenized_data("code")
+        second = provider.get_corpus_data("code")
 
         assert second is first
         assert len(tokenizer.batch_calls) == calls_after_first
@@ -291,7 +301,7 @@ class TestEncodingARegisteredCorpus:
         provider = _raw_provider(tokenizer)
         provider.add_corpus(CODE)
 
-        data = provider.get_tokenized_data("code")
+        data = provider.get_corpus_data("code")
 
         assert tokenizer.single_calls == [
             "let x = 1;", "a = 1", "b = 2", "c = a + b"
@@ -302,14 +312,14 @@ class TestEncodingARegisteredCorpus:
         batched.add_corpus(CODE)
         assert [(d.text, d.language, d.tokens, d.offsets) for d in data["tok"]] == [
             (d.text, d.language, d.tokens, d.offsets)
-            for d in batched.get_tokenized_data("code")["tok"]
+            for d in batched.get_corpus_data("code")["tok"]
         ]
 
     def test_a_tokenizer_without_the_batch_api_is_encoded_one_text_at_a_time(self):
         provider = _raw_provider(_NoBatchTokenizer())
         provider.add_corpus(CODE)
 
-        data = provider.get_tokenized_data("code")
+        data = provider.get_corpus_data("code")
 
         assert [d.text for d in data["tok"]] == [
             "let x = 1;", "a = 1", "b = 2", "c = a + b"
@@ -321,7 +331,7 @@ class TestEncodingARegisteredCorpus:
         provider = _raw_provider(_NoOffsetsTokenizer())
         provider.add_corpus(CODE)
 
-        data = provider.get_tokenized_data("code")
+        data = provider.get_corpus_data("code")
 
         assert [d.text for d in data["tok"]] == [
             "let x = 1;", "a = 1", "b = 2", "c = a + b"
@@ -346,7 +356,7 @@ class TestEncodingARegisteredCorpus:
         provider = _raw_provider(tokenizer)
         provider.add_corpus(CODE)
 
-        data = provider.get_tokenized_data("code")
+        data = provider.get_corpus_data("code")
 
         assert tokenizer.single_calls == [
             "let x = 1;", "a = 1", "b = 2", "c = a + b"
@@ -389,7 +399,7 @@ class TestEncodingARegisteredCorpus:
         ))
 
         with pytest.raises(ValueError) as excinfo:
-            provider.get_tokenized_data("code")
+            provider.get_corpus_data("code")
         message = str(excinfo.value)
         assert "2 encodings" in message and "3 'python' texts" in message
         assert "code corpus" in message
@@ -403,14 +413,14 @@ class TestEncodingARegisteredCorpus:
         provider = _pretokenized_provider(_IdsOnlyTokenizer())
         provider.add_corpus(CODE)
 
-        assert provider.get_tokenized_data("code") == {}
+        assert provider.get_corpus_data("code") == {}
         assert [d.text for d in provider.get_tokenized_data()["tok"]] == ["one two"]
 
-    def test_an_unregistered_corpus_name_raises_from_get_tokenized_data(self):
+    def test_an_unregistered_corpus_name_raises_from_get_corpus_data(self):
         provider = _raw_provider(_CharTokenizer())
 
         with pytest.raises(ValueError, match="No corpus named 'code'"):
-            provider.get_tokenized_data("code")
+            provider.get_corpus_data("code")
 
 
 class TestTheDeclaredTokenizerAccessor:
@@ -454,7 +464,7 @@ class TestTheDeclaredTokenizerAccessor:
 
         provider = _NoTokenizers()
         provider.add_corpus(CODE)
-        assert provider.get_tokenized_data("code") == {}
+        assert provider.get_corpus_data("code") == {}
 
 
 class TestMixedSpecificationsAreRefused:
@@ -505,3 +515,45 @@ class TestAZeroTokenEncodingIsAMeasurement:
             TokenizedData(tokenizer_name="", language="eng_Latn", tokens=[1])
         with pytest.raises(ValueError, match="language cannot be empty"):
             TokenizedData(tokenizer_name="tok", language="", tokens=[1])
+
+
+class TestAMetricRefusesArgumentsARegisteredCorpusWouldOverride:
+    """A metric takes its corpus from the registry or from its own arguments.
+
+    When both are supplied the registry used to win and the arguments were
+    dropped without a word, so a caller who passed ``math_data_path`` could be
+    handed numbers measured on a corpus they never named. Both classes below
+    accept those arguments because they can be built directly, without
+    ``UnifiedTokenizerAnalyzer``, which registers the corpora instead.
+    """
+
+    def test_basic_metrics_refuses_code_texts_when_a_code_corpus_is_registered(self):
+        from tokenizer_analysis.metrics.basic import BasicTokenizationMetrics
+
+        provider = _raw_provider(_CharTokenizer())
+        provider.add_corpus(CODE)
+
+        with pytest.raises(ValueError, match="already registered"):
+            BasicTokenizationMetrics(provider, code_texts={"python": ["z = 9"]})
+
+    def test_digit_metrics_refuses_a_math_path_when_a_math_corpus_is_registered(self):
+        from tokenizer_analysis.metrics.math import DigitBoundaryMetrics
+
+        provider = _raw_provider(_CharTokenizer())
+        provider.add_corpus(
+            Corpus(name="math", texts={"math": ["1 + 1 = 2"]},
+                   source="bundled math", synthetic=True)
+        )
+
+        with pytest.raises(ValueError, match="already registered"):
+            DigitBoundaryMetrics(provider, math_data_path="/some/other/math.txt")
+
+    def test_the_registry_is_still_used_when_no_argument_is_passed(self):
+        """The check must not disturb the path the run itself takes."""
+        from tokenizer_analysis.metrics.basic import BasicTokenizationMetrics
+
+        provider = _raw_provider(_CharTokenizer())
+        provider.add_corpus(CODE)
+
+        metrics = BasicTokenizationMetrics(provider)
+        assert metrics._registered_corpus("code") is CODE

@@ -76,8 +76,9 @@ class TokenizedData:
 
 
 #: The corpus every provider serves from its own data rather than from the
-#: registry on ``InputProvider``. ``get_tokenized_data()`` defaults to it, so
-#: every existing call site keeps reading the prose corpus.
+#: registry on ``InputProvider``. ``get_tokenized_data()`` returns it, and both
+#: ``add_corpus`` and ``get_corpus_data`` refuse this name, so there is one way
+#: to reach the prose texts rather than two that could disagree.
 PROSE_CORPUS = "prose"
 
 #: The two corpora the run registers with ``add_corpus``. Both names are also
@@ -88,6 +89,16 @@ CODE_CORPUS = "code"
 #: because the math corpus has no per-language split. The published
 #: ``by_language`` key for it is therefore "math:math".
 MATH_CORPUS = "math"
+
+#: What a provider raises when it cannot hand back a tokenizer object for a
+#: name it lists. ``InputProvider.get_tokenizer`` raises NotImplementedError, a
+#: provider that never declared the method raises AttributeError, and the two
+#: shipped providers raise ValueError or KeyError for a name they do not carry.
+#: Named once because ``_encode_corpus`` here and reconstruction fidelity in
+#: metrics/basic.py both have to decide "can this tokenizer be scored at all",
+#: and they used to answer it with two different catch clauses: this tuple, and
+#: a bare ``except Exception`` that also swallowed genuine defects.
+NO_TOKENIZER_ERRORS = (ValueError, KeyError, AttributeError, NotImplementedError)
 
 #: ``Corpus.source`` for code the caller named with --code-ast-config, as
 #: opposed to the bundled samples. Published as ``by_domain.code.source``,
@@ -111,8 +122,10 @@ class Corpus:
     ``Dict[tokenizer_name, List[TokenizedData]]``.
 
     Attributes:
-        name: what ``get_tokenized_data(corpus=...)`` asks for. "prose",
-            "code" or "math".
+        name: what ``get_corpus_data(name)`` asks for, so "code" or "math".
+            A Corpus is also built for prose when a metric reports on the data
+            it was handed, but that one is never registered and never looked
+            up by name.
         texts: label -> texts. The label is a language for prose, a programming
             language for code, and "math" for math.
         source: where the texts came from. Already published as
@@ -276,15 +289,18 @@ class InputProvider(ABC):
     """Abstract base class for providing tokenized data to analysis pipeline."""
     
     @abstractmethod
-    def get_tokenized_data(self, corpus: str = PROSE_CORPUS) -> Dict[str, List[TokenizedData]]:
+    def get_tokenized_data(self) -> Dict[str, List[TokenizedData]]:
         """
-        Get tokenized data organized by tokenizer name.
+        Get the provider's own prose data, organized by tokenizer name.
 
-        Args:
-            corpus: which corpus to return. Defaults to the prose corpus, which
-                every provider serves from its own data. Any other name is a
-                corpus registered with ``add_corpus``, encoded on demand by
-                ``_encode_corpus``.
+        This method serves only the texts the provider was constructed with.
+        The corpora registered with ``add_corpus`` are read through
+        ``get_corpus_data``, which this ABC implements once for every provider.
+        The two are kept apart because they are produced differently: this one
+        is the subclass's own data, while a registered corpus is encoded by
+        ``_encode_corpus`` here. Taking a corpus name here instead would also
+        have changed this abstract signature, which every subclass outside this
+        package implements.
 
         Returns:
             Dictionary mapping tokenizer names to lists of TokenizedData objects
@@ -337,10 +353,19 @@ class InputProvider(ABC):
         second measured a different corpus from the one the first one reported,
         with nothing in the output saying which corpus produced which number.
 
-        Registering a corpus named "prose" records its texts and its source but
-        does not change what ``get_tokenized_data()`` returns: the prose corpus
-        is served from the provider's own data, not from this registry.
+        The prose corpus cannot be registered. It is served from the provider's
+        own data, so a registered corpus under that name would have recorded a
+        source and a set of texts that nothing reads, while the numbers came
+        from somewhere else.
         """
+        if corpus.name == PROSE_CORPUS:
+            raise ValueError(
+                f"The {PROSE_CORPUS!r} corpus cannot be registered: it is "
+                "served from the provider's own texts, through "
+                "get_tokenized_data(). Registering it here would record a "
+                "source that no metric reads. Register a corpus under its own "
+                "name instead."
+            )
         registry = self._corpus_registry()
         if corpus.name in registry:
             raise ValueError(
@@ -379,6 +404,25 @@ class InputProvider(ABC):
             f"{type(self).__name__} does not supply tokenizer objects, so the "
             "metrics that encode their own corpora cannot run against it."
         )
+
+    def get_corpus_data(self, name: str) -> Dict[str, List[TokenizedData]]:
+        """A registered corpus, encoded with every tokenizer this provider has.
+
+        This is the counterpart to ``get_tokenized_data()`` for the corpora a
+        run registers with ``add_corpus``: code and math. It is concrete, so
+        every provider gets it, including ones written before this registry
+        existed.
+
+        Asking for the prose corpus here is refused rather than served, because
+        prose does not come from the registry.
+        """
+        if name == PROSE_CORPUS:
+            raise ValueError(
+                f"The {PROSE_CORPUS!r} corpus is not part of the corpus "
+                "registry: it is the provider's own data. Call "
+                "get_tokenized_data() for it."
+            )
+        return self._tokenized_corpus(name)
 
     def _tokenized_corpus(self, name: str) -> Dict[str, List[TokenizedData]]:
         """A registered corpus, encoded with every tokenizer, memoized by name.
@@ -438,11 +482,7 @@ class InputProvider(ABC):
         for tok_name in self.get_tokenizer_names():
             try:
                 tokenizer_obj = self.get_tokenizer(tok_name)
-            except (ValueError, KeyError, AttributeError, NotImplementedError) as exc:
-                # NotImplementedError is caught alongside the rest because the
-                # base get_tokenizer above raises it. A provider that does not
-                # implement get_tokenizer raised AttributeError before that
-                # method existed, and that was already caught here.
+            except NO_TOKENIZER_ERRORS as exc:
                 logger.warning(
                     "No tokenizer available for %r (%s); it gets no %s corpus.",
                     tok_name, exc, corpus.name,

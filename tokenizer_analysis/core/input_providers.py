@@ -8,7 +8,7 @@ import logging
 import time
 from .input_types import (
     InputProvider, TokenizedData, InputSpecification,
-    VocabularyProvider, check_batch_pairing, PROSE_CORPUS
+    VocabularyProvider, check_batch_pairing
 )
 
 if TYPE_CHECKING:
@@ -49,15 +49,11 @@ class RawTokenizationProvider(InputProvider):
             if not spec.is_raw_mode:
                 raise ValueError(f"Specification for {name} is not in raw mode")
     
-    def get_tokenized_data(self, corpus: str = PROSE_CORPUS) -> Dict[str, List[TokenizedData]]:
-        """Get tokenized data by tokenizing raw texts.
+    def get_tokenized_data(self) -> Dict[str, List[TokenizedData]]:
+        """Get tokenized data by tokenizing this provider's own raw texts.
 
-        *corpus* defaults to the prose corpus, which is what this provider's
-        own specifications carry. Any other name is a corpus registered with
-        ``add_corpus``, encoded by ``InputProvider._encode_corpus``.
+        Registered corpora are read through ``get_corpus_data``.
         """
-        if corpus != PROSE_CORPUS:
-            return self._tokenized_corpus(corpus)
         if self._tokenized_cache:
             return self._tokenized_cache
         
@@ -232,17 +228,13 @@ class PreTokenizedProvider(InputProvider):
             if not spec.is_pretokenized_mode:
                 raise ValueError(f"Specification for {name} is not in pre-tokenized mode")
     
-    def get_tokenized_data(self, corpus: str = PROSE_CORPUS) -> Dict[str, List[TokenizedData]]:
-        """Get pre-tokenized data.
+    def get_tokenized_data(self) -> Dict[str, List[TokenizedData]]:
+        """Get the pre-tokenized data the specifications carry.
 
-        *corpus* defaults to the prose corpus, which is what the
-        specifications carry. Any other name is a corpus registered with
-        ``add_corpus``; encoding it needs a tokenizer that accepts raw text,
-        which pre-tokenized input does not always supply, so tokenizers
-        without one are left out of the result.
+        Registered corpora are read through ``get_corpus_data``. Encoding one
+        needs a tokenizer that accepts raw text, which pre-tokenized input does
+        not always supply, so tokenizers without one are left out there.
         """
-        if corpus != PROSE_CORPUS:
-            return self._tokenized_corpus(corpus)
         tokenized_data = {}
         
         for tok_name, spec in self.specifications.items():

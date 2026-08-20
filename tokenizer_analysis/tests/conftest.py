@@ -5,7 +5,7 @@ from typing import Dict, List, Optional
 
 import pytest
 from tokenizer_analysis.core.input_types import (
-    PROSE_CORPUS, InputProvider, TokenizedData,
+    InputProvider, TokenizedData,
 )
 
 
@@ -41,9 +41,9 @@ class MockProvider(InputProvider):
     def get_tokenizer(self, name):
         return self._tok
 
-    def get_tokenized_data(self, corpus=PROSE_CORPUS):
-        if corpus != PROSE_CORPUS:
-            return self._tokenized_corpus(corpus)
+    def get_tokenized_data(self):
+        # Prose only. A registered corpus is served by the concrete
+        # InputProvider.get_corpus_data, which this class inherits.
         return {}
 
     def get_vocab_size(self, tokenizer_name):
@@ -60,9 +60,9 @@ class SimpleProvider(InputProvider):
         self._tok_name = tok_name
         self._vocab_size = vocab_size
 
-    def get_tokenized_data(self, corpus: str = PROSE_CORPUS) -> Dict[str, List[TokenizedData]]:
-        if corpus != PROSE_CORPUS:
-            return self._tokenized_corpus(corpus)
+    def get_tokenized_data(self) -> Dict[str, List[TokenizedData]]:
+        # Prose only. A registered corpus is served by the concrete
+        # InputProvider.get_corpus_data, which this class inherits.
         return {}
 
     def get_tokenizer_names(self) -> List[str]:
