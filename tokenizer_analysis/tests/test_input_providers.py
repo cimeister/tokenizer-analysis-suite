@@ -653,3 +653,48 @@ class TestAWrapperThatRaisesFromEncodeWithOffsets:
         data = provider.get_corpus_data("code")
         assert [d.offsets for d in data["tok"]] == [None]
         assert [d.tokens for d in data["tok"]] == [[ord(c) for c in "a = 1"]]
+
+
+class TestAnalyzerRegistrationRollsBackOnFailure:
+    """A refusal on the second add_corpus leaves the provider untouched.
+
+    UnifiedTokenizerAnalyzer registers the code and math corpora together; a
+    refusal on the second must not leave the first behind, because a later
+    construction over the same provider would silently reuse it. Pinned
+    because removing main.py's rollback passed the whole suite
+    (RELEASE_AUDIT Q35.4).
+    """
+
+    def test_a_refused_second_registration_leaves_the_registry_empty(self, tmp_path):
+        from tokenizer_analysis.main import UnifiedTokenizerAnalyzer
+
+        class QuotaProvider(InputProvider):
+            """Accepts one corpus, refuses the second."""
+
+            def get_tokenized_data(self):
+                return {"tok": [TokenizedData(
+                    tokenizer_name="tok", language="en",
+                    tokens=[1, 2, 3], text="abc")]}
+
+            def get_tokenizer_names(self):
+                return ["tok"]
+
+            def get_vocab_size(self, tokenizer_name):
+                return 100
+
+            def get_languages(self, tokenizer_name=None):
+                return ["en"]
+
+            def add_corpus(self, corpus):
+                if len(self._corpus_registry()) >= 1:
+                    raise ValueError(
+                        f"quota reached, refusing {corpus.name!r}")
+                super().add_corpus(corpus)
+
+        provider = QuotaProvider()
+        with pytest.raises(ValueError, match="quota reached"):
+            UnifiedTokenizerAnalyzer(
+                provider, plot_save_dir=str(tmp_path),
+                code_ast_config=None, use_builtin_math_data=True,
+            )
+        assert provider.corpus_names() == []

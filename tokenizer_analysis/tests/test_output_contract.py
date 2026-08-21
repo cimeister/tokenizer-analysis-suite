@@ -1064,3 +1064,63 @@ class TestTheDefaultCodeConfigurationIsAsymmetric:
         languages = sorted(entry.get("per_language") or {})
         assert "python" in languages, languages
         assert len(languages) > 3, languages
+
+
+class TestBaseResultsSemanticsInGroupedAnalysis:
+    """base_results={} means "nothing precomputed"; truthy-without-the-key
+    means "the base run disabled digit metrics".
+
+    The distinction regressed once (the sixth review's base_results fix) and
+    shipped without a test: mutating ``elif base_results`` to
+    ``elif base_results is not None`` in run_grouped_analysis passed the
+    whole suite (RELEASE_AUDIT Q35.4). These two tests are the guard.
+    """
+
+    @pytest.fixture(scope="class")
+    def analyzer(self, tmp_path_factory):
+        from tokenizer_analysis.main import create_analyzer_from_raw_inputs
+        from tokenizer_analysis.config.language_metadata import LanguageMetadata
+
+        cfg = tmp_path_factory.mktemp("grouped") / "langs.json"
+        cfg.write_text(json.dumps({
+            "languages": {
+                "eng_Latn": {"name": "English", "script_family": "Latin",
+                             "resource_level": "high"},
+                "rus_Cyrl": {"name": "Russian", "script_family": "Cyrillic",
+                             "resource_level": "medium"},
+            },
+            "analysis_groups": {"script_family": {"Latin": ["eng_Latn"],
+                                                  "Cyrillic": ["rus_Cyrl"]}},
+        }))
+        return create_analyzer_from_raw_inputs(
+            tokenizer_configs={"bpe": {"class": "huggingface",
+                                       "path": "tokenizers/bpe.json"}},
+            language_texts={
+                "eng_Latn": ["The total was 12 and 345.", "Sum 6789 next."],
+                "rus_Cyrl": ["Line 12 and 345 here.", "Total 6789."],
+            },
+            language_metadata=LanguageMetadata(str(cfg)),
+            plot_save_dir=str(tmp_path_factory.mktemp("plots")),
+            code_ast_config=None,
+        )
+
+    def test_an_empty_dict_means_nothing_precomputed(self, analyzer):
+        groups = analyzer.run_grouped_analysis(
+            group_by=["script_family"], save_plots=False, base_results={},
+            include_reconstruction=False,
+        )
+        latin = groups["script_family"]["Latin"]
+        assert "three_digit_boundary_alignment" in latin
+        assert "numeric_magnitude_consistency" in latin
+        assert "operator_isolation_rate" in latin
+
+    def test_a_base_run_without_digit_metrics_reports_none(self, analyzer):
+        groups = analyzer.run_grouped_analysis(
+            group_by=["script_family"], save_plots=False,
+            base_results={"fertility": {"per_tokenizer": {}}},
+            include_reconstruction=False,
+        )
+        latin = groups["script_family"]["Latin"]
+        assert "three_digit_boundary_alignment" not in latin
+        assert "numeric_magnitude_consistency" not in latin
+        assert "operator_isolation_rate" not in latin

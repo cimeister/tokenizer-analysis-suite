@@ -3584,3 +3584,23 @@ class TestASTMetricsRefuseAConfigTheRegisteredCorpusWouldOverride:
         metrics = ASTBoundaryMetrics(provider)
         assert metrics.code_loader.get_code_snippets("python") == ["x = 1\n"]
         assert metrics._code_corpus.source == "bundled samples"
+
+
+class TestAnEmptyRegisteredCorpusIsRefused:
+    """A registered 'code' corpus holding no texts raises at construction.
+
+    code_corpus_from_texts drops a label whose list is empty, so
+    code_texts={"python": []} registers a corpus with no texts at all.
+    Publishing empty per-tokenizer blocks for it would read as a corpus that
+    scored nothing rather than one that was never there. Pinned because
+    disabling the guard in ASTBoundaryMetrics.__init__ passed the whole
+    suite (RELEASE_AUDIT Q35.4).
+    """
+
+    def test_construction_raises_naming_the_empty_corpus(self):
+        from tokenizer_analysis.loaders.corpora import code_corpus_from_texts
+
+        provider = _MockProvider("tok", MockTokenizer({}))
+        provider.add_corpus(code_corpus_from_texts({"python": []}))
+        with pytest.raises(ValueError, match="holds no texts"):
+            ASTBoundaryMetrics(provider)
