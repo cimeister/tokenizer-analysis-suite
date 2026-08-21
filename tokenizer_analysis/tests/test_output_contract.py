@@ -1124,3 +1124,124 @@ class TestBaseResultsSemanticsInGroupedAnalysis:
         assert "three_digit_boundary_alignment" not in latin
         assert "numeric_magnitude_consistency" not in latin
         assert "operator_isolation_rate" not in latin
+
+
+class TestAGroupBlockCarriesNoWholeCorpusStatistics:
+    """A group block must hold group numbers or nothing, never corpus ones.
+
+    _filter_digit_boundary_results used to copy the base run's summary into
+    every group (byte-identical across groups, pooling the whole corpus) and
+    pass the magnitude scaling fit through unfiltered into the slim results
+    file; _filter_operator_results copied metadata that said "Code and math
+    always run" beside empty blocks; _filter_morphscore_results invented a
+    top-level summary whose counters summed over tokenizers. All four were
+    published by a default --run-grouped-analysis run (RELEASE_AUDIT Q35.2
+    R1/R2).
+    """
+
+    @staticmethod
+    def _analyzer():
+        from tokenizer_analysis.main import UnifiedTokenizerAnalyzer
+        return object.__new__(UnifiedTokenizerAnalyzer)
+
+    def test_the_group_summary_is_recomputed_from_the_group_languages(self):
+        base = {
+            "per_tokenizer": {"bpe": {
+                "overall": {
+                    "eng_Latn": {"mean_f1": 0.9, "mean_precision": 0.8,
+                                 "mean_recall": 0.7, "count": 4},
+                    "arb_Arab": {"mean_f1": 0.1, "mean_precision": 0.2,
+                                 "mean_recall": 0.3, "count": 6},
+                },
+            }},
+            "summary": {"bpe": {"avg_f1": 0.42, "numbers_analyzed": 10,
+                                "languages_analyzed": 2}},
+        }
+        filtered = self._analyzer()._filter_digit_boundary_results(
+            base, ["eng_Latn"]
+        )
+        summary = filtered["summary"]["bpe"]
+        assert summary["avg_f1"] == pytest.approx(0.9)
+        assert summary["numbers_analyzed"] == 4
+        assert summary["languages_analyzed"] == 1
+        assert summary is not base["summary"]["bpe"]
+
+    def test_a_group_with_no_numbers_publishes_no_summary(self):
+        """The math-corpus case: digit metrics measured a corpus that belongs
+        to no language group, so the group reports nothing rather than the
+        whole corpus."""
+        base = {
+            "per_tokenizer": {"bpe": {
+                "overall": {"math": {"mean_f1": 0.6, "count": 627}},
+            }},
+            "summary": {"bpe": {"avg_f1": 0.6, "numbers_analyzed": 627,
+                                "languages_analyzed": 1}},
+        }
+        filtered = self._analyzer()._filter_digit_boundary_results(
+            base, ["eng_Latn"]
+        )
+        assert filtered["summary"] == {}
+
+    def test_the_corpus_scaling_fit_is_not_copied_into_a_group(self):
+        from tokenizer_analysis.metrics.math import magnitude_metadata
+        base = {
+            "per_tokenizer": {"bpe": {
+                "overall": {"eng_Latn": {"mean_fertility": 0.5, "count": 3}},
+                "scaling": {"spearman_rho": -0.59, "per_bucket": {"1": {}}},
+            }},
+            "metadata": magnitude_metadata(),
+        }
+        filtered = self._analyzer()._filter_digit_boundary_results(
+            base, ["eng_Latn"], grouped_metadata=magnitude_metadata(grouped=True)
+        )
+        assert "scaling" not in filtered["per_tokenizer"]["bpe"]
+        assert filtered["metadata"] == magnitude_metadata(grouped=True)
+        assert "does not carry one" in filtered["metadata"]["description"]
+
+    def test_every_bucket_key_survives_filtering(self):
+        base = {"per_tokenizer": {"bpe": {
+            "by_bucket": {"short": {"eng_Latn": {"mean_f1": 1.0, "count": 2}},
+                          "long": {"arb_Arab": {"mean_f1": 0.5, "count": 1}}},
+        }}}
+        filtered = self._analyzer()._filter_digit_boundary_results(
+            base, ["eng_Latn"]
+        )
+        buckets = filtered["per_tokenizer"]["bpe"]["by_bucket"]
+        assert set(buckets) == {"short", "long"}
+        assert buckets["long"] == {}
+
+    def test_the_grouped_operator_metadata_describes_the_filtered_block(self):
+        from tokenizer_analysis.metrics.math import operator_metadata
+        base = {
+            "per_tokenizer": {"bpe": {"by_language": {
+                "eng_Latn": {"isolated": 1, "total": 2,
+                             "compound_ok": 0, "compound_total": 0},
+            }}},
+            "metadata": operator_metadata(include_code_math=True),
+        }
+        filtered = self._analyzer()._filter_operator_results(
+            base, ["eng_Latn"]
+        )
+        description = filtered["metadata"]["description"]
+        assert "always run" not in description
+        assert filtered["metadata"] == operator_metadata(
+            include_code_math=False, filtered=True
+        )
+
+    def test_a_group_gets_no_invented_morphscore_summary(self):
+        row = {"morphscore_recall": 0.5, "morphscore_precision": 0.6,
+               "micro_f1": 0.55, "macro_f1": 0.54, "num_samples": 5}
+        base = {
+            "per_tokenizer": {"bpe": {
+                "per_language": {"eng_Latn": dict(row), "arb_Arab": dict(row)},
+                "summary": {"avg_morphscore_recall": 0.5,
+                            "languages_evaluated": 2, "total_samples": 10},
+            }},
+            "metadata": {"description": "x"},
+        }
+        filtered = self._analyzer()._filter_morphscore_results(
+            base, ["eng_Latn"]
+        )
+        assert "summary" not in filtered
+        per_tok = filtered["per_tokenizer"]["bpe"]["summary"]
+        assert per_tok["languages_evaluated"] == 1

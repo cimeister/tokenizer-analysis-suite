@@ -18,7 +18,9 @@ from .metrics.basic import BasicTokenizationMetrics
 from .metrics.information_theoretic import InformationTheoreticMetrics
 from .metrics.gini import TokenizerGiniMetrics
 from .metrics.morphscore import MorphScoreMetrics
-from .metrics.math import DigitBoundaryMetrics
+from .metrics.math import (
+    DigitBoundaryMetrics, magnitude_metadata, operator_metadata,
+)
 from .metrics.code_ast import ASTBoundaryMetrics
 from .metrics.utf8_integrity import UTF8IntegrityMetrics
 from .metrics.redundancy import merge_redundant_metrics
@@ -518,10 +520,13 @@ class UnifiedTokenizerAnalyzer:
                     group_result['three_digit_boundary_alignment'] = self._filter_digit_boundary_results(
                         base_results['three_digit_boundary_alignment'], group_languages
                     )
-                    # Magnitude consistency uses the same structure as digit boundary
+                    # Magnitude consistency uses the same structure as digit
+                    # boundary, except its metadata promises the scaling fit
+                    # the filter drops, so the grouped variant replaces it.
                     if 'numeric_magnitude_consistency' in base_results:
                         group_result['numeric_magnitude_consistency'] = self._filter_digit_boundary_results(
-                            base_results['numeric_magnitude_consistency'], group_languages
+                            base_results['numeric_magnitude_consistency'], group_languages,
+                            grouped_metadata=magnitude_metadata(grouped=True),
                         )
                     # Operator isolation has its own structure
                     if 'operator_isolation_rate' in base_results:
@@ -579,11 +584,27 @@ class UnifiedTokenizerAnalyzer:
         
         return filtered_data
     
-    def _filter_digit_boundary_results(self, db_results: Dict[str, Any], target_languages: List[str]) -> Dict[str, Any]:
+    def _filter_digit_boundary_results(
+        self, db_results: Dict[str, Any], target_languages: List[str],
+        grouped_metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """Filter digit boundary alignment, entropy, or magnitude results to specified languages.
 
-        Unknown keys (e.g. ``scaling``) are passed through as-is so this
-        method works for magnitude results too.
+        Two things are deliberately NOT copied from the base results, because
+        both pool every language in the run and a group block carrying them
+        published whole-corpus statistics under a group label
+        (RELEASE_AUDIT Q35.2 R1): ``summary`` is re-aggregated from the
+        group's own per-language blocks, and the magnitude ``scaling`` fit is
+        dropped (it cannot be derived from base results for a subset; the
+        per-group recompute path, reached with no base results, publishes a
+        per-group fit). Other unknown keys are passed through, but a key
+        holding a corpus-level aggregate must be added to the drop next to
+        ``scaling``, not passed through.
+
+        *grouped_metadata* replaces the copied metadata when the group block's
+        contract differs from the base run's; the magnitude call site passes
+        ``magnitude_metadata(grouped=True)`` because its base description
+        promises the scaling fit this filter drops.
         """
         filtered: Dict[str, Any] = {
             "per_tokenizer": {},
@@ -605,14 +626,16 @@ class UnifiedTokenizerAnalyzer:
                 if fbd:
                     ftok["by_digit_length"] = fbd
 
-            # Filter by_bucket
+            # Filter by_bucket. Every bucket key the base run had survives,
+            # holding {} when the group has no numbers in it: a group with
+            # short numbers and none long used to lose the "long" key
+            # entirely, so the shape depended on the group's data.
             if "by_bucket" in tok_data:
-                fb: Dict[str, Any] = {}
-                for bucket, lang_dict in tok_data["by_bucket"].items():
-                    flang = {l: d for l, d in lang_dict.items() if l in target_languages}
-                    if flang:
-                        fb[bucket] = flang
-                ftok["by_bucket"] = fb if fb else {"short": {}, "long": {}}
+                ftok["by_bucket"] = {
+                    bucket: {l: d for l, d in lang_dict.items()
+                             if l in target_languages}
+                    for bucket, lang_dict in tok_data["by_bucket"].items()
+                }
 
             # Filter overall
             if "overall" in tok_data:
@@ -628,6 +651,13 @@ class UnifiedTokenizerAnalyzer:
             for key, value in tok_data.items():
                 if key in _LANG_DICT_KEYS or key in ftok:
                     continue
+                if key == "scaling":
+                    # The fit pools every language of the run and cannot be
+                    # derived from base results for a subset. Copying it gave
+                    # every group the whole-corpus rho, cv and linear fit,
+                    # kept by the slim writer, so a default grouped run
+                    # published them under each group label (Q35.2 R1).
+                    continue
                 if isinstance(value, dict) and _LANG_DICT_KEYS & set(value):
                     nested = self._filter_digit_boundary_results(
                         {"per_tokenizer": {tok_name: value}}, target_languages
@@ -639,17 +669,65 @@ class UnifiedTokenizerAnalyzer:
             if ftok:
                 filtered["per_tokenizer"][tok_name] = ftok
 
-        # Copy summary as-is
-        if "summary" in db_results:
-            filtered["summary"] = db_results["summary"]
+        # Summary: re-aggregated from the group's own per-language blocks.
+        # The base run's summary pools every language in the run, so copying
+        # it published the whole-corpus figure, byte-identical in every
+        # group, next to per-language blocks that can be empty (Q35.2 R1).
+        for tok_name, ftok in filtered["per_tokenizer"].items():
+            regrouped = self._regroup_digit_summary(ftok.get("overall", {}))
+            if regrouped is not None:
+                filtered["summary"][tok_name] = regrouped
 
-        # Metadata describes the metric, not the language set, so a group block
-        # keeps it. Without this a grouped result published no aggregation
-        # label and no count unit while the whole-corpus block did.
-        if "metadata" in db_results:
+        # Metadata describes the metric, not the language set, so a group
+        # block keeps it, except where the group contract differs from the
+        # base run's; the caller then supplies the grouped variant.
+        if grouped_metadata is not None:
+            filtered["metadata"] = grouped_metadata
+        elif "metadata" in db_results:
             filtered["metadata"] = db_results["metadata"]
 
         return filtered
+
+    # Per-language mean fields and the summary field each re-aggregates to.
+    # The per-language blocks hold means over that language's numbers plus
+    # the count, so the group's pooled mean is the count-weighted mean of the
+    # per-language means, which is the same pooling the base summary applies
+    # to the whole run. Fields that cannot be derived per group (the scaling
+    # fit's cv/rho/linear terms, avg_uniform_chunk, single_token_frac) are
+    # left out of a group summary rather than copied from the whole corpus.
+    _PER_LANGUAGE_MEAN_TO_SUMMARY = {
+        "mean_f1": "avg_f1",
+        "mean_precision": "avg_precision",
+        "mean_recall": "avg_recall",
+        "mean_fertility": "avg_fertility",
+    }
+
+    @classmethod
+    def _regroup_digit_summary(
+        cls, overall: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        """A group's digit-metric summary from its own per-language blocks.
+
+        Returns None when the group's languages hold no numbers (for example
+        a run whose digit metrics measured a dedicated math corpus, which
+        belongs to no language group); the group then publishes no summary
+        entry rather than the whole-corpus one.
+        """
+        entries = [d for d in overall.values()
+                   if isinstance(d, dict) and d.get("count", 0)]
+        total = sum(d["count"] for d in entries)
+        if not total:
+            return None
+        summary: Dict[str, Any] = {}
+        for lang_field, summary_field in cls._PER_LANGUAGE_MEAN_TO_SUMMARY.items():
+            pairs = [(d[lang_field], d["count"]) for d in entries
+                     if d.get(lang_field) is not None]
+            if pairs:
+                weight = sum(c for _, c in pairs)
+                summary[summary_field] = sum(v * c for v, c in pairs) / weight
+        summary["numbers_analyzed"] = total
+        summary["languages_analyzed"] = len(entries)
+        return summary
 
     def _filter_operator_results(self, op_results: Dict[str, Any], target_languages: List[str]) -> Dict[str, Any]:
         """Filter operator isolation results to specified languages.
@@ -728,20 +806,29 @@ class UnifiedTokenizerAnalyzer:
                     "total_compound_operators": tot_ctot,
                 }
 
-        # Metadata describes the metric, not the language set, so a group block
-        # keeps it.
-        if "metadata" in op_results:
-            filtered["metadata"] = op_results["metadata"]
+        # Not the base run's metadata: that one was built with
+        # include_code_math=True and said "Code and math always run" beside a
+        # group block holding neither and no by_domain (RELEASE_AUDIT Q35.2
+        # R2). The description is single-sourced in metrics/math.py so this
+        # filter and the per-group recompute cannot drift apart.
+        filtered["metadata"] = operator_metadata(
+            include_code_math=False, filtered=True,
+        )
 
         return filtered
 
     def _filter_morphscore_results(self, morphscore_results: Dict[str, Any], target_languages: List[str]) -> Dict[str, Any]:
-        """Filter MorphScore results to include only specified languages and recompute summary statistics."""
+        """Filter MorphScore results to include only specified languages.
+
+        The group block gets the same keys the base block has:
+        ``per_tokenizer`` (with each tokenizer's own ``summary`` recomputed
+        over the group's languages) and ``metadata``. No top-level summary,
+        because MorphScoreMetrics.compute publishes none.
+        """
         import numpy as np
-        
+
         filtered_results = {
             'per_tokenizer': {},
-            'summary': {}
         }
         
         # Filter per-tokenizer results
@@ -801,41 +888,13 @@ class UnifiedTokenizerAnalyzer:
             if filtered_tok_data:
                 filtered_results['per_tokenizer'][tok_name] = filtered_tok_data
         
-        # Recompute global summary based on filtered tokenizer summaries
-        if filtered_results['per_tokenizer']:
-            # Aggregate summary across all tokenizers for the filtered group
-            all_recall_values = []
-            all_precision_values = []
-            all_micro_f1_values = []
-            all_macro_f1_values = []
-            total_langs_evaluated = 0
-            total_samples_all = 0
-            
-            for tok_data in filtered_results['per_tokenizer'].values():
-                if 'summary' in tok_data:
-                    summary = tok_data['summary']
-                    # Use per-tokenizer averages weighted by number of languages
-                    langs_count = summary.get('languages_evaluated', 0)
-                    if langs_count > 0:
-                        all_recall_values.append(summary['avg_morphscore_recall'])
-                        all_precision_values.append(summary['avg_morphscore_precision'])
-                        all_micro_f1_values.append(summary['avg_micro_f1'])
-                        all_macro_f1_values.append(summary['avg_macro_f1'])
-                        total_langs_evaluated += langs_count
-                        total_samples_all += summary.get('total_samples', 0)
-            
-            if all_recall_values:
-                filtered_results['summary'] = {
-                    'avg_morphscore_recall': np.mean(all_recall_values),
-                    'avg_morphscore_precision': np.mean(all_precision_values),
-                    'avg_micro_f1': np.mean(all_micro_f1_values),
-                    'avg_macro_f1': np.mean(all_macro_f1_values),
-                    'total_languages_evaluated': total_langs_evaluated,
-                    'total_samples': total_samples_all,
-                    'avg_morphscore_recall_std_err': np.std(all_recall_values) / np.sqrt(len(all_recall_values)) if len(all_recall_values) > 1 else 0.0,
-                    'avg_morphscore_precision_std_err': np.std(all_precision_values) / np.sqrt(len(all_precision_values)) if len(all_precision_values) > 1 else 0.0
-                }
-        
+        # No top-level summary: MorphScoreMetrics.compute publishes none, so a
+        # group block does not invent one. The one built here averaged
+        # per-tokenizer means and summed languages_evaluated and total_samples
+        # over tokenizers, so a 9-tokenizer group over 5 languages reported
+        # total_languages_evaluated 45, a field no ungrouped block carries
+        # (RELEASE_AUDIT Q35.2 R1).
+
         # Add any metadata
         if 'metadata' in morphscore_results:
             filtered_results['metadata'] = morphscore_results['metadata']

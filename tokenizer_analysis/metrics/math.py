@@ -43,6 +43,78 @@ from ..loaders.corpora import code_corpus_from_texts, resolve_math_corpus
 logger = logging.getLogger(__name__)
 
 
+def operator_metadata(include_code_math: bool = True,
+                      filtered: bool = False) -> Dict[str, Any]:
+    """The published ``operator_isolation_rate`` metadata block.
+
+    One definition, because the description names the domains the block holds
+    and a second copy drifted before: main.py's grouped filter used to copy
+    the whole-corpus metadata, so every group block said "Code and math
+    always run" beside an empty ``per_tokenizer`` and no ``by_domain``
+    (RELEASE_AUDIT Q35.2 R2).
+
+    ``include_code_math=True`` is the whole-corpus run. ``False`` is the
+    per-group recompute, whose block still carries ``by_domain``.
+    ``filtered=True`` is main.py's filter over base results, whose block is
+    re-aggregated from the base run and carries no ``by_domain`` at all.
+    """
+    if filtered:
+        description = (
+            "How often a mathematical operator is a token of its own, "
+            "re-aggregated over this group's prose languages from the base "
+            "run. The code and math domains belong to no language group and "
+            "are not included; prose rows appear only with "
+            "--operator-prose-domain. The corpus-level by_domain split is "
+            "reported once in the top-level results, not per group."
+        )
+    elif include_code_math:
+        description = (
+            "How often a mathematical operator is a token of its own, "
+            "pooled over the domains that ran, with the split kept in "
+            "by_domain. Code and math always run; prose runs only "
+            "with --operator-prose-domain. Read by_domain to see which."
+        )
+    else:
+        description = (
+            "How often a mathematical operator is a token of its own, "
+            "pooled over the domains that ran, with the split kept in "
+            "by_domain. This run covers one group of prose languages, "
+            "so the code and math domains do not run; prose runs only "
+            "with --operator-prose-domain. Read by_domain to see which."
+        )
+    return {
+        "description": description,
+        "aggregation": AGGREGATION_MICRO_POOLED,
+        "count_unit": "operator occurrences",
+    }
+
+
+def magnitude_metadata(grouped: bool = False) -> Dict[str, Any]:
+    """The published ``numeric_magnitude_consistency`` metadata block.
+
+    The grouped variant exists because the ``scaling`` fit pools every
+    language of the run, so main.py's grouped filter drops it from a group
+    block rather than copying the whole-corpus fit under a group label, and
+    the description has to stop promising it (RELEASE_AUDIT Q35.2 R1).
+    """
+    if grouped:
+        description = (
+            "Tokens per digit, re-aggregated over this group's languages "
+            "from the base run. The scaling fit pools every language of the "
+            "run, so a group block does not carry one; it is in the "
+            "top-level results."
+        )
+    else:
+        description = (
+            "Tokens per digit, and how it scales with the number of digits."
+        )
+    return {
+        "description": description,
+        "aggregation": AGGREGATION_MICRO_POOLED,
+        "count_unit": "numbers",
+    }
+
+
 def _relative_to_package(path: Any) -> Any:
     """Render a path inside the installed package relative to it.
 
@@ -1415,14 +1487,10 @@ class DigitBoundaryMetrics(BaseMetrics):
         results: Dict[str, Any] = {
             "per_tokenizer": {},
             "summary": {},
-            "metadata": {
-                "description": (
-                    "Tokens per digit, and how it scales with the number of "
-                    "digits."
-                ),
-                "aggregation": AGGREGATION_MICRO_POOLED,
-                "count_unit": "numbers",
-            },
+            # Single-sourced in magnitude_metadata so main.py's grouped
+            # filter, which drops the corpus-level scaling fit, can publish
+            # the description that matches its block.
+            "metadata": magnitude_metadata(),
         }
 
         for tok_name in self.tokenizer_names:
@@ -1522,26 +1590,12 @@ class DigitBoundaryMetrics(BaseMetrics):
         results: Dict[str, Any] = {
             "per_tokenizer": {},
             "summary": {},
-            "metadata": {
-                # Conditional for the same reason reconstruction fidelity's
-                # per_domain string is: a grouped run has no code or math
-                # domain, and a fixed string described domains the block cannot
-                # hold.
-                "description": (
-                    "How often a mathematical operator is a token of its own, "
-                    "pooled over the domains that ran, with the split kept in "
-                    "by_domain. Code and math always run; prose runs only "
-                    "with --operator-prose-domain. Read by_domain to see which."
-                    if include_code_math else
-                    "How often a mathematical operator is a token of its own, "
-                    "pooled over the domains that ran, with the split kept in "
-                    "by_domain. This run covers one group of prose languages, "
-                    "so the code and math domains do not run; prose runs only "
-                    "with --operator-prose-domain. Read by_domain to see which."
-                ),
-                "aggregation": AGGREGATION_MICRO_POOLED,
-                "count_unit": "operator occurrences",
-            },
+            # Conditional for the same reason reconstruction fidelity's
+            # per_domain string is: a grouped run has no code or math domain,
+            # and a fixed string described domains the block cannot hold.
+            # Single-sourced in operator_metadata so main.py's grouped filter
+            # publishes the same contract rather than a copy that can drift.
+            "metadata": operator_metadata(include_code_math),
         }
 
         for tok_name in self.tokenizer_names:
