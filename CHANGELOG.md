@@ -171,6 +171,44 @@ conflicting flags.
 
 ## Releases
 
+- **Unreleased** A language group's digit-metric blocks report the group or
+  nothing, never the whole corpus. `--run-grouped-analysis` copied the base
+  run's `three_digit_boundary_alignment` and `numeric_magnitude_consistency`
+  `summary` into every group byte-identically, and passed the magnitude
+  `scaling` fit (Spearman rho, cv, linear fit, pooled over every language of
+  the run) through unfiltered into the slim `analysis_results.json` of every
+  group. On the grouped golden configuration (`--use-builtin-math-data`,
+  where the digit metrics measure the math corpus, which belongs to no
+  group), every group published the identical 627-number whole-corpus
+  summary and fit next to an empty `per_language`. A group `summary` is now
+  re-aggregated from the group's own per-language blocks (count-weighted
+  means of per-language means), is empty when the group's languages hold no
+  numbers, and leaves out fields that cannot be derived per group
+  (`avg_uniform_chunk`, `single_token_frac`, and the scaling-derived
+  `cv_of_mean_fertility`/`spearman_rho`/`linear_*`); `scaling` is dropped
+  from filtered group blocks, while the per-group recompute path (no base
+  results) still publishes a per-group fit. A filtered `by_bucket` keeps
+  every bucket key, holding `{}` where the group has no such numbers,
+  instead of losing `long` when only short numbers survived the filter.
+  Grouped `operator_isolation_rate` metadata now describes the filtered
+  block (re-aggregated prose, no `by_domain`) instead of repeating the
+  whole-corpus "Code and math always run" description beside an empty
+  block; grouped `numeric_magnitude_consistency` metadata stops promising
+  the dropped fit. Both descriptions are single-sourced in
+  `metrics/math.py` (`operator_metadata`, `magnitude_metadata`). Grouped
+  MorphScore blocks no longer carry an invented top-level `summary` whose
+  `total_languages_evaluated` summed over tokenizers (9 tokenizers over 5
+  languages reported 45). **Values under `grouped_analysis` change and are
+  not comparable with an earlier grouped run**: on the grouped golden
+  configuration, 1200 leaves removed (920 scaling, 280 summary), 20 empty
+  summary leaves added, 20 metadata descriptions changed, all inside
+  `grouped_analysis`. Nothing outside it moves: the four ungrouped golden
+  configurations are identical leaf for leaf, and the ungrouped
+  `operator_isolation_rate` description is byte-identical.
+  `benchmarks/open_source/analysis_results.json` contains no
+  `grouped_analysis`, so the published benchmark is unaffected. All four
+  copy defects predate this branch (RELEASE_AUDIT Q35.2 R1/R2).
+
 - **Unreleased** `grouped_analysis.<grouping>.<group>.reconstruction_fidelity`
   reports the group's prose languages only. It reported the whole code and math
   corpus inside every group, because the group selects prose languages while the
