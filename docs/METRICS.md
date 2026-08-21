@@ -81,10 +81,10 @@ titles carry an arrow for a subset of these metrics and none for the rest; see
 Two more top-level keys are not metrics. `run_metadata` is described under
 [Provenance](OUTPUT.md#provenance). `grouped_analysis` is written when
 `--run-grouped-analysis` is passed, and holds the metrics recomputed within each
-language group: `grouped_analysis.<group type>.<group name>.<metric>`. In
-`analysis_results.json` it is written as an empty object, because the slimming
-step matches only per-metric shapes; the populated version is in
-`analysis_results_full.json`, so pass `--save-full-results` to read it.
+language group: `grouped_analysis.<group type>.<group name>.<metric>`. Both
+output files carry it: `analysis_results.json` holds the slimmed per-group
+blocks (the slimming step recurses into `grouped_analysis` with the same
+per-metric rules), and `analysis_results_full.json` the full ones.
 
 ## Metrics reported under another metric
 

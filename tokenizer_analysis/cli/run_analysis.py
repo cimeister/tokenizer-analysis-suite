@@ -294,11 +294,13 @@ def _pool_per_language(per_language: dict, fields) -> dict:
     ``count`` of those items. Pooling ``sum(mean_l * count_l) / sum(count_l)``
     recovers the mean over every item in every language, which is what
     ``micro_pooled`` names. It is derived from the per-language block rather
-    than read from the metric's ``summary``, because ``summary`` is computed
-    over the whole corpus and is copied unchanged into each language group, so
-    a grouped result would otherwise publish a global belonging to the full
-    language set. Reordering the same additions leaves a relative difference
-    around 1e-16 against the value ``summary`` reports.
+    than read from the metric's ``summary``. Historically that was because the
+    grouped filter copied the whole-corpus ``summary`` into each group; the
+    filter now re-aggregates ``summary`` per group by the same weighting
+    (``UnifiedTokenizerAnalyzer._regroup_digit_summary``), and this stays
+    per-language-derived so the slim file does not depend on which path
+    produced the block. Reordering the same additions leaves a relative
+    difference around 1e-16 against the value ``summary`` reports.
 
     Every field is null and ``count`` is 0 when no language contributed an
     item, so an empty measurement is not published as a measured zero.

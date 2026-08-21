@@ -595,10 +595,13 @@ class UnifiedTokenizerAnalyzer:
         published whole-corpus statistics under a group label
         (RELEASE_AUDIT Q35.2 R1): ``summary`` is re-aggregated from the
         group's own per-language blocks, and the magnitude ``scaling`` fit is
-        dropped (it cannot be derived from base results for a subset; the
-        per-group recompute path, reached with no base results, publishes a
-        per-group fit). Other unknown keys are passed through, but a key
-        holding a corpus-level aggregate must be added to the drop next to
+        dropped (this filter reads only the per-language ``overall`` blocks,
+        which do not determine the fit). The recompute path, reached with no
+        base results, computes ``scaling`` from whatever the digit metrics
+        measure: the group's own data, unless a dedicated math corpus is
+        configured, in which case it is the whole math corpus (RELEASE_AUDIT
+        Q35.2 R12). Other unknown keys are passed through, but a key holding
+        a corpus-level aggregate must be added to the drop next to
         ``scaling``, not passed through.
 
         *grouped_metadata* replaces the copied metadata when the group block's
@@ -629,7 +632,10 @@ class UnifiedTokenizerAnalyzer:
             # Filter by_bucket. Every bucket key the base run had survives,
             # holding {} when the group has no numbers in it: a group with
             # short numbers and none long used to lose the "long" key
-            # entirely, so the shape depended on the group's data.
+            # entirely, so the shape depended on the group's data. by_bucket
+            # has a fixed two-key schema, which is why its keys are held;
+            # by_digit_length's keys are the digit lengths that occurred, so
+            # that block stays data-dependent and can be absent for a group.
             if "by_bucket" in tok_data:
                 ftok["by_bucket"] = {
                     bucket: {l: d for l, d in lang_dict.items()
@@ -692,9 +698,12 @@ class UnifiedTokenizerAnalyzer:
     # The per-language blocks hold means over that language's numbers plus
     # the count, so the group's pooled mean is the count-weighted mean of the
     # per-language means, which is the same pooling the base summary applies
-    # to the whole run. Fields that cannot be derived per group (the scaling
-    # fit's cv/rho/linear terms, avg_uniform_chunk, single_token_frac) are
-    # left out of a group summary rather than copied from the whole corpus.
+    # to the whole run. Summary fields that are not determined by the
+    # per-language overall blocks this helper reads (the scaling fit's
+    # cv/rho/linear terms, avg_uniform_chunk, single_token_frac) are left
+    # out of a group summary rather than copied from the whole corpus; most
+    # could be derived from the by_digit_length blocks if a group ever needs
+    # them.
     _PER_LANGUAGE_MEAN_TO_SUMMARY = {
         "mean_f1": "avg_f1",
         "mean_precision": "avg_precision",
@@ -820,10 +829,12 @@ class UnifiedTokenizerAnalyzer:
     def _filter_morphscore_results(self, morphscore_results: Dict[str, Any], target_languages: List[str]) -> Dict[str, Any]:
         """Filter MorphScore results to include only specified languages.
 
-        The group block gets the same keys the base block has:
-        ``per_tokenizer`` (with each tokenizer's own ``summary`` recomputed
-        over the group's languages) and ``metadata``. No top-level summary,
-        because MorphScoreMetrics.compute publishes none.
+        The group block gets the same top-level keys the base block has:
+        ``per_tokenizer`` and ``metadata``, with no top-level summary,
+        because MorphScoreMetrics.compute publishes none. A tokenizer's own
+        ``summary`` is recomputed over the group's languages when it has any
+        evaluated language in the group, and is absent otherwise, so a
+        per-tokenizer entry can hold fewer keys than the base run's.
         """
         import numpy as np
 

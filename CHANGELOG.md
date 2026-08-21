@@ -183,11 +183,14 @@ conflicting flags.
   summary and fit next to an empty `per_language`. A group `summary` is now
   re-aggregated from the group's own per-language blocks (count-weighted
   means of per-language means), is empty when the group's languages hold no
-  numbers, and leaves out fields that cannot be derived per group
-  (`avg_uniform_chunk`, `single_token_frac`, and the scaling-derived
-  `cv_of_mean_fertility`/`spearman_rho`/`linear_*`); `scaling` is dropped
-  from filtered group blocks, while the per-group recompute path (no base
-  results) still publishes a per-group fit. A filtered `by_bucket` keeps
+  numbers, and leaves out the summary fields the per-language blocks it
+  reads do not determine (`avg_uniform_chunk`, `single_token_frac`, and the
+  scaling-derived `cv_of_mean_fertility`/`spearman_rho`/`linear_*`);
+  `scaling` is dropped from filtered group blocks. The recompute path (no
+  base results) computes the fit from whatever the digit metrics measure:
+  the group's own data, unless a dedicated math corpus is configured, in
+  which case the fit covers the whole math corpus in every group, a
+  pre-existing behavior recorded as R12. A filtered `by_bucket` keeps
   every bucket key, holding `{}` where the group has no such numbers,
   instead of losing `long` when only short numbers survived the filter.
   Grouped `operator_isolation_rate` metadata now describes the filtered
@@ -202,7 +205,7 @@ conflicting flags.
   not comparable with an earlier grouped run**: on the grouped golden
   configuration, 1200 leaves removed (920 scaling, 280 summary), 20 empty
   summary leaves added, 20 metadata descriptions changed, all inside
-  `grouped_analysis`. Nothing outside it moves: the four ungrouped golden
+  `grouped_analysis`. Nothing outside it moves: the ungrouped golden
   configurations are identical leaf for leaf, and the ungrouped
   `operator_isolation_rate` description is byte-identical.
   `benchmarks/open_source/analysis_results.json` contains no
@@ -301,10 +304,11 @@ conflicting flags.
   the encode call and raised out of the whole analysis. No wrapper in this
   package is both: `PreTokenizedDataTokenizer` reports `can_decode()` false
   and was already skipped one check earlier, so this affects a caller
-  supplying a tokenizer object of their own. Its prose numbers are then
-  averaged over a different document set than tokenizers that also have code
-  and math domains; the missing `code_*`/`math` keys under `per_domain` are
-  the marker. Reconstruction fidelity also no longer skips a tokenizer whose
+  supplying a tokenizer object of their own. Its per-domain prose numbers
+  are unchanged, but its `overall` and `global` figures, which pool every
+  domain, then cover a different document set than tokenizers that also
+  have code and math domains; the missing `code_*`/`math` keys under
+  `per_domain` are the marker. Reconstruction fidelity also no longer skips a tokenizer whose
   loader raised an unrelated error; it caught every exception and reported
   the run as a success with that tokenizer absent.
 

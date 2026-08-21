@@ -1166,6 +1166,20 @@ class TestAGroupBlockCarriesNoWholeCorpusStatistics:
         assert summary["languages_analyzed"] == 1
         assert summary is not base["summary"]["bpe"]
 
+        # Both languages: the re-aggregation must weight each language's mean
+        # by its count, reproducing the base run's pooled figure. An
+        # unweighted mean of the two per-language means (0.5) passed every
+        # other test in the suite, so this assertion is the one guard on the
+        # weighting.
+        both = self._analyzer()._filter_digit_boundary_results(
+            base, ["eng_Latn", "arb_Arab"]
+        )["summary"]["bpe"]
+        assert both["avg_f1"] == pytest.approx(0.42)
+        assert both["avg_precision"] == pytest.approx(0.44)
+        assert both["avg_recall"] == pytest.approx(0.46)
+        assert both["numbers_analyzed"] == 10
+        assert both["languages_analyzed"] == 2
+
     def test_a_group_with_no_numbers_publishes_no_summary(self):
         """The math-corpus case: digit metrics measured a corpus that belongs
         to no language group, so the group reports nothing rather than the

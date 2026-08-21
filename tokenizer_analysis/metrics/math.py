@@ -54,7 +54,8 @@ def operator_metadata(include_code_math: bool = True,
     (RELEASE_AUDIT Q35.2 R2).
 
     ``include_code_math=True`` is the whole-corpus run. ``False`` is the
-    per-group recompute, whose block still carries ``by_domain``.
+    per-group recompute, whose block carries ``by_domain`` holding the
+    domains that ran, which is empty at the default settings (prose off).
     ``filtered=True`` is main.py's filter over base results, whose block is
     re-aggregated from the base run and carries no ``by_domain`` at all.
     """
@@ -80,7 +81,8 @@ def operator_metadata(include_code_math: bool = True,
             "pooled over the domains that ran, with the split kept in "
             "by_domain. This run covers one group of prose languages, "
             "so the code and math domains do not run; prose runs only "
-            "with --operator-prose-domain. Read by_domain to see which."
+            "with --operator-prose-domain. by_domain holds the domains "
+            "that ran, and is empty when prose is off."
         )
     return {
         "description": description,
