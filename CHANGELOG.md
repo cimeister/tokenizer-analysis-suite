@@ -214,13 +214,16 @@ conflicting flags.
   finds the corpora the first registered, is passed no arguments, and reuses
   them.
 
-  **Breaking**: `DigitBoundaryMetrics` and `ASTBoundaryMetrics` raise `TypeError`
-  against a provider that does not implement `add_corpus`, when they have to
-  build a corpus themselves. A duck-typed provider that satisfied 1.0.3 needs
-  the corpus registry, which subclassing `InputProvider` supplies. This is the
-  one case where the statement above, that an existing subclass needs no change,
-  does not hold: it holds for a subclass, and not for an unrelated class that
-  merely implemented the same method names.
+  **Breaking**: `DigitBoundaryMetrics` raises `TypeError` against a provider
+  that does not implement `add_corpus`, when it has to build a corpus itself,
+  because it registers what it builds. `ASTBoundaryMetrics` does not raise:
+  it never registers a corpus, so a corpus it builds itself stays in its own
+  loader and no registry is needed. A duck-typed provider that satisfied 1.0.3
+  therefore needs the corpus registry only for `DigitBoundaryMetrics`, which
+  subclassing `InputProvider` supplies. This is the one case where the
+  statement above, that an existing subclass needs no change, does not hold:
+  it holds for a subclass, and not for an unrelated class that merely
+  implemented the same method names.
 
   `BasicTokenizationMetrics`, `DigitBoundaryMetrics` and `ASTBoundaryMetrics`
   raise when given corpus arguments while a corpus of that name is registered
@@ -254,15 +257,18 @@ conflicting flags.
   complete with a degraded encoding now fails, naming the tokenizer, the corpus,
   the label and the original exception.
 
-  Reconstruction fidelity skips a tokenizer that decodes but cannot encode raw
-  text, with a logged warning, when the run has code or math texts to encode.
-  It reached the encode call and raised out of the whole analysis. No wrapper
-  in this package is both: `PreTokenizedDataTokenizer` reports `can_decode()`
-  false and was already skipped one check earlier, so this affects a caller
-  supplying a tokenizer object of their own. Reconstruction fidelity also no
-  longer skips a tokenizer whose loader raised an unrelated error; it caught
-  every exception and reported the run as a success with that tokenizer
-  absent.
+  A tokenizer that decodes but cannot encode raw text keeps its prose domains
+  in reconstruction fidelity and loses only the code and math domains, with a
+  logged warning, when the run has code or math texts to encode. It reached
+  the encode call and raised out of the whole analysis. No wrapper in this
+  package is both: `PreTokenizedDataTokenizer` reports `can_decode()` false
+  and was already skipped one check earlier, so this affects a caller
+  supplying a tokenizer object of their own. Its prose numbers are then
+  averaged over a different document set than tokenizers that also have code
+  and math domains; the missing `code_*`/`math` keys under `per_domain` are
+  the marker. Reconstruction fidelity also no longer skips a tokenizer whose
+  loader raised an unrelated error; it caught every exception and reported
+  the run as a success with that tokenizer absent.
 
   `--max-code-file-chars` drops a code snippet that truncation leaves
   whitespace-only, counted per language in
