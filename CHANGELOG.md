@@ -171,7 +171,7 @@ conflicting flags.
 
 ## Releases
 
-- **Unreleased** A language group's digit-metric blocks report the group or
+- **1.1.0** A language group's digit-metric blocks report the group or
   nothing, never the whole corpus. `--run-grouped-analysis` copied the base
   run's `three_digit_boundary_alignment` and `numeric_magnitude_consistency`
   `summary` into every group byte-identically, and passed the magnitude
@@ -212,7 +212,7 @@ conflicting flags.
   `grouped_analysis`, so the published benchmark is unaffected. All four
   copy defects predate this branch (RELEASE_AUDIT Q35.2 R1/R2).
 
-- **Unreleased** `grouped_analysis.<grouping>.<group>.reconstruction_fidelity`
+- **1.1.0** `grouped_analysis.<grouping>.<group>.reconstruction_fidelity`
   reports the group's prose languages only. It reported the whole code and math
   corpus inside every group, because the group selects prose languages while the
   code and math loop ran unconditionally. On the bundled demo the Arabic script
@@ -224,7 +224,7 @@ conflicting flags.
   4883 leaves compared, none changed. `benchmarks/open_source/analysis_results.json`
   contains no `grouped_analysis`, so the published benchmark is unaffected.
 
-- **Unreleased** The code and math corpora are read from disk once per run and
+- **1.1.0** The code and math corpora are read from disk once per run and
   encoded once per tokenizer. They were read twice and encoded three times, by
   `BasicTokenizationMetrics`, `DigitBoundaryMetrics` and `ASTBoundaryMetrics`
   separately. No metric value changes: `analysis_results_full.json` is identical
