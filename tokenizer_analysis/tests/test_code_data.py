@@ -101,3 +101,93 @@ class TestMaxSnippetCharsTruncationDropsWhitespaceOnlyResult:
 
         assert loader.get_code_snippets("python") == ["x = 1     "]
         assert loader.dropped_whitespace_only_counts == {}
+
+
+class TestTheFileCapCountsSnippetsThatSurviveTruncation:
+    """The file cap is applied to what survives, not to what was opened.
+
+    A file that ``max_snippet_chars`` truncates to whitespace is dropped, so
+    it must not also occupy one of the ``max_snippets_per_lang`` slots while
+    a readable candidate goes unread. Before this, the walk stopped as soon
+    as it had read *cap* files and the whitespace-only drop ran afterward, so
+    a language could finish under its cap with candidates still on disk.
+    """
+
+    def test_a_file_truncated_to_whitespace_does_not_consume_a_cap_slot(
+        self, tmp_path,
+    ):
+        lang_dir = tmp_path / "python"
+        lang_dir.mkdir()
+        # Sorted order matters: the walk reads a.py first.
+        (lang_dir / "a.py").write_text("\n" * 500 + "def g(y):\n    return y\n")
+        (lang_dir / "b.py").write_text("def h(z):\n    return z + 1\n")
+
+        loader = CodeDataLoader(
+            {"python": str(lang_dir)}, max_snippets_per_lang=1, max_snippet_chars=400,
+        )
+        loader.load_all()
+
+        assert loader.get_code_snippets("python") == ["def h(z):\n    return z + 1"]
+        assert loader.dropped_whitespace_only_counts == {"python": 1}
+
+    def test_the_cap_still_stops_the_walk_once_enough_snippets_survive(
+        self, tmp_path,
+    ):
+        """The fix must not turn the cap into "read everything".
+
+        Two readable files under a cap of 1 still yield one snippet, and the
+        second is counted as dropped rather than read.
+        """
+        lang_dir = tmp_path / "python"
+        lang_dir.mkdir()
+        (lang_dir / "a.py").write_text("def g(y):\n    return y\n")
+        (lang_dir / "b.py").write_text("def h(z):\n    return z + 1\n")
+
+        loader = CodeDataLoader({"python": str(lang_dir)}, max_snippets_per_lang=1)
+        loader.load_all()
+
+        assert loader.get_code_snippets("python") == ["def g(y):\n    return y"]
+        assert loader.dropped_file_counts == {"python": 1}
+
+
+class TestTheResolvedCorpusCarriesWhatTheCapsRemoved:
+    """resolve_code_corpus builds a loader and discards it.
+
+    The counters that record what the caps did lived only on that loader, so
+    nothing downstream could reach them: ASTBoundaryMetrics.max_snippet_chars
+    reported the loader default rather than the value its corpus was actually
+    truncated with, and dropped_file_counts was always empty in a pipeline
+    run whatever the caps did.
+    """
+
+    def test_the_caps_and_their_counters_survive_on_the_corpus(self, tmp_path):
+        from tokenizer_analysis.loaders.corpora import resolve_code_corpus
+
+        lang_dir = tmp_path / "python"
+        lang_dir.mkdir()
+        (lang_dir / "a.py").write_text("def a():\n    return " + "1" * 500 + "\n")
+        (lang_dir / "b.py").write_text("def b():\n    return 2\n")
+
+        corpus = resolve_code_corpus(
+            {"python": str(lang_dir)}, max_snippets_per_lang=1, max_snippet_chars=40,
+        )
+
+        assert corpus.caps is not None
+        assert corpus.caps.max_snippet_chars == 40
+        assert corpus.caps.max_snippets_per_lang == 1
+        assert corpus.caps.truncated_char_counts == {"python": 480}
+        assert corpus.caps.dropped_file_counts == {"python": 1}
+
+    def test_a_corpus_built_with_no_cap_records_that_too(self, tmp_path):
+        """None would be indistinguishable from "nobody recorded it"."""
+        from tokenizer_analysis.loaders.corpora import resolve_code_corpus
+
+        lang_dir = tmp_path / "python"
+        lang_dir.mkdir()
+        (lang_dir / "a.py").write_text("def a():\n    return 1\n")
+
+        corpus = resolve_code_corpus({"python": str(lang_dir)})
+
+        assert corpus.caps is not None
+        assert corpus.caps.max_snippet_chars == 0
+        assert corpus.caps.truncated_char_counts == {}

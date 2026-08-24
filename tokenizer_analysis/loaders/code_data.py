@@ -209,12 +209,18 @@ class CodeDataLoader:
 
         The caps are not accounted for the same way. Every file that is
         read is read in full, and :attr:`max_snippet_chars` is applied to the
-        text afterward, so ``truncated_char_counts`` is the exact number of
+        text as it is read, so ``truncated_char_counts`` is the exact number of
         characters the ``s[:char_cap]`` slice itself discarded, whether or not
-        the resulting snippet is later dropped for being whitespace-only (see
+        the resulting snippet is then dropped for being whitespace-only (see
         below). :attr:`max_snippets_per_lang` is not applied only afterward:
         the directory branch below ``continue``s mid-walk once the cap is
         reached, counting the remaining files as found without reading them.
+        The two caps are ordered: the character cap and its whitespace-only
+        drop run first, per snippet, so the file cap counts only snippets that
+        survived. A file truncation reduces to whitespace therefore does not
+        occupy a slot, and the walk goes on to the next candidate. It used to
+        run the other way, and a language could finish below its cap with
+        readable files still unread.
         ``dropped_file_counts`` therefore counts candidate paths that were
         never opened, not snippets that were built and thrown away. A path
         that would have read as empty, or whose every line fails strict UTF-8
@@ -228,8 +234,8 @@ class CodeDataLoader:
         whitespace, when the kept prefix falls entirely inside deep
         indentation or a run of blank lines. ``_read_file`` and
         ``_read_parquet`` both already refuse to hand back a whitespace-only
-        result; this rechecks after truncation for the same reason and drops
-        the snippet rather than letting a blank string reach
+        result; ``keep`` below rechecks after truncation for the same reason
+        and drops the snippet rather than letting a blank string reach
         ``code_snippets``. Only the emptiness check is shared with those two
         paths. The truncated text itself is left exactly as ``s[:char_cap]``
         produced it: rstripping it here would change 4 of the 23 snippets the
@@ -251,29 +257,59 @@ class CodeDataLoader:
         snippets: List[str] = []
         candidates_found = 0
         candidates_attempted = 0
+        truncated_chars = 0
+        truncated_snippets = 0
+        dropped_whitespace_only = 0
+
+        def keep(text: str) -> None:
+            """Truncate *text*, drop it if that leaves whitespace, else keep it.
+
+            One definition for all three branches below, and applied as each
+            snippet is read rather than in a pass afterward. Order matters for
+            the file cap: a file that truncation reduces to whitespace is
+            dropped, so it must not occupy one of the max_snippets_per_lang
+            slots while a readable candidate goes unread. It used to, and a
+            language could finish under its cap with files still on disk.
+            """
+            nonlocal truncated_chars, truncated_snippets, dropped_whitespace_only
+            if char_cap_active and len(text) > char_cap:
+                truncated_chars += len(text) - char_cap
+                truncated_snippets += 1
+                text = text[:char_cap]
+                # Only a truncated snippet can come out whitespace-only:
+                # _read_file and _read_parquet both refuse blank content, so a
+                # snippet that was not cut is non-blank already. Testing every
+                # snippet would have counted such a drop under a message naming
+                # a truncation that did not happen.
+                if not text.strip():
+                    dropped_whitespace_only += 1
+                    return
+            snippets.append(text)
 
         if os.path.isfile(path):
             if path.endswith(".parquet"):
-                snippets.extend(self._read_parquet(path))
-                candidates_found = candidates_attempted = len(snippets)
+                rows = self._read_parquet(path)
+                candidates_found = candidates_attempted = len(rows)
+                for row in rows:
+                    keep(row)
             else:
                 candidates_found = candidates_attempted = 1
                 text = self._read_file(path)
                 if text:
-                    snippets.append(text)
+                    keep(text)
         elif os.path.isdir(path):
             extensions = self._LANG_EXTENSIONS.get(lang, [])
             for ext in extensions:
                 for fpath in sorted(glob.glob(os.path.join(path, "**", f"*{ext}"), recursive=True)):
                     candidates_found += 1
                     if cap_active and existing + len(snippets) >= cap:
-                        # Already have enough to reach the cap: count the
-                        # file as found but do not read it.
+                        # Already have enough surviving snippets to reach the
+                        # cap: count the file as found but do not read it.
                         continue
                     candidates_attempted += 1
                     text = self._read_file(fpath)
                     if text:
-                        snippets.append(text)
+                        keep(text)
 
         # Apply the file-count cap: only keep enough to reach the limit.
         # candidates_found > candidates_attempted already accounts for files
@@ -282,44 +318,9 @@ class CodeDataLoader:
         # no early stop, so any excess only shows up here.
         dropped_files = candidates_found - candidates_attempted
         if cap_active and existing + len(snippets) > cap:
-            keep = max(cap - existing, 0)
-            dropped_files += len(snippets) - keep
-            snippets = snippets[:keep]
-
-        # What the file cap kept, before the whitespace-only drop below. The
-        # warning about the file cap reports this rather than the final count,
-        # which would attribute a truncation drop to the file cap.
-        kept_before_whitespace_drop = len(snippets)
-
-        # Truncate oversized snippets and total the characters that costs.
-        # A truncated snippet that comes out whitespace-only (e.g. char_cap
-        # characters of leading indentation or blank lines) is dropped
-        # rather than kept as a blank string, matching the whitespace-only
-        # check _read_file and _read_parquet already apply on their paths.
-        # The kept text is not otherwise altered: see the docstring on why
-        # this does not rstrip the truncated prefix.
-        truncated_chars = 0
-        truncated_snippets = 0
-        dropped_whitespace_only = 0
-        if char_cap_active:
-            capped_snippets: List[str] = []
-            for s in snippets:
-                if len(s) > char_cap:
-                    truncated_chars += len(s) - char_cap
-                    truncated_snippets += 1
-                    capped = s[:char_cap]
-                    # Only a truncated snippet can come out whitespace-only:
-                    # _read_file and _read_parquet both refuse blank content, so
-                    # a snippet that was not cut is non-blank already. Testing
-                    # every snippet would have counted such a drop under a
-                    # message naming a truncation that did not happen.
-                    if not capped.strip():
-                        dropped_whitespace_only += 1
-                        continue
-                else:
-                    capped = s
-                capped_snippets.append(capped)
-            snippets = capped_snippets
+            keep_n = max(cap - existing, 0)
+            dropped_files += len(snippets) - keep_n
+            snippets = snippets[:keep_n]
 
         if dropped_files > 0:
             self.dropped_file_counts[lang] = (
@@ -327,10 +328,11 @@ class CodeDataLoader:
             )
             logger.warning(
                 "%s: max_snippets_per_lang=%d dropped %d file(s) found under "
-                "%s (%d of %d found were within the cap; the whitespace-only "
-                "line below, if any, reports what was dropped after that).",
+                "%s (%d of %d found were kept; a file that truncation left "
+                "whitespace-only was dropped before it counted toward the cap, "
+                "and is reported on the whitespace-only line below).",
                 lang, cap, dropped_files, path,
-                existing + kept_before_whitespace_drop, candidates_found,
+                existing + len(snippets), candidates_found,
             )
         if truncated_chars > 0:
             self.truncated_char_counts[lang] = (

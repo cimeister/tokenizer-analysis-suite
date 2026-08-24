@@ -144,6 +144,44 @@ def corpus_size(texts: 'Mapping[str, Sequence[str]]') -> Dict[str, Any]:
 
 
 @dataclass(frozen=True)
+class CorpusCaps:
+    """What the file and character caps did while a corpus was built.
+
+    Carried on the Corpus rather than on the loader that produced it, because
+    the loader is not the common shape. ``resolve_code_corpus`` builds one on
+    the real-files branch and discards it; the synthetic branch builds no
+    loader at all. Both branches produce a Corpus, so that is where the
+    provenance goes, and ``ASTBoundaryMetrics`` can report the truncation its
+    corpus actually received instead of the loader default it was constructed
+    with.
+
+    Attributes:
+        max_snippets_per_lang: the file cap in force, 0 for no cap.
+        max_snippet_chars: the character cap in force, 0 for no cap. This is
+            the value the texts were truncated with, not a value a caller
+            asked for and nothing honoured.
+        dropped_file_counts: label -> candidate files the file cap skipped.
+        truncated_char_counts: label -> characters the character cap removed.
+        dropped_whitespace_only_counts: label -> snippets dropped because
+            truncation left them whitespace-only.
+    """
+
+    max_snippets_per_lang: int
+    max_snippet_chars: int
+    dropped_file_counts: Mapping[str, int]
+    truncated_char_counts: Mapping[str, int]
+    dropped_whitespace_only_counts: Mapping[str, int]
+
+    def __post_init__(self):
+        """Freeze the three count mappings, for the reason Corpus freezes texts."""
+        for field in ("dropped_file_counts", "truncated_char_counts",
+                      "dropped_whitespace_only_counts"):
+            object.__setattr__(
+                self, field, MappingProxyType(dict(getattr(self, field)))
+            )
+
+
+@dataclass(frozen=True)
 class Corpus:
     """A named set of labelled texts, encoded once per tokenizer.
 
@@ -173,6 +211,11 @@ class Corpus:
             ``--code-ast-config`` the AST metric runs on synthetic code while
             reconstruction fidelity gets no code domain at all, and a reader
             cannot tell a synthetic domain from a real one without it.
+        caps: a ``CorpusCaps`` recording what the file and character caps
+            removed, or None when no cap was applied. The loader that did the
+            work is built and discarded inside ``resolve_code_corpus``, so
+            without this the counters were unreachable from the corpus every
+            metric actually reads.
     """
 
     name: str
@@ -182,6 +225,10 @@ class Corpus:
     texts: Mapping[str, Tuple[str, ...]]
     source: str
     synthetic: bool
+    #: What the caps did while these texts were built, or None for a corpus
+    #: no cap was applied to. Defaulted so the many call sites that build a
+    #: Corpus by hand, tests included, are unaffected.
+    caps: Optional['CorpusCaps'] = None
 
     def __post_init__(self):
         """Freeze *texts*, so ``frozen=True`` means what it says.

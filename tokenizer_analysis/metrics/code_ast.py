@@ -330,7 +330,10 @@ class ASTBoundaryMetrics(BaseMetrics):
         # takes effect only inside CodeDataLoader.load_all, which the registered
         # branch never calls, and get_code_snippets applies the snippet cap
         # alone. Accepting it meant self.max_snippet_chars read back the value
-        # the caller passed while every snippet stayed full length.
+        # the caller passed while every snippet stayed full length. The value
+        # the registered corpus was truncated with is read off Corpus.caps
+        # below instead, which is a fact about the corpus rather than a request
+        # this metric cannot honour.
         self._code_corpus = self._corpus_or_refuse_arguments(
             CODE_CORPUS,
             # code_config is not None, not bool(): {} is a request for the
@@ -383,6 +386,22 @@ class ASTBoundaryMetrics(BaseMetrics):
             self.code_loader.code_snippets.update(
                 {lang: list(texts) for lang, texts in self._code_corpus.texts.items()}
             )
+            # What the caps did to this corpus, taken from the corpus itself.
+            # The loader that applied them was built and discarded inside
+            # resolve_code_corpus, so the one constructed above has the
+            # defaults: self.max_snippet_chars reported 0 and the three
+            # counters reported {} however much a cap had removed. A corpus
+            # built by hand carries no caps and is left alone, because
+            # inventing zeros for it would say a cap ran and removed nothing.
+            caps = self._code_corpus.caps
+            if caps is not None:
+                self.max_snippet_chars = caps.max_snippet_chars
+                self.code_loader.max_snippet_chars = caps.max_snippet_chars
+                self.code_loader.dropped_file_counts = dict(caps.dropped_file_counts)
+                self.code_loader.truncated_char_counts = dict(caps.truncated_char_counts)
+                self.code_loader.dropped_whitespace_only_counts = dict(
+                    caps.dropped_whitespace_only_counts
+                )
             # A registered corpus with no texts is refused rather than scored.
             # The synthetic fallback below is reachable only when nothing was
             # registered, so an empty registered corpus used to leave this

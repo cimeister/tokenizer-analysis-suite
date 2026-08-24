@@ -17,12 +17,23 @@ import logging
 from typing import Dict, List, Optional
 
 from ..core.input_types import (
-    CODE_CORPUS, CODE_DATASET_SOURCE, MATH_CORPUS, Corpus,
+    CODE_CORPUS, CODE_DATASET_SOURCE, MATH_CORPUS, Corpus, CorpusCaps,
 )
 from ..utils.text_utils import load_math_data, BUILTIN_MATH_SAMPLES_PATH
 from .code_data import CodeDataLoader
 
 logger = logging.getLogger(__name__)
+
+
+def _caps_of(loader: CodeDataLoader) -> CorpusCaps:
+    """The cap provenance of a corpus this loader built."""
+    return CorpusCaps(
+        max_snippets_per_lang=loader.max_snippets_per_lang,
+        max_snippet_chars=loader.max_snippet_chars,
+        dropped_file_counts=loader.dropped_file_counts,
+        truncated_char_counts=loader.truncated_char_counts,
+        dropped_whitespace_only_counts=loader.dropped_whitespace_only_counts,
+    )
 
 
 def synthetic_code_corpus() -> Corpus:
@@ -107,6 +118,12 @@ def resolve_code_corpus(
         texts=loader.code_snippets,
         source=CODE_DATASET_SOURCE,
         synthetic=False,
+        # The loader is local to this function and is discarded on return, so
+        # what the caps removed is copied onto the corpus. Without it
+        # ASTBoundaryMetrics reported the loader default for max_snippet_chars
+        # rather than the value these texts were truncated with, and the three
+        # counters were empty in every pipeline run whatever the caps did.
+        caps=_caps_of(loader),
     )
 
 

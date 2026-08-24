@@ -3577,6 +3577,46 @@ class TestASTMetricsRefuseAConfigTheRegisteredCorpusWouldOverride:
         metrics = ASTBoundaryMetrics(provider, max_snippets_per_lang=1)
         assert metrics.code_loader.get_code_snippets("python") == ["x = 1\n"]
 
+    def test_the_metric_reports_the_truncation_its_corpus_actually_got(self):
+        """max_snippet_chars read back the loader default, not the real value.
+
+        The loader that applied the caps is built and discarded inside
+        resolve_code_corpus, so this metric constructed a second loader with
+        no caps and reported its default. A reader of
+        ASTBoundaryMetrics.max_snippet_chars, or of the three cap counters on
+        code_loader, saw 0 and {} however much the caps had removed.
+        """
+        from tokenizer_analysis.core.input_types import CorpusCaps
+
+        provider = self._provider_with_registered_code()
+        corpus = provider.get_corpus(CODE_CORPUS)
+        provider._corpora[CODE_CORPUS] = Corpus(
+            name=CODE_CORPUS, texts=dict(corpus.texts), source=corpus.source,
+            synthetic=corpus.synthetic,
+            caps=CorpusCaps(
+                max_snippets_per_lang=2, max_snippet_chars=400,
+                dropped_file_counts={"python": 3},
+                truncated_char_counts={"python": 1200},
+                dropped_whitespace_only_counts={"python": 1},
+            ),
+        )
+
+        metrics = ASTBoundaryMetrics(provider)
+
+        assert metrics.max_snippet_chars == 400
+        assert metrics.code_loader.dropped_file_counts == {"python": 3}
+        assert metrics.code_loader.truncated_char_counts == {"python": 1200}
+        assert metrics.code_loader.dropped_whitespace_only_counts == {"python": 1}
+
+    def test_a_corpus_with_no_cap_record_leaves_the_loader_defaults(self):
+        """A hand-built corpus carries no caps, and must not be misreported."""
+        provider = self._provider_with_registered_code()
+
+        metrics = ASTBoundaryMetrics(provider)
+
+        assert metrics.max_snippet_chars == 0
+        assert metrics.code_loader.dropped_file_counts == {}
+
     def test_no_arguments_reads_the_registered_corpus(self):
         """The path UnifiedTokenizerAnalyzer takes."""
         provider = self._provider_with_registered_code()
