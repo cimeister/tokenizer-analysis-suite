@@ -242,22 +242,23 @@ class PreTokenizedProvider(InputProvider):
             validated_data = []
             for data in spec.tokenized_data:
                 if data.tokenizer_name != tok_name:
-                    logger.warning(
-                        f"Tokenizer name mismatch: expected {tok_name}, "
-                        f"got {data.tokenizer_name}. Correcting..."
+                    # Refused, not relabelled. This used to copy the record
+                    # under the key's name at warning level, and every metric
+                    # then scored one tokenizer's ids under another's name.
+                    # Both name-agreement validators downstream read this
+                    # method's output, so they saw the corrected name and
+                    # nothing could catch the mismatch; only an id above the
+                    # declared vocabulary size tripped anything at all.
+                    # Which of the two names is wrong is not knowable here, so
+                    # the error names both and leaves the choice to the caller.
+                    raise ValueError(
+                        f"The pre-tokenized data under key {tok_name!r} holds a "
+                        f"{data.language!r} record labelled {data.tokenizer_name!r}. "
+                        "Scoring it would report one tokenizer's ids under the "
+                        "other's name. Correct the dump, or key it by the name "
+                        "its records already carry."
                     )
-                    # Create corrected copy
-                    corrected_data = TokenizedData(
-                        tokenizer_name=tok_name,
-                        language=data.language,
-                        tokens=data.tokens,
-                        text=data.text,
-                        offsets=data.offsets,
-                        metadata=data.metadata
-                    )
-                    validated_data.append(corrected_data)
-                else:
-                    validated_data.append(data)
+                validated_data.append(data)
             
             tokenized_data[tok_name] = validated_data
         

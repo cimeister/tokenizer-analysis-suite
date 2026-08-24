@@ -171,6 +171,22 @@ conflicting flags.
 
 ## Releases
 
+- **Unreleased** `PreTokenizedProvider` refuses a record whose
+  `tokenizer_name` disagrees with the key it is filed under, naming both. It
+  copied the record under the key's name at warning level, and every metric
+  then scored one tokenizer's ids under another's name. Both name-agreement
+  validators read the corrected output, so nothing downstream could catch it.
+  Reachable through `--tokenized-data-file`; a dump that loaded with a warning
+  now aborts.
+
+- **Unreleased** `by_domain.<domain>.corpus` counts only texts the metrics
+  scored. `corpus_size` applied no blank filter while every scored path filters
+  on `text and text.strip()`, so a corpus holding a whitespace-only text
+  published one text more than any metric read, in the block whose purpose is
+  to say what a number was measured on. The AST metrics also refuse a corpus
+  whose every label holds an empty list, which passed the previous
+  empty-corpus guard because the dict itself was non-empty.
+
 - **Unreleased** `reconstruction_fidelity` publishes `decode_failures` per
   domain, in `overall` and in `summary`, and logs one line per failure naming
   the tokenizer, the domain and the text. A text whose `decode()` returns

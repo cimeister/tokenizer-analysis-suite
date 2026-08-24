@@ -705,3 +705,49 @@ class TestAnalyzerRegistrationRollsBackOnFailure:
                 code_ast_config=None, use_builtin_math_data=True,
             )
         assert provider.corpus_names() == []
+
+
+class TestAForeignRecordIsRefusedRatherThanRelabelled:
+    """PreTokenizedProvider copied a record whose tokenizer_name disagreed
+    with its dict key under the key's name, at warning level, and every metric
+    then scored one tokenizer's ids under another's name.
+
+    Both name-agreement validators read the post-correction output, so nothing
+    downstream could catch it; only an id above the declared vocab size tripped
+    anything. Reachable through --tokenized-data-file.
+    """
+
+    @staticmethod
+    def _spec(rows):
+        from tokenizer_analysis.core.input_types import InputSpecification
+
+        class _Tok:
+            def can_encode(self): return False
+            def get_vocab_size(self): return 100
+
+        return InputSpecification(tokenizer=_Tok(), tokenized_data=rows)
+
+    def test_a_mismatched_name_aborts_and_names_both(self):
+        from tokenizer_analysis.core.input_providers import PreTokenizedProvider
+        from tokenizer_analysis.core.input_types import TokenizedData
+
+        rows = [TokenizedData(tokenizer_name="other_tok", language="eng_Latn",
+                              tokens=[1, 2], text="hi")]
+        provider = PreTokenizedProvider({"declared_tok": self._spec(rows)})
+
+        with pytest.raises(ValueError) as exc:
+            provider.get_tokenized_data()
+        message = str(exc.value)
+        assert "declared_tok" in message and "other_tok" in message, message
+
+    def test_matching_records_are_untouched(self):
+        """The benign half: the ordinary path must not become an error."""
+        from tokenizer_analysis.core.input_providers import PreTokenizedProvider
+        from tokenizer_analysis.core.input_types import TokenizedData
+
+        rows = [TokenizedData(tokenizer_name="declared_tok", language="eng_Latn",
+                              tokens=[1, 2], text="hi")]
+        provider = PreTokenizedProvider({"declared_tok": self._spec(rows)})
+
+        out = provider.get_tokenized_data()
+        assert [r.tokenizer_name for r in out["declared_tok"]] == ["declared_tok"]
