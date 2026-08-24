@@ -925,6 +925,53 @@ class TestWhitespaceFidelity:
         )
 
 
+class TestReconstructionRatesArePublishedNullWhenTheyHaveNoDenominator:
+    """docs/OUTPUT.md: a value that could not be computed is null, never a
+    stand-in. Four rates in this block carried one: exact_match_rate and
+    mean_cer 0.0, unk_token_rate 0.0, whitespace_fidelity 1.0. No golden
+    configuration reaches a zero denominator, so this is the only guard.
+    """
+
+    def test_a_text_with_no_whitespace_publishes_null_not_one(self):
+        """1.0 said "every whitespace character survived" about a text that
+        had none, and the two cases were indistinguishable from the field.
+        """
+        tok_name = "mock_tok"
+        tok = _MockDecodableTokenizer(
+            encode_fn=lambda t: [1, 2, 3],
+            decode_fn=lambda ids: "abc",
+        )
+        provider = _MockDecodableProvider(tok_name, tok)
+        metrics = BasicTokenizationMetrics(provider)
+
+        td = {tok_name: [_make_td(tok_name, "abc", [1, 2, 3])]}
+        results = metrics.compute_reconstruction_fidelity_analysis(td)
+        overall = results["reconstruction_fidelity"]["per_tokenizer"][tok_name]["overall"]
+
+        assert overall["whitespace_fidelity"] is None
+        assert overall["indentation_fidelity"] is None
+        assert overall["tab_fidelity"] is None
+        assert overall["newline_fidelity"] is None
+        # The rates that do have a denominator are unaffected.
+        assert overall["exact_match_rate"] == pytest.approx(1.0)
+
+    def test_whitespace_present_still_publishes_a_number(self):
+        """The benign half: null must mean "no denominator", not "always null"."""
+        tok_name = "mock_tok"
+        tok = _MockDecodableTokenizer(
+            encode_fn=lambda t: [1, 2, 3],
+            decode_fn=lambda ids: "a b",
+        )
+        provider = _MockDecodableProvider(tok_name, tok)
+        metrics = BasicTokenizationMetrics(provider)
+
+        td = {tok_name: [_make_td(tok_name, "a b", [1, 2, 3])]}
+        results = metrics.compute_reconstruction_fidelity_analysis(td)
+        overall = results["reconstruction_fidelity"]["per_tokenizer"][tok_name]["overall"]
+
+        assert overall["whitespace_fidelity"] == pytest.approx(1.0)
+
+
 class TestTheStructuralWhitespaceSubRates:
     """Indentation, newlines and tabs, reported beside the roll-up.
 
