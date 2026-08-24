@@ -2,7 +2,6 @@
 Basic tokenization metrics using unified TokenizedData interface.
 """
 
-from bisect import bisect_left
 from typing import Dict, List, Any, Optional, Tuple, Mapping, Sequence
 from collections import defaultdict
 import logging

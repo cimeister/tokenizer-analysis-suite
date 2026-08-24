@@ -37,8 +37,8 @@ Every flag `tokenizer-analysis` accepts.
 | `--no-code-ast` | Skip `ast_boundary_alignment`, `identifier_fragmentation` and `indentation_consistency`, including their synthetic-code fallback. The `code` domain of `operator_isolation_rate` still runs |
 | `--operator-prose-domain` | Score the main corpus as a `prose` domain of `operator_isolation_rate`. Off by default: an operator is a code construct, and the pattern matches a hyphen, a slash and an exclamation mark |
 | `--code-ast-config FILE` | JSON mapping languages to code paths for AST analysis |
-| `--max-code-files-per-lang N` | Cap on code files loaded per language from `--code-ast-config` paths (default: 0, no cap) |
-| `--max-code-file-chars N` | Truncate each loaded code file to this many characters before it reaches the code metrics (default: 0, no cap) |
+| `--max-code-files-per-lang N` | Cap on code files per language. Applies to `--code-ast-config` paths and, since 1.2.0, to the bundled samples used when no code config is given, so the AST metrics and the operator and digit metrics score the same texts (default: 0, no cap) |
+| `--max-code-file-chars N` | Truncate each loaded code file to this many characters before it reaches the code metrics. Refused with a warning for the bundled samples, where truncation leaves unparsable fragments and there is no I/O to bound (default: 0, no cap) |
 | `--no-utf8-integrity` | Skip `utf8_token_integrity` |
 | `--morphscore` | Enable MorphScore with default settings |
 | `--morphscore-config FILE` | Custom MorphScore configuration |

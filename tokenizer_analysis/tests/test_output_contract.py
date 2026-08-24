@@ -1261,6 +1261,60 @@ class TestAGroupBlockCarriesNoWholeCorpusStatistics:
         assert per_tok["languages_evaluated"] == 1
 
 
+def _FERTILITY_METADATA():
+    """fertility's published metadata, without needing a corpus."""
+    from tokenizer_analysis.metrics.basic import BasicTokenizationMetrics
+    from tokenizer_analysis.core.input_types import InputSpecification
+    from tokenizer_analysis.core.input_providers import RawTokenizationProvider
+
+    class _T:
+        def can_encode(self): return True
+        def encode(self, t): return [1]
+        def encode_batch_with_offsets(self, ts): return [([1], [(0, 1)]) for _ in ts]
+        def encode_with_offsets(self, t): return [1], [(0, 1)]
+        def get_vocab_size(self): return 10
+
+    p = RawTokenizationProvider({"t": InputSpecification(tokenizer=_T(), texts={"eng_Latn": ["a"]})})
+    m = BasicTokenizationMetrics(p)
+    return m.compute_fertility_analysis(p.get_tokenized_data())["fertility"]["metadata"]
+
+
+def _TOKEN_LENGTH_METADATA():
+    from tokenizer_analysis.metrics.basic import BasicTokenizationMetrics
+    from tokenizer_analysis.core.input_types import InputSpecification
+    from tokenizer_analysis.core.input_providers import RawTokenizationProvider
+
+    class _T:
+        def can_encode(self): return True
+        def encode(self, t): return [1]
+        def encode_batch_with_offsets(self, ts): return [([1], [(0, 1)]) for _ in ts]
+        def encode_with_offsets(self, t): return [1], [(0, 1)]
+        def get_vocab_size(self): return 10
+
+    p = RawTokenizationProvider({"t": InputSpecification(tokenizer=_T(), texts={"eng_Latn": ["a"]})})
+    m = BasicTokenizationMetrics(p)
+    return m.compute_token_length_analysis(p.get_tokenized_data())["token_length"]["metadata"]
+
+
+def _DIGIT_METRIC_METADATA():
+    """The two digit blocks' metadata, straight from the builders.
+
+    Read from the built results rather than from the metadata helpers, so a
+    builder that stops calling its helper is caught too.
+    """
+    from tokenizer_analysis.metrics.math import DigitBoundaryMetrics
+    # object.__new__: both builders read only their argument, and a real
+    # construction would need a provider and a corpus for a metadata read.
+    inst = object.__new__(DigitBoundaryMetrics)
+    inst.tokenizer_names = []
+    align = DigitBoundaryMetrics._build_alignment_results(inst, {})
+    mag = DigitBoundaryMetrics._build_magnitude_results(inst, {})
+    return {
+        "three_digit_boundary_alignment": align["metadata"],
+        "numeric_magnitude_consistency": mag["metadata"],
+    }
+
+
 class TestTheAggregationLabelNamesWhatTheGlobalBlockComputes:
     """A label saying micro_pooled over a mean of per-item ratios is a wrong
     number in the metadata: docs/OUTPUT.md invites a consumer to re-derive the
@@ -1271,6 +1325,41 @@ class TestTheAggregationLabelNamesWhatTheGlobalBlockComputes:
     AGGREGATION_LABELS, so adding a fifth member makes both the right and the
     wrong label pass for every metric.
     """
+
+    def test_every_mean_of_ratios_metric_declares_it(self):
+        """The plan's named mutation for this item is "leave one of the four
+        labelled micro_pooled", and until this test the whole suite stayed
+        green with three_digit_boundary_alignment mislabelled: nothing
+        asserted its aggregation at all.
+
+        A label assertion is the floor, not the ceiling. It catches the
+        relabel-three-miss-one error, which is the one the plan predicted,
+        because the two digit metrics come from one helper and one
+        accumulator. The value tests in test_basic.py carry the heavier
+        claim that the label names what is computed.
+        """
+        from tokenizer_analysis.constants import (
+            AGGREGATION_MEAN_OF_RATIOS, AGGREGATION_MICRO_POOLED,
+        )
+        from tokenizer_analysis.metrics.basic import BasicTokenizationMetrics
+        from tokenizer_analysis.metrics.math import (
+            DigitBoundaryMetrics, magnitude_metadata, operator_metadata,
+        )
+
+        declared = {}
+        for name, block in _DIGIT_METRIC_METADATA().items():
+            declared[name] = block["aggregation"]
+        declared["fertility"] = _FERTILITY_METADATA()["aggregation"]
+        declared["token_length"] = _TOKEN_LENGTH_METADATA()["aggregation"]
+
+        assert declared == {
+            "three_digit_boundary_alignment": AGGREGATION_MEAN_OF_RATIOS,
+            "numeric_magnitude_consistency": AGGREGATION_MEAN_OF_RATIOS,
+            "fertility": AGGREGATION_MEAN_OF_RATIOS,
+            "token_length": AGGREGATION_MEAN_OF_RATIOS,
+        }, declared
+        # The operator rate really is pooled: isolated over total.
+        assert operator_metadata()["aggregation"] == AGGREGATION_MICRO_POOLED
 
     def test_the_two_digit_metrics_built_by_one_helper_agree(self):
         """Relabelling one and missing the other is the plausible error:

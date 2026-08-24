@@ -992,14 +992,33 @@ class UnifiedTokenizerAnalyzer:
                 for tok_name in self.tokenizer_names:
                     if tok_name in summary:
                         s = summary[tok_name]
-                        em = s.get('exact_match_rate') or 0.0
-                        cer = s.get('mean_cer')
-                        unk = s.get('unk_token_rate') or 0.0
-                        ws = s.get('whitespace_fidelity')
+                        # `or 0.0` printed the stand-in default that the null
+                        # contract removed, so a domain where every decode
+                        # failed showed EM=0.000 rather than saying nothing was
+                        # measured. SKIP is reserved for the CER budget, which
+                        # is a different reason for a null and is what
+                        # docs/METRICS.md defines it as; n/a is no denominator.
+                        skipped = bool(s.get('cer_skipped'))
+
+                        def _rate(value, places):
+                            if value is not None:
+                                return f"{value:.{places}f}"
+                            return "SKIP" if skipped else "n/a"
+
                         n = s.get('texts_analyzed', 0)
-                        cer_str = f"{cer:.4f}" if cer is not None else "SKIP"
-                        ws_str = f"{ws:.3f}" if ws is not None else "SKIP"
-                        print(f"{tok_name:20}: EM={em:.3f}  CER={cer_str}  UNK={unk:.4f}  WS={ws_str}  ({n} texts)")
+                        failures = s.get('decode_failures', 0)
+                        line = (
+                            f"{tok_name:20}: EM={_rate(s.get('exact_match_rate'), 3)}"
+                            f"  CER={_rate(s.get('mean_cer'), 4)}"
+                            f"  UNK={_rate(s.get('unk_token_rate'), 4)}"
+                            f"  WS={_rate(s.get('whitespace_fidelity'), 3)}"
+                            f"  ({n} texts)"
+                        )
+                        if failures:
+                            # Otherwise every rate above is over survivors with
+                            # nothing on the line saying texts were dropped.
+                            line += f"  [{failures} decode failure(s)]"
+                        print(line)
 
         print("\n" + "="*60)
     

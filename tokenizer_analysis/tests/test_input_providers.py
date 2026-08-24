@@ -873,3 +873,49 @@ class TestSmallerLibraryPathDefects:
         })
         assert provider.get_languages("tok") == ["arb_Arab", "eng_Latn", "zho_Hans"]
         assert provider.get_languages() == ["arb_Arab", "eng_Latn", "zho_Hans"]
+
+
+class TestTheBatchPathChecksItsIdsToo:
+    """The per-text path checked `ids is None` long before the batch path
+    existed. The batch check was added with the aborts and had no test: the
+    whole block could be deleted with 153 tests still green.
+    """
+
+    def test_none_ids_from_the_batch_method_abort(self):
+        from tokenizer_analysis.core.input_providers import RawTokenizationProvider
+        from tokenizer_analysis.core.input_types import InputSpecification
+
+        class _Tok:
+            def can_encode(self): return True
+            def encode(self, t): return [1, 2]
+            def encode_with_offsets(self, t): return [1, 2], [(0, 1), (1, 2)]
+            def encode_batch_with_offsets(self, texts):
+                return [(None, [(0, 1)]) for _ in texts]
+            def get_vocab_size(self): return 100
+
+        provider = RawTokenizationProvider({
+            "tok": InputSpecification(tokenizer=_Tok(), texts={"eng_Latn": ["hi"]}),
+        })
+        provider.add_corpus(CODE)
+        with pytest.raises(RuntimeError) as exc:
+            provider.get_corpus_data("code")
+        message = str(exc.value)
+        assert "tok" in message and "code" in message, message
+
+    def test_a_working_batch_method_is_unaffected(self):
+        from tokenizer_analysis.core.input_providers import RawTokenizationProvider
+        from tokenizer_analysis.core.input_types import InputSpecification
+
+        class _Tok:
+            def can_encode(self): return True
+            def encode(self, t): return [1, 2]
+            def encode_with_offsets(self, t): return [1, 2], [(0, 1), (1, 2)]
+            def encode_batch_with_offsets(self, texts):
+                return [self.encode_with_offsets(t) for t in texts]
+            def get_vocab_size(self): return 100
+
+        provider = RawTokenizationProvider({
+            "tok": InputSpecification(tokenizer=_Tok(), texts={"eng_Latn": ["hi"]}),
+        })
+        provider.add_corpus(CODE)
+        assert provider.get_corpus_data("code")["tok"]

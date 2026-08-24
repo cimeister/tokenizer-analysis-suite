@@ -109,7 +109,14 @@ records the merge and its evidence under `metadata.merged_metrics`.
   or lines) divided by total tokens across the corpus.
 - **Fertility** (`fertility`): tokens per word or per character, as a mean of
   per-document ratios (`aggregation: mean_of_ratios`), so a long document counts
-  the same as a short one.
+  the same as a short one. A document the tokenizer encodes to zero tokens is
+  excluded and counted separately in `zero_token_documents`, published per
+  tokenizer and per language: its ratio is a defined 0 that would drag the mean
+  down with nothing in the output saying a document had vanished. `count` is
+  therefore the documents that produced at least one token, and re-deriving the
+  pooled weighting needs `count + zero_token_documents`. `token_length`,
+  `avg_tokens_per_line` and `compression_rate` exclude the same documents and
+  publish no such count.
 - **Token length** (`token_length`): mean token size in bytes and in characters.
   This is a mean of per-document ratios, where `compression_rate` is a ratio of
   totals, so the two differ on short documents.

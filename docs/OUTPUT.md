@@ -59,7 +59,7 @@ over the whole file rather than a sample:
   `token_length` and `encoding_speed` have one that duplicates a block they
   already publish, because an exception in the schema costs a reader more than a
   duplicated number does.
-- `metadata.aggregation` names which average `global` reports, one of four
+- `metadata.aggregation` names which average `global` reports, one of five
   labels. See [Aggregation labels](#aggregation-labels) below.
 - Every `per_language` entry includes a `count`, in the unit named by
   `metadata.count_unit`, so a consumer can re-derive the other weighting.

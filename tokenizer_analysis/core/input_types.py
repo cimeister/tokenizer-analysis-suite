@@ -397,8 +397,10 @@ class InputSpecification:
         """Get list of languages in this specification."""
         if self.is_raw_mode:
             return list(self.texts.keys())
-        else:
-            return list(set(td.language for td in self.tokenized_data))
+        # sorted, for the reason PreTokenizedProvider.get_languages is: set
+        # order made the language order hash-dependent between runs of one
+        # dump. Same defect, same file family, missed by that sweep.
+        return sorted({td.language for td in self.tokenized_data})
     
     def get_vocab_size(self) -> int:
         """Get vocabulary size, from whichever source this specification carries.
@@ -662,7 +664,6 @@ class InputProvider(ABC):
             encode_batch = getattr(tokenizer_obj, "encode_batch_with_offsets", None)
             encode_offsets = getattr(tokenizer_obj, "encode_with_offsets", None)
             items: List[TokenizedData] = []
-            warned_no_batch = False
             for lang, texts in corpus.texts.items():
                 usable = [text for text in texts if text and text.strip()]
                 if not usable:
