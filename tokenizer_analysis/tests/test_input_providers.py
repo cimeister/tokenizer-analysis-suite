@@ -812,3 +812,64 @@ class TestEncodeCorpusAbortsRatherThanReEncodingSilently:
         data = provider.get_corpus_data("code")
         assert data["tok"], "a tokenizer with no offsets method must still encode"
         assert all(d.tokens == [1, 2] for d in data["tok"])
+
+
+class TestSmallerLibraryPathDefects:
+    """The R12 remainder: each one publishes or accepts something wrong on a
+    path the CLI does not take, and each is a one-line contradiction of how
+    the rest of the package behaves.
+    """
+
+    def test_a_bare_string_label_is_refused_not_split_per_character(self):
+        """`texts={"python": "x = 1"}` became five one-character texts.
+
+        tuple() over a string iterates it. The corpus then reports n_texts 5
+        for one snippet, and every per-text metric scores single characters.
+        """
+        with pytest.raises(TypeError, match="python"):
+            Corpus(name="code", texts={"python": "x = 1"},
+                   source="hand built", synthetic=False)
+
+    def test_a_list_of_strings_is_unaffected(self):
+        corpus = Corpus(name="code", texts={"python": ["x = 1"]},
+                        source="hand built", synthetic=False)
+        assert corpus.texts["python"] == ("x = 1",)
+
+    def test_an_unknowable_vocab_size_raises_rather_than_reporting_zero(self):
+        """PreTokenizedProvider raises here; this returned 0, and 0 flows into
+        vocabulary_utilization as a division by zero guarded to None, so the
+        metric silently reports nothing measurable instead of naming the
+        tokenizer that cannot say how large it is.
+        """
+        from tokenizer_analysis.core.input_providers import RawTokenizationProvider
+        from tokenizer_analysis.core.input_types import InputSpecification
+
+        class _NoVocab:
+            def can_encode(self): return True
+            def encode(self, t): return [1]
+
+        provider = RawTokenizationProvider({
+            "tok": InputSpecification(tokenizer=_NoVocab(), texts={"eng_Latn": ["hi"]}),
+        })
+        with pytest.raises(ValueError, match="tok"):
+            provider.get_vocab_size("tok")
+
+    def test_pretokenized_languages_come_back_in_a_stable_order(self):
+        """A set was returned as a list, so the order was hash-dependent and
+        two runs of the same dump could order per_language differently.
+        """
+        from tokenizer_analysis.core.input_providers import PreTokenizedProvider
+        from tokenizer_analysis.core.input_types import InputSpecification, TokenizedData
+
+        class _Tok:
+            def can_encode(self): return False
+            def get_vocab_size(self): return 100
+
+        rows = [TokenizedData(tokenizer_name="tok", language=lang,
+                              tokens=[1], text="hi")
+                for lang in ("zho_Hans", "eng_Latn", "arb_Arab")]
+        provider = PreTokenizedProvider({
+            "tok": InputSpecification(tokenizer=_Tok(), tokenized_data=rows),
+        })
+        assert provider.get_languages("tok") == ["arb_Arab", "eng_Latn", "zho_Hans"]
+        assert provider.get_languages() == ["arb_Arab", "eng_Latn", "zho_Hans"]

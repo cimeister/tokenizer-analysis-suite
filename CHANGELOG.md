@@ -171,6 +171,17 @@ conflicting flags.
 
 ## Releases
 
+- **Unreleased** Three library-path defects. A `Corpus` label given a bare
+  string was split into one text per character, so `"x = 1"` became five texts
+  and every per-text metric scored single characters; it is refused with the
+  list form named. `RawTokenizationProvider.get_vocab_size` returned 0 for a
+  tokenizer that cannot report one, which flowed into
+  `vocabulary_utilization` and `renyi_efficiency` as a zero denominator and
+  published nothing measurable without saying why; it raises, as
+  `PreTokenizedProvider` already did. `PreTokenizedProvider.get_languages`
+  returned set order, so `per_language` key order was hash-dependent across
+  runs of one dump; it is sorted.
+
 - **Unreleased** `InputProvider._encode_corpus` aborts instead of falling back
   to a second encode path. A failing or malformed `encode_batch_with_offsets`
   re-encoded the corpus one text at a time under a warning asserting that the

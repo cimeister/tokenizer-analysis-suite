@@ -179,8 +179,18 @@ class RawTokenizationProvider(InputProvider):
             vocab = tokenizer.get_vocab()
             return len(vocab) if vocab else 0
         else:
-            logger.warning(f"Cannot determine vocab size for tokenizer {tokenizer_name}")
-            return 0
+            # PreTokenizedProvider raises for the same condition. Returning 0
+            # sent a zero denominator into vocabulary_utilization, which guards
+            # it to None, so the run reported nothing measurable for this
+            # tokenizer instead of naming the one that cannot say how large it
+            # is.
+            raise ValueError(
+                f"Cannot determine the vocabulary size of tokenizer "
+                f"{tokenizer_name!r}: it has none of vocab_size, "
+                "get_vocab_size or get_vocab. vocabulary_utilization and "
+                "renyi_efficiency are both fractions of it, so the run would "
+                "publish nothing measurable for this tokenizer and not say why."
+            )
     
     def get_languages(self, tokenizer_name: str = None) -> List[str]:
         """Get list of languages."""
@@ -289,7 +299,10 @@ class PreTokenizedProvider(InputProvider):
         if tokenizer_name:
             if tokenizer_name not in self.specifications:
                 raise ValueError(f"Unknown tokenizer: {tokenizer_name}")
-            return list(set(data.language for data in self.specifications[tokenizer_name].tokenized_data))
+            # sorted, not set order: an unordered list made per_language key
+            # order hash-dependent, so two runs over one dump could differ.
+            return sorted({data.language
+                           for data in self.specifications[tokenizer_name].tokenized_data})
         else:
             # Return all unique languages across all tokenizers
             all_languages = set()

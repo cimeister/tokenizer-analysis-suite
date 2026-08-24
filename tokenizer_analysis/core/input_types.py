@@ -266,6 +266,21 @@ class Corpus:
 
         A Corpus is still not hashable, because a mapping is not.
         """
+        for label, texts in self.texts.items():
+            if isinstance(texts, str):
+                # tuple() over a string iterates its characters, so a bare
+                # string became one text per character: the corpus reported
+                # n_texts 5 for "x = 1" and every per-text metric scored single
+                # characters. A caller who means one text has to say so.
+                raise TypeError(
+                    f"The {label!r} label of the {self.name!r} corpus was given "
+                    "a bare string. That would be split into one text per "
+                    f"character. Pass [{texts[:20]!r}...] to mean one text."
+                    if len(texts) > 20 else
+                    f"The {label!r} label of the {self.name!r} corpus was given "
+                    "a bare string. That would be split into one text per "
+                    f"character. Pass [{texts!r}] to mean one text."
+                )
         object.__setattr__(
             self, "texts",
             MappingProxyType(
