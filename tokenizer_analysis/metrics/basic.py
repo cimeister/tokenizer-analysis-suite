@@ -317,22 +317,32 @@ class BasicTokenizationMetrics(BaseMetrics):
             return self.empty_stats()
         
         fertilities = []
-        
+        zero_token_documents = 0
+
         for data in tokenized_data:
             if not data.text or not data.text.strip():
                 continue  # Skip if no text available
 
             num_tokens = len(data.tokens)
+            if not num_tokens:
+                # The tokenizer erased this document. Its fertility is a
+                # defined 0, and averaging that in drags the mean toward zero
+                # with nothing in the output saying a document vanished. The
+                # count below is what says it.
+                zero_token_documents += 1
+                continue
             num_units = self.fertility_text_measurer.get_unit_count(data.text)
-            
+
             if num_units > 0:
                 fertility = num_tokens / num_units
                 fertilities.append(fertility)
-        
+
         if not fertilities:
-            return self.empty_stats()
-        
-        return self.compute_basic_stats(fertilities)
+            stats = self.empty_stats()
+        else:
+            stats = self.compute_basic_stats(fertilities)
+        stats['zero_token_documents'] = zero_token_documents
+        return stats
     
     def compute_token_length_analysis(self, tokenized_data: Dict[str, List[TokenizedData]]) -> Dict[str, Any]:
         """

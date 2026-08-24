@@ -1326,3 +1326,83 @@ class TestTheAggregationLabelMatchesTheComputation:
         assert meta["aggregation"] == AGGREGATION_MEAN_OF_RATIOS
         glob = results["token_length"]["per_tokenizer"][tok_name]["global"]
         assert glob["count"] == len(rows)
+
+
+class TestAZeroTokenDocumentIsExcludedOnlyWhereItsRatioIsUndefined:
+    """A text the tokenizer erases entirely.
+
+    Reachable through --input: a text of C0 control characters is non-blank to
+    str.strip() but encodes to nothing under a normalizer with
+    clean_text=True. The five metrics that read one disagreed about it, and
+    the disagreement was accidental rather than reasoned.
+
+    fertility is tokens per unit, so an erased document has a defined value of
+    0, and including it silently drags the mean toward zero with nothing in
+    the output saying why. It is excluded and counted instead. token_length,
+    avg_tokens_per_line and compression_rate already exclude it, two of them
+    because the ratio would divide by zero.
+
+    The Gini blocks and reconstruction_fidelity deliberately keep it. A
+    zero-cost language is how a fairness metric reports that a tokenizer
+    erased a language, and a total round-trip failure is what reconstruction
+    fidelity exists to measure. Excluding there would hide the finding.
+    """
+
+    @staticmethod
+    def _rows(tok_name):
+        return [
+            _make_td(tok_name, "a b", [1, 2], lang="aaa_Latn"),
+            _make_td(tok_name, "c d", [3, 4], lang="aaa_Latn"),
+            _make_td(tok_name, "\x01\x02", [], lang="aaa_Latn"),
+        ]
+
+    def test_fertility_excludes_it_and_publishes_the_count(self):
+        tok = _MockDecodableTokenizer(encode_fn=lambda t: [1], decode_fn=lambda i: "")
+        metrics = BasicTokenizationMetrics(_MockDecodableProvider("mock_tok", tok))
+        rows = self._rows("mock_tok")
+        results = metrics.compute_fertility_analysis({"mock_tok": rows})
+
+        per_lang = results["fertility"]["per_tokenizer"]["mock_tok"]["per_language"]
+        block = per_lang["aaa_Latn"]
+        # Two documents at 1.0 each; the erased one is not averaged in.
+        assert block["mean"] == pytest.approx(1.0)
+        assert block["count"] == 2
+        assert block["zero_token_documents"] == 1
+        glob = results["fertility"]["per_tokenizer"]["mock_tok"]["global"]
+        assert glob["zero_token_documents"] == 1
+
+    def test_a_corpus_with_none_reports_zero_not_a_missing_key(self):
+        """The benign half: the field must be present and 0, so a reader can
+        tell "none were erased" from "this run did not look".
+        """
+        tok = _MockDecodableTokenizer(encode_fn=lambda t: [1], decode_fn=lambda i: "")
+        metrics = BasicTokenizationMetrics(_MockDecodableProvider("mock_tok", tok))
+        rows = self._rows("mock_tok")[:2]
+        results = metrics.compute_fertility_analysis({"mock_tok": rows})
+
+        glob = results["fertility"]["per_tokenizer"]["mock_tok"]["global"]
+        assert glob["zero_token_documents"] == 0
+        assert glob["count"] == 2
+
+    def test_constructing_one_logs_a_line_naming_the_tokenizer(self, caplog):
+        """The justification for dropping the constructor check said the
+        package filters blank text upstream so this cannot happen. It can:
+        blank-to-strip and empty-after-encoding are different properties.
+        """
+        with caplog.at_level("WARNING"):
+            _make_td("mock_tok", "\x01\x02", [], lang="aaa_Latn")
+        messages = [r.message for r in caplog.records]
+        assert any("mock_tok" in m and "aaa_Latn" in m for m in messages), messages
+
+    def test_an_ordinary_record_logs_nothing(self):
+        import logging
+        logger = logging.getLogger("tokenizer_analysis.core.input_types")
+        records = []
+        handler = logging.Handler()
+        handler.emit = records.append
+        logger.addHandler(handler)
+        try:
+            _make_td("mock_tok", "a b", [1, 2], lang="aaa_Latn")
+        finally:
+            logger.removeHandler(handler)
+        assert records == []

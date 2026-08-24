@@ -171,6 +171,20 @@ conflicting flags.
 
 ## Releases
 
+- **Unreleased** A document a tokenizer encodes to zero tokens is logged, and
+  each metric that reads one now states its position rather than differing by
+  accident. `fertility` excludes it and publishes
+  `zero_token_documents` per tokenizer and per language; `token_length`,
+  `avg_tokens_per_line` and `compression_rate` already excluded it, two of them
+  because tokens are their denominator. The Gini blocks and
+  `reconstruction_fidelity` keep it deliberately: a zero-cost language is how a
+  fairness metric reports that a tokenizer erased a language, and a total
+  round-trip failure is what reconstruction fidelity measures. The recorded
+  justification for dropping the `TokenizedData` emptiness check in 1.1.0 was
+  wrong, and is corrected: blank-to-`strip()` and empty-after-encoding are
+  different properties, and a text of C0 control characters is the second
+  without being the first, reachable through `--input`.
+
 - **Unreleased** The bundled code samples honour `--max-code-files-per-lang`,
   so the two code metrics score the same texts. The cap reached
   `ASTBoundaryMetrics` through `get_code_snippets` and nothing else, so with

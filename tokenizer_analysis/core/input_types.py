@@ -35,16 +35,28 @@ class TokenizedData:
         # tokenizer that encodes a text to zero tokens has measured something,
         # and refusing to construct the item turns that into a crash.
         #
-        # The construction sites in this package filter blank text upstream, so
-        # the check never fired on what they build. PreTokenizedProvider is the
-        # exception: its records come from a caller's InputSpecification and are
-        # passed through without re-validation, so a dump holding a row with no
-        # ids and non-blank text is now scored (exact-match miss, CER 1.0)
-        # rather than refused at construction. Distinguishing that from a
-        # genuine zero-token encoding is not possible here, and the crash was
-        # the worse of the two.
+        # The reasoning recorded here used to be that the construction sites in
+        # this package filter blank text upstream, so the check could only ever
+        # fire on a PreTokenizedProvider row. That is false, and the two
+        # properties are different: a text of C0 control characters is
+        # non-blank to str.strip() and still encodes to zero tokens under a
+        # normalizer with clean_text=True, which is reachable with a user
+        # corpus through --input. Such a record is kept and logged, and each
+        # metric that reads one states its own position: fertility excludes it
+        # and publishes the count, token_length and avg_tokens_per_line and
+        # compression_rate exclude it because tokens are their denominator, and
+        # the Gini blocks and reconstruction fidelity keep it because a
+        # zero-cost language and a total round-trip failure are the findings
+        # those metrics exist to report.
         if not isinstance(self.tokens, list) or not all(isinstance(t, int) for t in self.tokens):
             raise ValueError("tokens must be a list of integers")
+        if not self.tokens and self.text and self.text.strip():
+            logger.warning(
+                "%s encoded a non-blank %s text to zero tokens; it is kept, "
+                "counted in fertility.zero_token_documents, and excluded from "
+                "the ratios whose denominator it would be. Text starts: %r",
+                self.tokenizer_name, self.language, self.text[:40],
+            )
         
         if self.metadata is None:
             self.metadata = {}
