@@ -187,6 +187,12 @@ A field is `null` when:
   `whitespace_fidelity` and the three structural sub-rates are `null` for that
   tokenizer, and the log names it and the projected time. `--cer-time-budget 0`
   removes the cap.
+`reconstruction_fidelity.decode_failures` counts texts whose `decode()`
+returned `None`. They leave every reconstruction denominator, so `count` is the
+texts that decoded while `total_tokens` is every text's tokens: dividing one by
+the other is inflated by the failures. The field appears per domain, in
+`overall`, and in `summary`.
+
 - Every rate in `reconstruction_fidelity` follows this rule with no stand-in
   default. A domain where every decode failed publishes `exact_match_rate` and
   `mean_cer` as `null` rather than `0.0`, which used to read as a perfect round

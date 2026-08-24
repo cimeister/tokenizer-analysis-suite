@@ -955,6 +955,7 @@ class BasicTokenizationMetrics(BaseMetrics):
                     'ind_preserved': 0, 'ind_total': 0,
                     'nl_preserved': 0, 'nl_total': 0,
                     'tab_preserved': 0, 'tab_total': 0,
+                    'decode_failures': 0,
                 }
             )
 
@@ -999,6 +1000,7 @@ class BasicTokenizationMetrics(BaseMetrics):
 
                     decoded = tokenizer.decode(token_ids, skip_special_tokens=True)
                     if decoded is None:
+                        self._record_decode_failure(stats, tok_name, td.language, text)
                         continue
 
                     stats['total'] += 1
@@ -1125,6 +1127,7 @@ class BasicTokenizationMetrics(BaseMetrics):
 
                 decoded = tokenizer.decode(token_ids, skip_special_tokens=True)
                 if decoded is None:
+                    self._record_decode_failure(stats, tok_name, domain, text)
                     continue
 
                 stats['total'] += 1
@@ -1203,6 +1206,7 @@ class BasicTokenizationMetrics(BaseMetrics):
                 'ind_preserved': 0, 'ind_total': 0,
                 'nl_preserved': 0, 'nl_total': 0,
                 'tab_preserved': 0, 'tab_total': 0,
+                'decode_failures': 0,
             }
 
             for domain, ds in domain_stats.items():
@@ -1224,6 +1228,7 @@ class BasicTokenizationMetrics(BaseMetrics):
                     'newline_fidelity': None if cer_skipped else self.safe_divide(ds['nl_preserved'], ds['nl_total']),
                     'tab_fidelity': None if cer_skipped else self.safe_divide(ds['tab_preserved'], ds['tab_total']),
                     'count': count,
+                    'decode_failures': ds['decode_failures'],
                     'total_tokens': ds['total_tokens'],
                 }
                 for k in overall:
@@ -1241,6 +1246,7 @@ class BasicTokenizationMetrics(BaseMetrics):
                     'newline_fidelity': None if cer_skipped else self.safe_divide(overall['nl_preserved'], overall['nl_total']),
                     'tab_fidelity': None if cer_skipped else self.safe_divide(overall['tab_preserved'], overall['tab_total']),
                     'count': total,
+                    'decode_failures': overall['decode_failures'],
                     'total_tokens': overall['total_tokens'],
                 },
             }
@@ -1256,6 +1262,10 @@ class BasicTokenizationMetrics(BaseMetrics):
                 'newline_fidelity': tok_result['overall']['newline_fidelity'],
                 'tab_fidelity': tok_result['overall']['tab_fidelity'],
                 'texts_analyzed': total,
+                # Here as well as in overall: latex_tables.py and main.py read
+                # summary alone, and would otherwise render a rate over
+                # survivors with nothing saying texts were dropped.
+                'decode_failures': overall['decode_failures'],
                 'total_tokens_analyzed': overall['total_tokens'],
             }
             if cer_skipped:
@@ -1343,6 +1353,32 @@ class BasicTokenizationMetrics(BaseMetrics):
             prev, curr = curr, prev
 
         return prev[cols] / ref_len
+
+    @staticmethod
+    def _record_decode_failure(stats, tok_name: str, domain: str, text: str) -> None:
+        """Count and name a text whose decode returned None.
+
+        One definition for both reconstruction loops. The text leaves every
+        reconstruction denominator, so without the count a domain with one
+        failure in three published exact_match_rate 1.0 with nothing saying it
+        was the rate over the two that decoded.
+
+        Its tokens stay in total_tokens and unk_tokens deliberately.
+        total_tokens is the domain's token count and count is the texts that
+        decoded; making the first conditional on decoding would turn
+        unk_token_rate into a rate over survivors and break the
+        docs/OUTPUT.md correspondence with summary.total_tokens_analyzed.
+
+        The wrapper logs its own exception, but names neither the domain nor
+        the text, so this adds the line a reader of the run log needs.
+        """
+        stats['decode_failures'] += 1
+        logger.warning(
+            "%s failed to decode a %s text; it is excluded from the "
+            "reconstruction rates and counted in decode_failures. "
+            "Text starts: %r",
+            tok_name, domain, text[:60],
+        )
 
     def _accumulate_whitespace(self, stats, text: str, decoded: str, exact: bool) -> None:
         """Add one text's whitespace outcome to a domain's accumulators.

@@ -171,6 +171,17 @@ conflicting flags.
 
 ## Releases
 
+- **Unreleased** `reconstruction_fidelity` publishes `decode_failures` per
+  domain, in `overall` and in `summary`, and logs one line per failure naming
+  the tokenizer, the domain and the text. A text whose `decode()` returns
+  `None` leaves every reconstruction denominator, so a domain with one failure
+  in three published `exact_match_rate` 1.0 with nothing in the file saying it
+  was the rate over the two that decoded. All four shipped wrappers return
+  `None` from `decode` on an internal exception. `total_tokens` and
+  `unk_tokens` deliberately still cover every encoded text: `count` is the
+  texts that decoded, so `total_tokens / count` is inflated by the failures,
+  and this is now stated in `docs/OUTPUT.md`.
+
 - **Unreleased** A document a tokenizer encodes to zero tokens is logged, and
   each metric that reads one now states its position rather than differing by
   accident. `fertility` excludes it and publishes

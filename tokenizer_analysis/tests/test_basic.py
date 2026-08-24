@@ -1406,3 +1406,75 @@ class TestAZeroTokenDocumentIsExcludedOnlyWhereItsRatioIsUndefined:
         finally:
             logger.removeHandler(handler)
         assert records == []
+
+
+class TestADecodeFailureIsCountedRatherThanJustSkipped:
+    """A wrapper whose decode() returns None dropped its text from every
+    reconstruction denominator with nothing in the results file saying so.
+
+    A domain with one failure in three published exact_match_rate 1.0, which
+    is the rate over the two that decoded. All four shipped wrappers return
+    None from decode on an internal exception.
+    """
+
+    @staticmethod
+    def _metrics_and_rows(fail_text):
+        def decode(ids):
+            return None if ids == [9, 9] else "ok"
+        tok = _MockDecodableTokenizer(encode_fn=lambda t: [1], decode_fn=decode)
+        metrics = BasicTokenizationMetrics(_MockDecodableProvider("mock_tok", tok))
+        rows = [
+            _make_td("mock_tok", "ok", [1], lang="aaa_Latn"),
+            _make_td("mock_tok", "ok", [2], lang="aaa_Latn"),
+            _make_td("mock_tok", fail_text, [9, 9], lang="aaa_Latn"),
+        ]
+        return metrics, {"mock_tok": rows}
+
+    def test_the_failure_is_published_beside_the_rate(self):
+        metrics, td = self._metrics_and_rows("boom")
+        results = metrics.compute_reconstruction_fidelity_analysis(td)
+        tok = results["reconstruction_fidelity"]["per_tokenizer"]["mock_tok"]
+
+        assert tok["overall"]["decode_failures"] == 1
+        assert tok["by_domain"]["aaa_Latn"]["decode_failures"] == 1
+        # count is the texts that decoded, and the rate is over those.
+        assert tok["overall"]["count"] == 2
+        assert tok["overall"]["exact_match_rate"] == pytest.approx(1.0)
+        # summary carries it too: latex_tables and main read summary alone.
+        summary = results["reconstruction_fidelity"]["summary"]["mock_tok"]
+        assert summary["decode_failures"] == 1
+
+    def test_the_failed_text_keeps_its_tokens_in_the_unk_denominator(self):
+        """total_tokens covers every encoded text, count covers the decoded
+        ones. Making total_tokens decode-conditioned would break the
+        docs/OUTPUT.md correspondence with summary.total_tokens_analyzed and
+        turn unk_token_rate into a rate over survivors.
+        """
+        metrics, td = self._metrics_and_rows("boom")
+        results = metrics.compute_reconstruction_fidelity_analysis(td)
+        tok = results["reconstruction_fidelity"]["per_tokenizer"]["mock_tok"]
+        assert tok["overall"]["total_tokens"] == 4  # 1 + 1 + 2
+
+    def test_a_clean_run_reports_zero_failures(self):
+        """The benign half, so the field cannot be a constant."""
+        tok = _MockDecodableTokenizer(encode_fn=lambda t: [1], decode_fn=lambda i: "ok")
+        metrics = BasicTokenizationMetrics(_MockDecodableProvider("mock_tok", tok))
+        td = {"mock_tok": [_make_td("mock_tok", "ok", [1], lang="aaa_Latn")]}
+        results = metrics.compute_reconstruction_fidelity_analysis(td)
+        overall = results["reconstruction_fidelity"]["per_tokenizer"]["mock_tok"]["overall"]
+        assert overall["decode_failures"] == 0
+
+    def test_a_domain_where_every_decode_failed_publishes_nulls(self):
+        """count 0 used to publish exact_match_rate 0.0 and mean_cer 0.0,
+        which reads as a perfect round trip rather than as nothing measured.
+        """
+        tok = _MockDecodableTokenizer(encode_fn=lambda t: [1], decode_fn=lambda i: None)
+        metrics = BasicTokenizationMetrics(_MockDecodableProvider("mock_tok", tok))
+        td = {"mock_tok": [_make_td("mock_tok", "a b", [9, 9], lang="aaa_Latn")]}
+        results = metrics.compute_reconstruction_fidelity_analysis(td)
+        dom = results["reconstruction_fidelity"]["per_tokenizer"]["mock_tok"]["by_domain"]["aaa_Latn"]
+
+        assert dom["count"] == 0
+        assert dom["decode_failures"] == 1
+        assert dom["exact_match_rate"] is None
+        assert dom["mean_cer"] is None
