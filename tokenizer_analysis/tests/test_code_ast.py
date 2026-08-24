@@ -3644,3 +3644,43 @@ class TestAnEmptyRegisteredCorpusIsRefused:
         provider.add_corpus(code_corpus_from_texts({"python": []}))
         with pytest.raises(ValueError, match="holds no texts"):
             ASTBoundaryMetrics(provider)
+
+
+class TestAnEmptyListLabelDoesNotPassTheEmptyCorpusGuard:
+    """`Corpus.__post_init__` keeps a label whose list is empty as an empty
+    tuple, so `code_snippets` is a non-empty dict of empty lists and a
+    truthiness check on the dict is True. The metrics then construct, run, and
+    publish empty per-tokenizer blocks with no error.
+
+    code_corpus_from_texts drops such a label, which is why the Q30 scenario
+    is covered; a Corpus built by hand is not.
+    """
+
+    def _provider(self, texts):
+        from tokenizer_analysis.core.input_providers import RawTokenizationProvider
+        from tokenizer_analysis.core.input_types import InputSpecification
+
+        class _Tok:
+            def can_encode(self): return True
+            def encode(self, t): return [ord(c) for c in t]
+            def encode_with_offsets(self, t):
+                return self.encode(t), [(i, i + 1) for i in range(len(t))]
+            def get_vocab_size(self): return 100
+
+        provider = RawTokenizationProvider({
+            "tok": InputSpecification(tokenizer=_Tok(), texts={"eng_Latn": ["hi"]}),
+        })
+        provider.add_corpus(Corpus(name=CODE_CORPUS, texts=texts,
+                                   source="hand built", synthetic=False))
+        return provider
+
+    def test_a_label_holding_an_empty_list_is_refused(self):
+        provider = self._provider({"python": []})
+        with pytest.raises(ValueError, match="holds no texts"):
+            ASTBoundaryMetrics(provider)
+
+    def test_a_label_holding_a_text_still_constructs(self):
+        """The benign half, so the guard cannot become "always refuse"."""
+        provider = self._provider({"python": ["x = 1\n"]})
+        metrics = ASTBoundaryMetrics(provider)
+        assert metrics.code_loader.get_code_snippets("python") == ["x = 1\n"]

@@ -413,7 +413,7 @@ class ASTBoundaryMetrics(BaseMetrics):
             # nothing had been measured. code_corpus_from_texts drops labels
             # whose list is empty, so code_texts={"python": []} produces exactly
             # this.
-            if not self.code_loader.code_snippets:
+            if not any(self.code_loader.code_snippets.values()):
                 raise ValueError(
                     f"The registered {CODE_CORPUS!r} corpus from "
                     f"{self._code_corpus.source!r} holds no texts, so these "
@@ -432,7 +432,7 @@ class ASTBoundaryMetrics(BaseMetrics):
                 # of the corpus the user asked for: measured 0.562 full AST
                 # alignment on synthetic against 0.493 on StarCoder for the same
                 # tokenizer.
-                if not self.code_loader.code_snippets:
+                if not any(self.code_loader.code_snippets.values()):
                     raise ValueError(
                         "The code config named "
                         f"{', '.join(sorted(code_config))} but no snippet was read "
@@ -441,7 +441,7 @@ class ASTBoundaryMetrics(BaseMetrics):
                     )
 
             # With no code config, synthetic samples are the documented input.
-            if not self.code_loader.code_snippets:
+            if not any(self.code_loader.code_snippets.values()):
                 synthetic = CodeDataLoader.generate_synthetic_samples()
                 for lang, snippets in synthetic.items():
                     self.code_loader.code_snippets.setdefault(lang, []).extend(snippets)
@@ -1122,7 +1122,7 @@ class ASTBoundaryMetrics(BaseMetrics):
                 "indentation_consistency": {},
             }
 
-        if not self.code_loader.code_snippets:
+        if not any(self.code_loader.code_snippets.values()):
             return {
                 "ast_boundary_alignment": {
                     "error": "No code data loaded",
