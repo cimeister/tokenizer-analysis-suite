@@ -321,10 +321,13 @@ class ASTBoundaryMetrics(BaseMetrics):
         # max_snippets_per_lang is not refused, because it does not select a
         # corpus, it bounds one: get_code_snippets re-applies it to whatever
         # this loader holds, registered corpus included, and the run passes the
-        # value it resolved the corpus with. That bound is load-bearing on the
-        # synthetic path, where resolve_code_corpus applies no cap at all, so
-        # removing it moved ast_boundary_alignment.global.count from 4512 to
-        # 7018 on the default configuration.
+        # value it resolved the corpus with. It is now a second application
+        # rather than the only one. synthetic_code_corpus applies the same cap
+        # when it builds the bundled samples, because this re-application
+        # reached only these metrics and left the operator and digit metrics
+        # reading the corpus uncapped: 57 texts against 2 per language, under
+        # one corpus name. Kept as the final safety net it is documented to
+        # be, and harmless when the corpus already honours the cap.
         #
         # max_snippet_chars is refused, because nothing here can honour it. It
         # takes effect only inside CodeDataLoader.load_all, which the registered

@@ -171,6 +171,20 @@ conflicting flags.
 
 ## Releases
 
+- **Unreleased** The bundled code samples honour `--max-code-files-per-lang`,
+  so the two code metrics score the same texts. The cap reached
+  `ASTBoundaryMetrics` through `get_code_snippets` and nothing else, so with
+  `--max-code-files-per-lang 2` and no `--code-ast-config` the operator and
+  digit metrics measured 57 texts over 19 languages while the AST metrics
+  measured 2 per language, both published under one corpus name and source.
+  **Values move on any run that sets the flag without a code config**; both
+  caps default to 0, and all 126 result sets under `results/` recorded 0, so no
+  published number of ours is affected. `--max-code-file-chars` is now refused
+  on this path with a warning rather than silently ignored: the 57 samples
+  parse with zero tree-sitter errors at full length and 19 with a 400-character
+  cut, so truncating them would move every AST alignment rate for a reason
+  unrelated to tokenization, and the whole corpus is 48715 characters.
+
 - **Unreleased** `fertility`, `token_length`, `three_digit_boundary_alignment`
   and `numeric_magnitude_consistency` declare `aggregation: mean_of_ratios`.
   All four averaged one ratio per document or per number while declaring

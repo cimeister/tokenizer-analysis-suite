@@ -216,9 +216,11 @@ class UnifiedTokenizerAnalyzer:
                 # name different corpora and the registered one would win
                 # without a word. max_snippets_per_lang is still passed, because
                 # it bounds the corpus rather than selects it and
-                # get_code_snippets applies it to the registered snippets:
-                # resolve_code_corpus applies no cap on the synthetic path, so
-                # this is where the bundled samples get bounded.
+                # get_code_snippets applies it to the registered snippets.
+                # resolve_code_corpus now bounds the bundled samples itself, so
+                # this is a second application rather than the only one; it
+                # used to be the only one, which left the operator and digit
+                # metrics reading an uncapped corpus.
                 # max_snippet_chars is not passed and is refused, because
                 # nothing on the registered branch can apply it: the corpus was
                 # already truncated when it was resolved.

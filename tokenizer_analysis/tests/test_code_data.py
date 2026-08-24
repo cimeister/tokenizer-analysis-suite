@@ -191,3 +191,61 @@ class TestTheResolvedCorpusCarriesWhatTheCapsRemoved:
         assert corpus.caps is not None
         assert corpus.caps.max_snippet_chars == 0
         assert corpus.caps.truncated_char_counts == {}
+
+
+class TestTheBundledCorpusIsCappedForEveryMetricThatReadsIt:
+    """The two code metrics scored different text sets under one corpus name.
+
+    With --max-code-files-per-lang 2 and no --code-ast-config, the operator
+    and digit metrics read the registered corpus at 3 snippets per language
+    while the AST metrics re-applied the cap through get_code_snippets and
+    scored 2, both published as "the code corpus" with the same source.
+    """
+
+    def test_the_count_cap_reaches_the_bundled_samples(self):
+        from tokenizer_analysis.loaders.corpora import (
+            resolve_code_corpus, synthetic_code_corpus,
+        )
+
+        uncapped = synthetic_code_corpus()
+        assert all(len(v) == 3 for v in uncapped.texts.values())
+
+        capped = resolve_code_corpus(None, max_snippets_per_lang=2)
+        assert capped.texts, "the bundled samples must still be there"
+        assert all(len(v) == 2 for v in capped.texts.values())
+        assert set(capped.texts) == set(uncapped.texts)
+        assert capped.caps is not None
+        assert capped.caps.max_snippets_per_lang == 2
+
+    def test_both_code_metrics_then_see_the_same_texts(self):
+        """The property issue 1 is about, asserted directly."""
+        from tokenizer_analysis.loaders.corpora import resolve_code_corpus
+        from tokenizer_analysis.loaders.code_data import CodeDataLoader
+
+        corpus = resolve_code_corpus(None, max_snippets_per_lang=2)
+        loader = CodeDataLoader(None, max_snippets_per_lang=2)
+        loader.code_snippets = {k: list(v) for k, v in corpus.texts.items()}
+
+        registered = sum(len(v) for v in corpus.texts.values())
+        scored = sum(len(loader.get_code_snippets(l)) for l in corpus.texts)
+        assert registered == scored
+
+    def test_the_character_cap_is_refused_on_the_bundled_samples(self, caplog):
+        """Truncating source code corrupts its syntax, so this path says so.
+
+        The 57 bundled samples parse with zero tree-sitter errors at full
+        length. Cutting them at 400 characters produces 19 ERROR or missing
+        nodes, and cutting at the last line boundary before 400 still produces
+        15, so every AST alignment rate would move for a reason that has
+        nothing to do with any tokenizer. The whole corpus is 48715
+        characters, so there is no I/O for the cap to bound here.
+        """
+        from tokenizer_analysis.loaders.corpora import resolve_code_corpus
+
+        with caplog.at_level("WARNING"):
+            corpus = resolve_code_corpus(None, max_snippet_chars=400)
+
+        assert max(len(t) for v in corpus.texts.values() for t in v) > 400
+        assert any("max_snippet_chars" in r.message for r in caplog.records), \
+            [r.message for r in caplog.records]
+        assert corpus.caps.max_snippet_chars == 0

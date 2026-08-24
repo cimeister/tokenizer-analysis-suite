@@ -36,7 +36,7 @@ def _caps_of(loader: CodeDataLoader) -> CorpusCaps:
     )
 
 
-def synthetic_code_corpus() -> Corpus:
+def synthetic_code_corpus(max_snippets_per_lang: Optional[int] = None) -> Corpus:
     """The code samples bundled with the package.
 
     ``synthetic`` is load-bearing rather than descriptive. With no code config
@@ -44,17 +44,44 @@ def synthetic_code_corpus() -> Corpus:
     while reconstruction fidelity gets no code domain at all. That asymmetry is
     deliberate; see ``TestTheDefaultCodeConfigurationIsAsymmetric`` in
     tests/test_output_contract.py.
+
+    *max_snippets_per_lang* is applied here rather than left to each reader.
+    ``ASTBoundaryMetrics`` re-applies it through ``get_code_snippets`` and the
+    operator and digit metrics read the registered corpus directly, so a cap
+    honoured in one place and not the other had the two scoring different text
+    sets under one corpus name and one source: 57 texts over 19 languages
+    against 2 per language, with nothing in the output saying so.
+
+    There is deliberately no character cap. Every one of the 57 samples parses
+    with zero tree-sitter errors at full length; cutting them at 400 characters
+    produces 19 ERROR or missing nodes and cutting at the last line boundary
+    before 400 still produces 15, so truncation would move every AST alignment
+    rate for a reason unrelated to any tokenizer. The whole corpus is 48715
+    characters, so there is no I/O here for a cap to bound. Callers asking for
+    one are told, in ``resolve_code_corpus``.
     """
+    texts = CodeDataLoader.generate_synthetic_samples()
+    cap = max_snippets_per_lang or 0
+    if cap > 0:
+        texts = {lang: snippets[:cap] for lang, snippets in texts.items()}
     return Corpus(
         name=CODE_CORPUS,
-        texts=CodeDataLoader.generate_synthetic_samples(),
+        texts=texts,
         source=CodeDataLoader._BUILTIN_CODE_SAMPLES_PATH,
         synthetic=True,
+        caps=CorpusCaps(
+            max_snippets_per_lang=cap,
+            max_snippet_chars=0,
+            dropped_file_counts={},
+            truncated_char_counts={},
+            dropped_whitespace_only_counts={},
+        ),
     )
 
 
 def code_corpus_from_texts(
     code_texts: Optional[Dict[str, List[str]]],
+    max_snippets_per_lang: Optional[int] = None,
 ) -> Corpus:
     """A code corpus from texts a caller loaded itself, or the bundled samples.
 
@@ -64,12 +91,22 @@ def code_corpus_from_texts(
     affects a caller passing *code_texts* by hand.
     """
     if not code_texts:
-        return synthetic_code_corpus()
+        return synthetic_code_corpus(max_snippets_per_lang)
+    cap = max_snippets_per_lang or 0
+    kept = {lang: (texts[:cap] if cap > 0 else texts)
+            for lang, texts in code_texts.items() if texts}
     return Corpus(
         name=CODE_CORPUS,
-        texts={lang: texts for lang, texts in code_texts.items() if texts},
+        texts=kept,
         source=CODE_DATASET_SOURCE,
         synthetic=False,
+        caps=CorpusCaps(
+            max_snippets_per_lang=cap,
+            max_snippet_chars=0,
+            dropped_file_counts={},
+            truncated_char_counts={},
+            dropped_whitespace_only_counts={},
+        ),
     )
 
 
@@ -87,7 +124,22 @@ def resolve_code_corpus(
     AttributeError that named neither the flag nor the file.
     """
     if not code_config:
-        return synthetic_code_corpus()
+        if max_snippet_chars:
+            # Loud, because the flag was passed and will not be honoured.
+            # Truncating the bundled samples corrupts their syntax: they parse
+            # with zero tree-sitter errors at full length and 19 with a
+            # 400-character cut, which would move every AST alignment rate
+            # without any tokenizer changing. Not an abort, because the flag is
+            # meaningful for the corpus the same run may load next.
+            logger.warning(
+                "max_snippet_chars=%d is not applied to the bundled code "
+                "samples. Truncating source code leaves unparsable fragments, "
+                "and the whole bundled corpus is 48715 characters, so there is "
+                "no I/O for the cap to bound. Pass --code-ast-config to "
+                "measure real files, where the cap does apply.",
+                max_snippet_chars,
+            )
+        return synthetic_code_corpus(max_snippets_per_lang)
     loader = CodeDataLoader(
         code_config,
         max_snippets_per_lang=max_snippets_per_lang,
