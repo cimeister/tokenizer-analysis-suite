@@ -1271,3 +1271,58 @@ class TestConstructionOrderDoesNotChangeWhatIsMeasured:
             "the one snippet this metric was constructed with, not the "
             "synthetic corpus the other constructor registered"
         )
+
+
+class TestTheAggregationLabelMatchesTheComputation:
+    """fertility and token_length declared micro_pooled, which constants.py
+    defines as one ratio from summed counts, while both average per-document
+    ratios. The two coincide on a balanced corpus, which is why it survived.
+    """
+
+    @staticmethod
+    def _unequal_corpus(tok_name):
+        """One language with four short documents, one with a single long one."""
+        texts = [("aaa_Latn", "a b"), ("aaa_Latn", "a b"), ("aaa_Latn", "a b"),
+                 ("aaa_Latn", "a b"), ("bbb_Latn", "a b c d e f g h i j")]
+        return [_make_td(tok_name, t, list(range(len(t))), lang=l)
+                for l, t in texts]
+
+    def test_fertility_global_is_the_mean_of_ratios_not_the_pooled_ratio(self):
+        from tokenizer_analysis.constants import AGGREGATION_MEAN_OF_RATIOS
+
+        tok_name = "mock_tok"
+        tok = _MockDecodableTokenizer(encode_fn=lambda t: [1], decode_fn=lambda i: "")
+        metrics = BasicTokenizationMetrics(_MockDecodableProvider(tok_name, tok))
+        rows = self._unequal_corpus(tok_name)
+        results = metrics.compute_fertility_analysis({tok_name: rows})
+
+        assert results["fertility"]["metadata"]["aggregation"] == AGGREGATION_MEAN_OF_RATIOS
+
+        ratios = [len(r.tokens) / len(r.text.split()) for r in rows]
+        mean_of_ratios = sum(ratios) / len(ratios)
+        pooled = (sum(len(r.tokens) for r in rows)
+                  / sum(len(r.text.split()) for r in rows))
+        assert mean_of_ratios != pytest.approx(pooled), (
+            "corpus is balanced, so this cannot tell the two rules apart"
+        )
+        glob = results["fertility"]["per_tokenizer"][tok_name]["global"]
+        assert glob["mean"] == pytest.approx(mean_of_ratios)
+        assert glob["mean"] != pytest.approx(pooled)
+
+    def test_token_length_counts_documents_not_tokens(self):
+        """count_unit said "tokens" beside a count of documents: 3250 in the
+        committed benchmark against 109014 to 271337 actual tokens.
+        """
+        from tokenizer_analysis.constants import AGGREGATION_MEAN_OF_RATIOS
+
+        tok_name = "mock_tok"
+        tok = _MockDecodableTokenizer(encode_fn=lambda t: [1], decode_fn=lambda i: "")
+        metrics = BasicTokenizationMetrics(_MockDecodableProvider(tok_name, tok))
+        rows = self._unequal_corpus(tok_name)
+        results = metrics.compute_token_length_analysis({tok_name: rows})
+
+        meta = results["token_length"]["metadata"]
+        assert meta["count_unit"] == "documents"
+        assert meta["aggregation"] == AGGREGATION_MEAN_OF_RATIOS
+        glob = results["token_length"]["per_tokenizer"][tok_name]["global"]
+        assert glob["count"] == len(rows)

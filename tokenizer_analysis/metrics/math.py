@@ -32,7 +32,7 @@ from scipy.stats import spearmanr
 import logging
 
 from .base import BaseMetrics, TokenizedDataProcessor, format_optional
-from ..constants import AGGREGATION_MICRO_POOLED
+from ..constants import AGGREGATION_MEAN_OF_RATIOS, AGGREGATION_MICRO_POOLED
 from ..core.input_types import (
     corpus_size,
     CODE_CORPUS, MATH_CORPUS, PROSE_CORPUS, PROSE_SOURCE, Corpus, TokenizedData,
@@ -112,7 +112,11 @@ def magnitude_metadata(grouped: bool = False) -> Dict[str, Any]:
         )
     return {
         "description": description,
-        "aggregation": AGGREGATION_MICRO_POOLED,
+        # mean_fertility is the mean of tokens-per-digit over numbers, one
+        # ratio each, not a ratio of summed counts. Same shape as
+        # three_digit_boundary_alignment beside it, and built from the same
+        # accumulator, so the two carry the same label.
+        "aggregation": AGGREGATION_MEAN_OF_RATIOS,
         "count_unit": "numbers",
     }
 
@@ -1127,7 +1131,9 @@ class DigitBoundaryMetrics(BaseMetrics):
                     "How often the tokenizer's boundaries inside a number fall "
                     "at the three-digit positions comma grouping would use."
                 ),
-                "aggregation": AGGREGATION_MICRO_POOLED,
+                # mean_f1 averages one F1 per number. count_unit is right:
+                # the count really is digit spans.
+                "aggregation": AGGREGATION_MEAN_OF_RATIOS,
                 "count_unit": "digit spans",
             },
         }

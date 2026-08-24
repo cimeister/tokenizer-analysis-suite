@@ -107,7 +107,9 @@ records the merge and its evidence under `metadata.merged_metrics`.
 
 - **Compression rate** (`compression_rate`): total text units (bytes, characters
   or lines) divided by total tokens across the corpus.
-- **Fertility** (`fertility`): tokens per word or per character.
+- **Fertility** (`fertility`): tokens per word or per character, as a mean of
+  per-document ratios (`aggregation: mean_of_ratios`), so a long document counts
+  the same as a short one.
 - **Token length** (`token_length`): mean token size in bytes and in characters.
   This is a mean of per-document ratios, where `compression_rate` is a ratio of
   totals, so the two differ on short documents.

@@ -151,10 +151,21 @@ left the two files impossible to cross-reference.
 #### Aggregation labels
 
 `metadata.aggregation` names which average `global` reports: `micro_pooled`,
-`macro_languages`, `ratio_of_sums` or `set_union`. This matters because
-`global` means different things in different metrics, and on a parallel corpus
-where every language holds the same number of lines micro and macro agree, so
-the difference only shows on an unequal corpus.
+`macro_languages`, `ratio_of_sums`, `set_union` or `mean_of_ratios`. This
+matters because `global` means different things in different metrics, and on a
+parallel corpus where every language holds the same number of lines micro and
+macro agree, so the difference only shows on an unequal corpus.
+
+`mean_of_ratios` is the unweighted mean of one ratio per item, where the item
+is a document or a number rather than a language, so a long document counts the
+same as a short one. `fertility`, `token_length`,
+`three_digit_boundary_alignment` and `numeric_magnitude_consistency` carry it.
+On the committed benchmark it differs from the pooled value by up to 18.7%.
+
+Where one label cannot describe a whole block, `metadata.aggregation_exceptions`
+names the fields that differ. `reconstruction_fidelity` uses it: its rates are
+pooled counts except `mean_cer`, which normalises by each reference's own
+length before summing.
 
 #### `null` means not measured
 

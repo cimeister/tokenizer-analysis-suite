@@ -293,7 +293,9 @@ def _pool_per_language(per_language: dict, fields) -> dict:
     Used by the metrics whose per-language entries are a mean over items and a
     ``count`` of those items. Pooling ``sum(mean_l * count_l) / sum(count_l)``
     recovers the mean over every item in every language, which is what
-    ``micro_pooled`` names. It is derived from the per-language block rather
+    ``mean_of_ratios`` names for these metrics: the per-language entries are
+    themselves means of per-item ratios, so the count-weighted pool of them is
+    the mean over all items, not a ratio of summed counts. It is derived from the per-language block rather
     than read from the metric's ``summary``. Historically that was because the
     grouped filter copied the whole-corpus ``summary`` into each group; the
     filter now re-aggregates ``summary`` per group by the same weighting

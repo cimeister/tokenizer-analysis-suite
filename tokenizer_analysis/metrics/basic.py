@@ -20,6 +20,7 @@ from ..loaders.corpora import resolve_math_corpus
 from ..config import TextMeasurementConfig, TextMeasurer, DEFAULT_TEXT_MEASUREMENT_CONFIG, DEFAULT_WORD_MEASUREMENT_CONFIG
 from ..config.language_metadata import LanguageMetadata
 from ..constants import (
+    AGGREGATION_MEAN_OF_RATIOS,
     AGGREGATION_MICRO_POOLED,
     AGGREGATION_SET_UNION,
     DEFAULT_CER_TIME_BUDGET_S,
@@ -267,7 +268,11 @@ class BasicTokenizationMetrics(BaseMetrics):
                     'normalization_method': normalization_unit,
                     'description': f'Average number of tokens per {normalization_unit[:-1]}',
                     'short_description': f'tokens/{normalization_unit[:-1]}',
-                    'aggregation': AGGREGATION_MICRO_POOLED,
+                    # Not micro_pooled: this is the unweighted mean of one
+                    # ratio per document, so a long document counts the same
+                    # as a short one. docs/METRICS.md has always described it
+                    # that way; the label did not.
+                    'aggregation': AGGREGATION_MEAN_OF_RATIOS,
                     'count_unit': 'documents',
                 }
             }
@@ -345,8 +350,11 @@ class BasicTokenizationMetrics(BaseMetrics):
                 'metadata': {
                     'units': ['characters', 'bytes'],
                     'description': 'Average character and byte length per token',
-                    'aggregation': AGGREGATION_MICRO_POOLED,
-                    'count_unit': 'tokens',
+                    'aggregation': AGGREGATION_MEAN_OF_RATIOS,
+                    # Documents, not tokens. count is len(char_lengths), one
+                    # entry per document: 3250 on the committed benchmark
+                    # against 109014 to 271337 actual tokens.
+                    'count_unit': 'documents',
                     'global_duplicates': (
                         'global repeats primary_length. Every metric in this '
                         'file publishes a global block, so this one does too '
@@ -795,6 +803,14 @@ class BasicTokenizationMetrics(BaseMetrics):
                     # whitespace_fidelity numbers are NOT comparable.
                     'whitespace_definition': WHITESPACE_DEFINITION,
                     'aggregation': AGGREGATION_MICRO_POOLED,
+                    # One label cannot describe this block. Six of the seven
+                    # rates divide summed counts, which is micro_pooled;
+                    # mean_cer is the mean of one ratio per document, because
+                    # _character_error_rate normalises by each reference's own
+                    # length before the sum. Named rather than averaged over.
+                    'aggregation_exceptions': {
+                        'mean_cer': AGGREGATION_MEAN_OF_RATIOS,
+                    },
                     'count_unit': 'documents',
                     # Conditional, because a grouped run reports prose only.
                     # A fixed string here described code and math domains that

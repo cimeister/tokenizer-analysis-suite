@@ -1259,3 +1259,29 @@ class TestAGroupBlockCarriesNoWholeCorpusStatistics:
         assert "summary" not in filtered
         per_tok = filtered["per_tokenizer"]["bpe"]["summary"]
         assert per_tok["languages_evaluated"] == 1
+
+
+class TestTheAggregationLabelNamesWhatTheGlobalBlockComputes:
+    """A label saying micro_pooled over a mean of per-item ratios is a wrong
+    number in the metadata: docs/OUTPUT.md invites a consumer to re-derive the
+    other weighting from the per-language counts, and the two differ by up to
+    18.7% on the committed benchmark.
+
+    test_every_metric_declares_its_aggregation cannot catch this. It imports
+    AGGREGATION_LABELS, so adding a fifth member makes both the right and the
+    wrong label pass for every metric.
+    """
+
+    def test_the_two_digit_metrics_built_by_one_helper_agree(self):
+        """Relabelling one and missing the other is the plausible error:
+        three_digit_boundary_alignment and numeric_magnitude_consistency come
+        from the same accumulator, and both average per-number ratios.
+        """
+        from tokenizer_analysis.constants import AGGREGATION_MEAN_OF_RATIOS
+        from tokenizer_analysis.metrics.math import (
+            magnitude_metadata, operator_metadata,
+        )
+
+        assert magnitude_metadata()["aggregation"] == AGGREGATION_MEAN_OF_RATIOS
+        # The operator rate really is pooled: isolated over total.
+        assert operator_metadata()["aggregation"] != AGGREGATION_MEAN_OF_RATIOS

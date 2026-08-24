@@ -36,8 +36,8 @@ change in what was measured.
 
 - Every metric publishes a per-tokenizer `global`. Five had none.
 - Every metric's `metadata` includes `aggregation`, one of `micro_pooled`,
-  `macro_languages`, `ratio_of_sums` or `set_union`, naming which average its
-  `global` is. Every `per_language` entry includes a `count`, so the other
+  `macro_languages`, `ratio_of_sums`, `set_union` or `mean_of_ratios`, naming
+  which average its `global` is. Every `per_language` entry includes a `count`, so the other
   weighting can be re-derived.
 - A value that could not be measured is `null`, not `0.0`. `0.0` is a legal
   value for most of these metrics, so a zero was indistinguishable from a
@@ -170,6 +170,20 @@ conflicting flags.
 ---
 
 ## Releases
+
+- **Unreleased** `fertility`, `token_length`, `three_digit_boundary_alignment`
+  and `numeric_magnitude_consistency` declare `aggregation: mean_of_ratios`.
+  All four averaged one ratio per document or per number while declaring
+  `micro_pooled`, which `constants.py` defines as one ratio from summed counts.
+  On the committed benchmark the two differ by up to 18.7% of the value
+  (`token_length.byte_length.mean` 2.4154 for gpt2 against 2.0356 pooled), so a
+  consumer following `docs/OUTPUT.md`'s re-derivation contract got a different
+  number from the one published. `mean_of_ratios` is a fifth aggregation label.
+  `token_length.metadata.count_unit` is corrected from `tokens` to `documents`:
+  the count is 3250 documents on the benchmark against 109014 to 271337 actual
+  tokens. `reconstruction_fidelity` gains
+  `metadata.aggregation_exceptions`, because six of its seven rates are pooled
+  counts and `mean_cer` is not. No computed value changes.
 
 - **Unreleased** `reconstruction_fidelity.whitespace_fidelity` counts
   whitespace an alignment of the two texts can match, and three structural
