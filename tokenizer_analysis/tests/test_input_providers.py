@@ -185,15 +185,22 @@ class TestTheCorpusRegistry:
 
         It used to be DigitBoundaryMetrics._corpus_stats, whose output this
         asserted against until that method was deleted and the metric moved onto
-        Corpus.stats(). The literal below is what both produced.
+        Corpus.stats().
+
+        The CODE fixture holds a whitespace-only python text. It used to be
+        counted here, which is what made this block disagree with the metrics:
+        every scored path filters on ``text and text.strip()``, so the block
+        whose purpose is to say what a number was measured on reported one text
+        more than any metric read. It is excluded now, and the expected values
+        below are three python texts rather than four.
         """
         stats = CODE.stats()
         assert stats == {
-            "n_texts": 5,
-            "n_chars": len("a = 1") + len("b = 2") + 3 + len("c = a + b")
+            "n_texts": 4,
+            "n_chars": len("a = 1") + len("b = 2") + len("c = a + b")
                        + len("let x = 1;"),
             "n_languages": 2,
-            "texts_per_language": {"python": 4, "rust": 1},
+            "texts_per_language": {"python": 3, "rust": 1},
         }
         assert list(stats["texts_per_language"]) == ["python", "rust"], (
             "sorted by label, so two runs over the same corpus print the same "

@@ -249,3 +249,30 @@ class TestTheBundledCorpusIsCappedForEveryMetricThatReadsIt:
         assert any("max_snippet_chars" in r.message for r in caplog.records), \
             [r.message for r in caplog.records]
         assert corpus.caps.max_snippet_chars == 0
+
+
+class TestPublishedCorpusSizesCountOnlyWhatIsScored:
+    """`corpus_size` applied no blank filter while every scored path applies
+    `text and text.strip()`, so `by_domain.*.corpus.n_texts` counted texts no
+    metric read.
+    """
+
+    def test_a_blank_text_is_not_counted(self):
+        from tokenizer_analysis.core.input_types import corpus_size
+
+        stats = corpus_size({"python": ["   ", "x = 1"]})
+        assert stats["n_texts"] == 1
+        assert stats["texts_per_language"] == {"python": 1}
+
+    def test_a_label_left_with_nothing_drops_out_of_the_language_count(self):
+        from tokenizer_analysis.core.input_types import corpus_size
+
+        stats = corpus_size({"python": ["x = 1"], "rust": ["  ", "\n"]})
+        assert stats["n_languages"] == 1
+        assert stats["texts_per_language"] == {"python": 1}
+
+    def test_ordinary_texts_are_unaffected(self):
+        from tokenizer_analysis.core.input_types import corpus_size
+
+        stats = corpus_size({"python": ["a", "b"], "rust": ["c"]})
+        assert (stats["n_texts"], stats["n_languages"]) == (3, 2)

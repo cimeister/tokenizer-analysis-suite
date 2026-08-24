@@ -146,10 +146,16 @@ def corpus_size(texts: 'Mapping[str, Sequence[str]]') -> Dict[str, Any]:
     registered corpus. Building a throwaway Corpus for it copied every prose
     text into a tuple on each compute() call to reach the same four numbers.
     """
-    per_label = {label: len(t) for label, t in texts.items()}
+    # The same filter every scored path applies. Without it this counted texts
+    # no metric read: code_texts={"python": ["   ", "x = 1"]} published
+    # n_texts 2 with one text encoded, under a block whose whole purpose is to
+    # let a reported number be traced to what it measured.
+    kept = {label: [t for t in group if t and t.strip()]
+            for label, group in texts.items()}
+    per_label = {label: len(group) for label, group in kept.items() if group}
     return {
         "n_texts": sum(per_label.values()),
-        "n_chars": sum(len(t) for group in texts.values() for t in group),
+        "n_chars": sum(len(t) for group in kept.values() for t in group),
         "n_languages": len(per_label),
         "texts_per_language": dict(sorted(per_label.items())),
     }

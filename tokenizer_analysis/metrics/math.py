@@ -826,7 +826,10 @@ class DigitBoundaryMetrics(BaseMetrics):
         for items in tokenized_data.values():
             by_lang: Dict[str, List[str]] = defaultdict(list)
             for item in items:
-                if item.text:
+                # text and text.strip(), matching every scored path and
+                # corpus_size. A truthy check alone counted a whitespace-only
+                # text into the published prose corpus size that no metric read.
+                if item.text and item.text.strip():
                     by_lang[item.language].append(item.text)
             return dict(by_lang)
         return {}
