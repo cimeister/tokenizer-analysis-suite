@@ -295,32 +295,28 @@ class TestEncodingARegisteredCorpus:
         assert second is first
         assert len(tokenizer.batch_calls) == calls_after_first
 
-    def test_a_failed_batch_call_falls_back_to_one_call_per_text(self):
-        """The plumbing of the fallback, not a claim about any tokenizer.
+    def test_a_failed_batch_call_aborts_and_does_not_re_encode(self):
+        """This used to fall back to the per-text path under a warning saying
+        the ids and offsets were the same either way.
 
-        Both paths run against the same stub, whose batch method returns what
-        its single method returns, so this checks that the same items are
-        assembled either way. That a real tokenizer's batch encoding equals its
-        per-text encoding is a separate claim, checked in
-        `test_a_real_tokenizer_encodes_a_batch_as_it_encodes_each_text`.
+        Nothing verified that claim, and a wrapper whose two methods disagree
+        falsifies it: the run would publish numbers measured through a
+        different encode path from the one it reported using. The abort names
+        the tokenizer, the corpus and the label, and no single-text encode is
+        attempted.
         """
         tokenizer = _CharTokenizer(batch_raises=True)
         provider = _raw_provider(tokenizer)
         provider.add_corpus(CODE)
 
-        data = provider.get_corpus_data("code")
+        with pytest.raises(RuntimeError) as exc:
+            provider.get_corpus_data("code")
 
-        assert tokenizer.single_calls == [
-            "let x = 1;", "a = 1", "b = 2", "c = a + b"
-        ]
-        assert [d.text for d in data["tok"]] == tokenizer.single_calls
-
-        batched = _raw_provider(_CharTokenizer())
-        batched.add_corpus(CODE)
-        assert [(d.text, d.language, d.tokens, d.offsets) for d in data["tok"]] == [
-            (d.text, d.language, d.tokens, d.offsets)
-            for d in batched.get_corpus_data("code")["tok"]
-        ]
+        message = str(exc.value)
+        assert "tok" in message and "code" in message, message
+        assert tokenizer.single_calls == [], (
+            "the corpus must not be re-encoded one text at a time"
+        )
 
     def test_a_tokenizer_without_the_batch_api_is_encoded_one_text_at_a_time(self):
         provider = _raw_provider(_NoBatchTokenizer())
@@ -346,13 +342,13 @@ class TestEncodingARegisteredCorpus:
         assert all(d.offsets is None for d in data["tok"])
         assert all(d.tokens for d in data["tok"])
 
-    def test_a_malformed_batch_return_falls_back_rather_than_raising(self):
+    def test_a_malformed_batch_return_aborts_rather_than_re_encoding(self):
         """A backend returning something other than (ids, offsets) pairs.
 
-        Before the corpora were encoded in batches, a bad return from
-        `encode_with_offsets` was caught and the text was encoded with `encode()`
-        instead. Unpacking inside the try keeps that: the batch result is
-        rejected and the per-text path runs.
+        The unpacking sits inside the try, so this used to be caught and the
+        per-text path run instead. That is the same silent substitution as a
+        raising batch method, and it aborts for the same reason: nothing here
+        can check that the two paths agree.
         """
         class _BadBatch(_CharTokenizer):
             def encode_batch_with_offsets(self, texts):
@@ -363,12 +359,9 @@ class TestEncodingARegisteredCorpus:
         provider = _raw_provider(tokenizer)
         provider.add_corpus(CODE)
 
-        data = provider.get_corpus_data("code")
-
-        assert tokenizer.single_calls == [
-            "let x = 1;", "a = 1", "b = 2", "c = a + b"
-        ]
-        assert [d.text for d in data["tok"]] == tokenizer.single_calls
+        with pytest.raises(RuntimeError):
+            provider.get_corpus_data("code")
+        assert tokenizer.single_calls == []
 
     def test_a_real_tokenizer_encodes_a_batch_as_it_encodes_each_text(self):
         """Encoding a corpus in batches rests on this, and nothing checked it.
@@ -751,3 +744,71 @@ class TestAForeignRecordIsRefusedRatherThanRelabelled:
 
         out = provider.get_tokenized_data()
         assert [r.tokenizer_name for r in out["declared_tok"]] == ["declared_tok"]
+
+
+class TestEncodeCorpusAbortsRatherThanReEncodingSilently:
+    """Two silent re-encode paths inside _encode_corpus.
+
+    Above the per-text loop, any exception from encode_batch_with_offsets fell
+    back to per-text encoding under a warning asserting "The ids and offsets
+    are the same either way; only the speed changes", which nothing verified
+    and which a divergent wrapper falsifies. Below it, a wrapper returning
+    (None, offsets) had its ids taken from encode() with no log at all.
+
+    The prose loop in RawTokenizationProvider has neither defect and is not
+    touched: it calls the batch method with no try/except and raises on a
+    malformed return. Replicating anything from here into it would put a
+    silent re-encode where there is none.
+    """
+
+    @staticmethod
+    def _provider(tokenizer):
+        from tokenizer_analysis.core.input_providers import RawTokenizationProvider
+        from tokenizer_analysis.core.input_types import InputSpecification
+        return RawTokenizationProvider({
+            "tok": InputSpecification(tokenizer=tokenizer, texts={"eng_Latn": ["hi"]}),
+        })
+
+    def test_a_failing_batch_method_aborts_naming_the_tokenizer(self):
+        class _Tok:
+            def can_encode(self): return True
+            def encode(self, t): return [1, 2]
+            def encode_with_offsets(self, t): return [1, 2], [(0, 1), (1, 2)]
+            def encode_batch_with_offsets(self, texts):
+                raise RuntimeError("backend exploded")
+            def get_vocab_size(self): return 100
+
+        provider = self._provider(_Tok())
+        with pytest.raises(RuntimeError) as exc:
+            provider.add_corpus(CODE)
+            provider.get_corpus_data("code")
+        assert "tok" in str(exc.value), str(exc.value)
+
+    def test_none_ids_from_the_offsets_method_abort(self):
+        class _Tok:
+            def can_encode(self): return True
+            def encode(self, t): return [1, 2]
+            def encode_with_offsets(self, t): return None, [(0, 1)]
+            def get_vocab_size(self): return 100
+
+        provider = self._provider(_Tok())
+        provider.add_corpus(CODE)
+        with pytest.raises(RuntimeError, match="ids"):
+            provider.get_corpus_data("code")
+
+    def test_a_tokenizer_without_the_offsets_method_still_encodes(self):
+        """The benign half. `ids is None` had two causes and only one was a
+        fallback: with no encode_with_offsets at all, the plain encode below
+        is the primary path, and removing it outright would hand
+        TokenizedData a None and name neither the tokenizer nor the method.
+        """
+        class _Tok:
+            def can_encode(self): return True
+            def encode(self, t): return [1, 2]
+            def get_vocab_size(self): return 100
+
+        provider = self._provider(_Tok())
+        provider.add_corpus(CODE)
+        data = provider.get_corpus_data("code")
+        assert data["tok"], "a tokenizer with no offsets method must still encode"
+        assert all(d.tokens == [1, 2] for d in data["tok"])

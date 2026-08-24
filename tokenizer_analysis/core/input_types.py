@@ -602,8 +602,8 @@ class InputProvider(ABC):
         metric.
 
         This is deliberately not the prose loop in
-        ``RawTokenizationProvider.get_tokenized_data``. The two differ in two
-        ways, both of which move published numbers:
+        ``RawTokenizationProvider.get_tokenized_data``. The differences that
+        move published numbers are:
 
         1. The prose loop raises when a tokenizer cannot encode raw text; this
            one skips that tokenizer with a warning. This covers the check made
@@ -615,7 +615,12 @@ class InputProvider(ABC):
            not enter that measurement.
 
         Unifying them would change which tokenizers are skipped and what
-        ``encoding_speed`` measures.
+        ``encoding_speed`` measures. The list above is the set that moves
+        numbers, not the set of all differences: the two also differ in whether
+        batch pre-validation runs, in the pairing label they pass to
+        ``check_batch_pairing``, and in whether ``metadata`` is populated.
+        Neither loop falls back to a second encode path any more, which was the
+        largest of the differences until this release.
         """
         out: Dict[str, List[TokenizedData]] = {}
         for tok_name in self.get_tokenizer_names():
@@ -659,36 +664,40 @@ class InputProvider(ABC):
                 # corpora; a backend that returned the right number of
                 # encodings in the wrong order is caught by neither.
                 #
-                # The unpacking sits inside the try, so a backend that returns
-                # something other than (ids, offsets) pairs falls back to the
-                # per-text path rather than raising from the zip below. That is
-                # what the per-text path did with a bad return before this
-                # method encoded in batches.
+                # A failure here aborts. It used to fall back to the per-text
+                # path under a warning asserting "The ids and offsets are the
+                # same either way; only the speed changes", which nothing
+                # verified and which a wrapper whose two methods disagree
+                # falsifies: the run would then publish numbers measured
+                # through a different encode path from the one it reported
+                # using, which is the substitution this package refuses
+                # everywhere else. No shipped wrapper can reach it.
                 encoded = None
                 if callable(encode_batch):
                     try:
                         encoded = [(ids, offsets)
                                    for ids, offsets in encode_batch(usable)]
                     except Exception as exc:
-                        # Warning, not debug: the per-text path produces the
-                        # same ids and offsets, so no measured value changes,
-                        # but a run that quietly stopped batching is the sort
-                        # of thing that needs to be visible in a log read hours
-                        # later.
-                        # Once per tokenizer, not once per label: one broken
-                        # batch method otherwise logs a copy for each of the 19
-                        # code languages, for every tokenizer.
-                        if not warned_no_batch:
-                            logger.warning(
-                                "encode_batch_with_offsets failed for %r on the "
-                                "%s corpus (first failure on %s: %s); encoding "
-                                "one text at a time for this tokenizer. The ids "
-                                "and offsets are the same either way; only the "
-                                "speed changes.",
-                                tok_name, corpus.name, lang, exc,
+                        raise RuntimeError(
+                            f"encode_batch_with_offsets failed for {tok_name!r} "
+                            f"on the {corpus.name!r} corpus at label {lang!r}. "
+                            "Encoding one text at a time instead would measure "
+                            "this corpus through a different path from the one "
+                            "the run reports, and nothing here can check that "
+                            "the two agree. Fix the wrapper, or remove its "
+                            "encode_batch_with_offsets so the per-text path is "
+                            "the declared one."
+                        ) from exc
+                    for ids, _offsets in encoded:
+                        if ids is None:
+                            raise RuntimeError(
+                                f"encode_batch_with_offsets returned None ids for "
+                                f"{tok_name!r} on the {corpus.name!r} corpus at "
+                                f"label {lang!r}. The per-text path checks this; "
+                                "the batch path did not, and the None reached "
+                                "TokenizedData as a type error naming neither "
+                                "the tokenizer nor the method."
                             )
-                            warned_no_batch = True
-                        encoded = None
                 if encoded is None:
                     encoded = []
                     for text in usable:
@@ -721,6 +730,22 @@ class InputProvider(ABC):
                                     f"{text[:60]!r}"
                                 ) from exc
                         if ids is None:
+                            if callable(encode_offsets):
+                                # encode_with_offsets ran and gave back no ids.
+                                # Falling through to encode() would measure this
+                                # text through a different path from the rest of
+                                # the corpus, with no log line saying so.
+                                raise RuntimeError(
+                                    f"encode_with_offsets returned None ids for "
+                                    f"{tok_name!r} on the {corpus.name!r} corpus "
+                                    f"at label {lang!r}. Encoding it without "
+                                    "offsets instead would measure one text "
+                                    "through a different path from the others. "
+                                    f"Text starts: {text[:60]!r}"
+                                )
+                            # No encode_with_offsets at all: this is the primary
+                            # and only encode path for such a tokenizer, not a
+                            # fallback from one that failed.
                             ids, offsets = encode(text), None
                         encoded.append((ids, offsets))
                 check_batch_pairing(

@@ -171,6 +171,18 @@ conflicting flags.
 
 ## Releases
 
+- **Unreleased** `InputProvider._encode_corpus` aborts instead of falling back
+  to a second encode path. A failing or malformed `encode_batch_with_offsets`
+  re-encoded the corpus one text at a time under a warning asserting that the
+  ids and offsets were the same either way; nothing verified that, and a
+  wrapper whose two methods disagree makes it false, so the run would publish
+  numbers measured through a path other than the one it reported. The batch
+  path also gained the `ids is None` check the per-text path already had. The
+  per-text `ids is None` branch is split rather than removed: with no
+  `encode_with_offsets` at all it is the primary encode path, and only a
+  `None` returned *by* that method is now an error. Library-reachable only; no
+  shipped wrapper triggers any of it.
+
 - **Unreleased** `PreTokenizedProvider` refuses a record whose
   `tokenizer_name` disagrees with the key it is filed under, naming both. It
   copied the record under the key's name at warning level, and every metric
