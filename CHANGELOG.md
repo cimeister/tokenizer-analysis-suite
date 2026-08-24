@@ -182,7 +182,10 @@ conflicting flags.
   after files, a corpus holding `math.txt` now collides, so the collision is
   refused rather than relocated: two domains that would publish under one key
   abort naming it, instead of being summed into one number that a language
-  group would then select.
+  group would then select. The abort covers `operator_isolation_rate` only, and
+  only with `--operator-prose-domain`, which is off by default; the per-domain
+  block of reconstruction fidelity has the same collision and pools silently.
+  Documented rather than fixed here.
 
 - **Unreleased** Three library-path defects. A `Corpus` label given a bare
   string was split into one text per character, so `"x = 1"` became five texts
@@ -292,8 +295,8 @@ conflicting flags.
   per line, because a four-space indent arriving as three is broken code),
   `newline_fidelity` and `tab_fidelity`, all partitions of the same alignment.
   The roll-up alone could not separate harmful damage from harmless: destroying
-  every indent in the bundled code corpus moves it to 0.53 while collapsing
-  inner spaces harmlessly leaves it at 0.99. No bundled corpus holds tabular
+  every indent in the bundled code corpus moves it to 0.578 while collapsing
+  inner spaces harmlessly leaves it at 0.980. No bundled corpus holds tabular
   data, so `tab_fidelity` is evidence about code indentation only.
 
 - **Unreleased** `reconstruction_fidelity` publishes `null` where a rate has no

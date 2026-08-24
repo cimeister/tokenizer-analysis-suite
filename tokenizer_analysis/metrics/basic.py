@@ -1392,8 +1392,8 @@ class BasicTokenizationMetrics(BaseMetrics):
         code and tabular structure. Indentation is 42% of the whitespace in the
         bundled code corpus and 0% of FLORES prose, where 95% is inter-word
         spaces that carry no structure, so destroying every indent in the code
-        corpus moves whitespace_fidelity only to 0.53 while collapsing inner
-        spaces harmlessly leaves it at 0.99. A Makefile tab replaced by four
+        corpus moves whitespace_fidelity only to 0.578 while collapsing inner
+        spaces harmlessly leaves it at 0.980. A Makefile tab replaced by four
         spaces scores 0.80 and trailing whitespace stripped scores 0.50: the
         benign change looks worse than the fatal one.
 

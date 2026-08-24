@@ -511,9 +511,17 @@ characters, CER 0.2. Original `"a"` decoded as `"abcd"` is edit distance 3 over
 1 character, CER 3.0.
 
 CER is the most expensive field in this group, and `--cer-time-budget` caps it
-per tokenizer. When the budget is exceeded, `mean_cer` and `whitespace_fidelity`
-are `null` for that tokenizer and the run logs the projection that triggered the
-skip. `--cer-time-budget 0` disables the cap.
+per tokenizer. When the budget is exceeded, `mean_cer`, `whitespace_fidelity`
+and the three structural sub-rates are all `null` for that tokenizer and the run
+logs the projection that triggered the skip. `--cer-time-budget 0` disables the
+cap.
+
+**The budget covers more work than it used to.** The whitespace alignment runs
+inside the same timed region as the edit distance and costs the same order, so
+the projection roughly doubled at an unchanged budget value. A run that
+previously completed CER on a lossy tokenizer may now skip it, and the skip
+nulls all five fields. Raise `--cer-time-budget`, or pass 0 to remove the cap,
+to get the previous coverage.
 
 Which tokenizers report `mean_cer` therefore depends on how fast the machine
 running the analysis is: a tokenizer skipped at a given `--cer-time-budget` on a
@@ -559,8 +567,8 @@ space, preserves 1 of 2 whitespace characters, fidelity 0.5.
 what a reader vetting damage to code or tabular preprocessing needs. Indentation
 is 42% of the whitespace in the bundled code corpus and 0% of FLORES prose,
 where 95% is inter-word spaces that carry no structure. Destroying every indent
-in the code corpus moves the roll-up only to 0.53, while collapsing inner spaces
-harmlessly leaves it at 0.99; a Makefile tab replaced by four spaces scores 0.80
+in the code corpus moves the roll-up only to 0.578, while collapsing inner spaces
+harmlessly leaves it at 0.980; a Makefile tab replaced by four spaces scores 0.80
 where trailing whitespace stripped scores 0.50.
 
 Three sub-rates are published beside it, each `null` when its denominator is
@@ -572,8 +580,13 @@ zero:
   arriving as three is broken code, not 0.75 preserved. Indents are matched as a
   sequence, so a dropped line does not shift the rest.
 - `newline_fidelity` and `tab_fidelity`: the newline and tab characters matched
-  by the same alignment `whitespace_fidelity` uses, so the three cannot
-  disagree.
+  by the same alignment `whitespace_fidelity` uses, so their sum never exceeds
+  it. How a tie is split between them is not defined: several alignments can
+  match the same number of whitespace characters while attributing them to
+  different kinds, and the implementation reports one of them. `"\n\t"`
+  decoded as `"\t\n"` reports one tab preserved, and the same damage written
+  `"\t\n"` to `"\n\t"` reports one newline. Read the pair as "one of these two
+  survived", not as which one.
 
 **Coverage limit.** No bundled corpus contains tabular data, and 470 of the
 bundled code corpus's 471 tabs are indentation. A passing `tab_fidelity` is

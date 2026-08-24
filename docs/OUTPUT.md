@@ -111,9 +111,16 @@ the last splitting the pooled global by corpus. `by_domain` has `code` and
 `math`, plus `prose` when `--operator-prose-domain` was passed, and `global`
 pools whichever ran. Its `per_language` keys natural languages (`arb_Arab`) and
 programming languages (`code_bash`) in one dict, spelled the same way
-reconstruction fidelity spells its own per-domain keys. A prose language whose
-name would collide with one of these keys aborts the run rather than being
-summed into it.
+reconstruction fidelity spells its own per-domain keys.
+
+In `operator_isolation_rate`, a prose language whose name would collide with one
+of these keys aborts the run rather than being summed into it. The check only
+has anything to compare against when `--operator-prose-domain` is passed, since
+without it there are no prose rows in this block.
+The per-domain block of reconstruction fidelity has the same collision and does
+**not** abort: a corpus with a language literally named `math`, or `code_<lang>` for a
+programming language that also has code, is pooled into one row there. Rename
+the language if your corpus can produce one.
 
 The slimmed file omits four kinds of field.
 
