@@ -172,9 +172,17 @@ A field is `null` when:
   `vocabulary_utilization.per_tokenizer.<tok>.per_language_cov` is `null` and
   omitted from its plot.
 - A domain holds nothing of the relevant kind.
-- The CER time budget was exceeded. `reconstruction_fidelity`'s `mean_cer` and
-  `whitespace_fidelity` are `null` for that tokenizer, and the log names it and
-  the projected time. `--cer-time-budget 0` removes the cap.
+- The CER time budget was exceeded. `reconstruction_fidelity`'s `mean_cer`,
+  `whitespace_fidelity` and the three structural sub-rates are `null` for that
+  tokenizer, and the log names it and the projected time. `--cer-time-budget 0`
+  removes the cap.
+- Every rate in `reconstruction_fidelity` follows this rule with no stand-in
+  default. A domain where every decode failed publishes `exact_match_rate` and
+  `mean_cer` as `null` rather than `0.0`, which used to read as a perfect round
+  trip beside a `count` of 0; a tokenizer that declares no UNK token id
+  publishes `unk_token_rate` `null`; a text holding no whitespace publishes
+  `whitespace_fidelity` `null`. `cer_skipped` is what distinguishes a `null`
+  the time budget caused from one that had no denominator.
 
 Consumers doing arithmetic on these fields need a `None` check.
 

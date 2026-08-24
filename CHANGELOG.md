@@ -171,6 +171,34 @@ conflicting flags.
 
 ## Releases
 
+- **Unreleased** `reconstruction_fidelity.whitespace_fidelity` counts
+  whitespace an alignment of the two texts can match, and three structural
+  sub-rates are published beside it. The old greedy scan left its pointer
+  behind on any character it could not match, so every whitespace after a
+  substituted character was compared at the wrong index and counted as lost:
+  `"El nino esta aqui"` decoded from the accented original reported 2 of 3, and
+  a corpus with true fidelity 1.0 under an NFD-strip-lowercase decode published
+  0.8667. **Values move**, in both directions and mostly upward. In the
+  committed benchmark 4 leaves change (`gpt-neox-20b` and `qwen-2.5`); 10 files
+  under `results/` hold a non-1.0 value, the lowest 0.066754. The rule matches
+  the full text rather than the whitespace alone, so `"hello world"` decoded as
+  `"helloworld "` scores 0 of 1 rather than crediting a deleted word boundary
+  against a space appended elsewhere. New: `indentation_fidelity` (run exact
+  per line, because a four-space indent arriving as three is broken code),
+  `newline_fidelity` and `tab_fidelity`, all partitions of the same alignment.
+  The roll-up alone could not separate harmful damage from harmless: destroying
+  every indent in the bundled code corpus moves it to 0.53 while collapsing
+  inner spaces harmlessly leaves it at 0.99. No bundled corpus holds tabular
+  data, so `tab_fidelity` is evidence about code indentation only.
+
+- **Unreleased** `reconstruction_fidelity` publishes `null` where a rate has no
+  denominator, with no stand-in defaults. `exact_match_rate` and `mean_cer`
+  were `0.0` on a domain where every decode failed, which read as a perfect
+  round trip beside a `count` of 0; `unk_token_rate` was `0.0` for a tokenizer
+  declaring no UNK id; `whitespace_fidelity` was `1.0` for a text holding no
+  whitespace. Two conventions documented in `docs/METRICS.md` are removed in
+  favour of the `docs/OUTPUT.md` rule that an uncomputable value is null.
+
 - **1.1.0** A language group's digit-metric blocks report the group or
   nothing, never the whole corpus. `--run-grouped-analysis` copied the base
   run's `three_digit_boundary_alignment` and `numeric_magnitude_consistency`

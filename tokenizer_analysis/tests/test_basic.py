@@ -784,7 +784,13 @@ class TestWhitespaceFidelity:
         assert preserved == 0
 
     def test_partial_whitespace_loss(self):
-        """One of two spaces lost -> 1/2 preserved."""
+        """Two spaces in, one in the decode, so one is lost -> 1/2.
+
+        Which of the two is "the lost one" is not a question this metric
+        answers and the assertion does not claim it does: the rule counts how
+        many of the original's whitespace characters an alignment can match,
+        and one is all it can match here.
+        """
         original = "a b c"
         decoded = "ab c"  # first space lost
         preserved, total = BasicTokenizationMetrics._whitespace_fidelity(
@@ -823,6 +829,160 @@ class TestWhitespaceFidelity:
         # ZWSP not counted -> total_ws stays 0 here
         assert BasicTokenizationMetrics._whitespace_fidelity(
             "a​b", "ab") == (0, 0)
+
+    def test_a_substituted_character_does_not_lose_the_whitespace_after_it(self):
+        """The scan defect this rule replaced (RELEASE_AUDIT Q35.2 R7).
+
+        A greedy forward scan left its pointer behind on a character it could
+        not match, so every later whitespace was compared at the wrong index.
+        Every space here survives at its own index.
+        """
+        assert BasicTokenizationMetrics._whitespace_fidelity(
+            "El ni\u00f1o est\u00e1 aqu\u00ed", "el nino esta aqui") == (3, 3)
+        assert BasicTokenizationMetrics._whitespace_fidelity(
+            "Caf\u00e9 \u00c9lan", "cafe elan") == (1, 1)
+
+    def test_whitespace_moved_elsewhere_is_not_credited(self):
+        """The one assertion separating this rule from a context-blind one.
+
+        Aligning the two whitespace streams alone scores this 1 of 1: the
+        original holds one space and so does the decode. But the word boundary
+        was deleted and a space appended somewhere else, so nothing was
+        preserved. Every other case in this class scores the same either way,
+        which is why this test is the one that pins the definition.
+        """
+        assert BasicTokenizationMetrics._whitespace_fidelity(
+            "hello world", "helloworld ") == (0, 1)
+
+    def test_the_rule_matches_an_independently_enumerated_oracle(self):
+        """Differential test against a brute force, not against itself.
+
+        The oracle enumerates subsequences with itertools.combinations and
+        takes the most whitespace among the longest common ones. It shares no
+        code with the implementation, which is a dynamic program. An earlier
+        oracle for this metric restated the implementation's own definition and
+        reported zero disagreements against a rule that was wrong.
+
+        The alphabet must hold at least two distinct whitespace characters. With
+        one, greedy matching and optimal matching coincide, and the same sweep
+        returns a false all-clear.
+        """
+        from itertools import combinations, product
+
+        def oracle(o, d):
+            def subs(t):
+                out = set()
+                for r in range(len(t) + 1):
+                    for idx in combinations(range(len(t)), r):
+                        out.add("".join(t[i] for i in idx))
+                return out
+            total = sum(1 for c in o if c.isspace())
+            common = subs(o) & subs(d)
+            longest = max(len(x) for x in common)
+            best = max(sum(1 for c in x if c.isspace())
+                       for x in common if len(x) == longest)
+            return (best, total)
+
+        alphabet = "a \t"
+        checked = 0
+        for lo in range(0, 6):
+            for ld in range(0, 5):
+                for o in map("".join, product(alphabet, repeat=lo)):
+                    for d in map("".join, product(alphabet, repeat=ld)):
+                        checked += 1
+                        assert BasicTokenizationMetrics._whitespace_fidelity(
+                            o, d) == oracle(o, d), (o, d)
+        assert checked == 44044, checked
+
+    def test_it_stays_within_the_budget_it_shares_with_the_error_rate(self):
+        """--cer-time-budget bounds both, so the cost has to be comparable.
+
+        Without the common prefix and suffix trimmed, the alignment ran 921 ms
+        against 1.29 ms for the character error rate on this input, and the
+        budget could not see it because the call sat outside the timed region.
+        The intention is the ratio, not an absolute time, so a slow machine
+        does not fail it.
+        """
+        from time import perf_counter
+
+        line = "        result = compute_value(alpha, beta) + offset  # note\n"
+        original = line * 200
+        decoded = original[:7100] + "X" + original[7101:]
+
+        t0 = perf_counter()
+        BasicTokenizationMetrics._character_error_rate(original, decoded)
+        cer = perf_counter() - t0
+        # Both calls the loop makes, not just the alignment: the indentation
+        # sub-rate runs its own table and shares the same budget.
+        t0 = perf_counter()
+        BasicTokenizationMetrics._whitespace_matches(original, decoded)
+        BasicTokenizationMetrics._indentation_fidelity(original, decoded)
+        ws = perf_counter() - t0
+
+        assert ws <= 2 * cer, (
+            f"whitespace work {ws * 1000:.1f}ms against character error rate "
+            f"{cer * 1000:.1f}ms; they share one time budget"
+        )
+
+
+class TestTheStructuralWhitespaceSubRates:
+    """Indentation, newlines and tabs, reported beside the roll-up.
+
+    The roll-up weights every whitespace character equally, so it cannot
+    separate damage that breaks code from damage that changes nothing. Each
+    test pairs a harmful case with a benign one: a sub-rate that always
+    returned 0 would satisfy the harmful half alone.
+    """
+
+    def test_indentation_is_run_exact(self):
+        """Four spaces arriving as three is broken code, not 0.75 preserved."""
+        src = "def f():\n    return 1\n"
+        assert BasicTokenizationMetrics._indentation_fidelity(
+            src, "def f():\n   return 1\n") == (0, 1)
+        assert BasicTokenizationMetrics._indentation_fidelity(
+            src, "def f():\n    return 1\n") == (1, 1)
+
+    def test_indentation_survives_a_line_being_dropped(self):
+        """Matched as a sequence, so a lost line does not shift the rest."""
+        src = "if a:\n    x = 1\n    y = 2\n"
+        preserved, total = BasicTokenizationMetrics._indentation_fidelity(
+            src, "if a:\n    y = 2\n")
+        assert (preserved, total) == (1, 2)
+
+    def test_inner_spaces_collapsing_leaves_indentation_alone(self):
+        """The benign half: harmless damage must not read as structural."""
+        src = "def f():\n    return  a  +  b\n"
+        assert BasicTokenizationMetrics._indentation_fidelity(
+            src, "def f():\n    return a + b\n") == (1, 1)
+
+    def test_a_tab_replaced_by_spaces_is_a_tab_loss(self):
+        """A Makefile recipe line, and the case no bundled corpus exercises."""
+        _, _, tabs, _ = BasicTokenizationMetrics._whitespace_matches(
+            "t:\n\tgcc -o x\n", "t:\n    gcc -o x\n")
+        assert tabs == 0
+        _, _, tabs_kept, _ = BasicTokenizationMetrics._whitespace_matches(
+            "t:\n\tgcc -o x\n", "t:\n\tgcc -o y\n")
+        assert tabs_kept == 1
+
+    def test_newlines_lost_and_kept(self):
+        _, newlines, _, _ = BasicTokenizationMetrics._whitespace_matches(
+            "l1\nl2\nl3", "l1 l2 l3")
+        assert newlines == 0
+        _, newlines_kept, _, _ = BasicTokenizationMetrics._whitespace_matches(
+            "l1\nl2\nl3", "L1\nL2\nL3")
+        assert newlines_kept == 2
+
+    def test_the_sub_counts_never_exceed_the_roll_up(self):
+        """They are partitions of one alignment, not separate computations."""
+        pairs = [("a\tb\nc", "a b\nc"), ("  x\n\ty", "x\n  y"),
+                 ("a b\tc\nd", "abcd"), ("\t\n ", " \n\t")]
+        for original, decoded in pairs:
+            matched, nl, tab, total = BasicTokenizationMetrics._whitespace_matches(
+                original, decoded)
+            assert nl + tab <= matched <= total, (original, decoded)
+
+
+class TestWhitespaceFidelityMetadataDefinition:
 
     def test_reconstruction_metadata_self_describes_definition(self):
         """The widened definition is traceable in result metadata."""

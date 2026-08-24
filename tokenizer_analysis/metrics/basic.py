@@ -41,9 +41,35 @@ _ASCII_WS = frozenset(' \t\n\r')
 WHITESPACE_DEFINITION = "ascii(space,tab,nl,cr)+unicode_Zs"
 
 
+#: Memo for _is_ws. unicodedata.category is a C call but not a free one, and
+#: reconstruction fidelity asks this question once per character of every text
+#: it scores. Bounded in practice by the alphabet of the corpus.
+_WS_MEMO: Dict[str, bool] = {}
+
+
 def _is_ws(ch: str) -> bool:
     """True for ASCII whitespace or any Unicode space separator (Zs)."""
-    return ch in _ASCII_WS or unicodedata.category(ch) == 'Zs'
+    known = _WS_MEMO.get(ch)
+    if known is None:
+        known = ch in _ASCII_WS or unicodedata.category(ch) == 'Zs'
+        _WS_MEMO[ch] = known
+    return known
+
+
+def _ws_counts(text: str) -> Tuple[int, int, int]:
+    """``(whitespace, newlines, tabs)`` in *text*.
+
+    Counted through the distinct characters rather than position by position.
+    ``_is_ws`` is a Python call and the texts here run to tens of thousands of
+    characters, so asking it once per distinct character and letting
+    ``str.count`` do the tallying moved this from the dominant cost of
+    whitespace fidelity to a rounding error on it.
+    """
+    total = 0
+    for ch in set(text):
+        if _is_ws(ch):
+            total += text.count(ch)
+    return total, text.count("\n"), text.count("\t")
 
 
 _CER_WARMUP = 50
@@ -900,6 +926,9 @@ class BasicTokenizationMetrics(BaseMetrics):
                     'cer_sum': 0.0,
                     'unk_tokens': 0, 'total_tokens': 0,
                     'ws_preserved': 0, 'ws_total': 0,
+                    'ind_preserved': 0, 'ind_total': 0,
+                    'nl_preserved': 0, 'nl_total': 0,
+                    'tab_preserved': 0, 'tab_total': 0,
                 }
             )
 
@@ -951,19 +980,20 @@ class BasicTokenizationMetrics(BaseMetrics):
                     if decoded == text:
                         stats['exact_matches'] += 1
                         if not cer_skipped:
-                            ws_total = sum(1 for c in text if _is_ws(c))
-                            stats['ws_preserved'] += ws_total
-                            stats['ws_total'] += ws_total
+                            self._accumulate_whitespace(stats, text, decoded, True)
                     else:
                         if not cer_skipped:
+                            # Both inside the timed region. --cer-time-budget
+                            # exists to bound the cost of scoring a lossy
+                            # decode, and the whitespace alignment is the same
+                            # order as the edit distance beside it. cer_elapsed
+                            # used to close before the whitespace call, so the
+                            # budget could neither see that cost nor stop it.
                             t0 = time.monotonic()
                             stats['cer_sum'] += self._character_error_rate(text, decoded)
+                            self._accumulate_whitespace(stats, text, decoded, False)
                             cer_elapsed += time.monotonic() - t0
                             n_cer_calls += 1
-
-                            ws_preserved, ws_total = self._whitespace_fidelity(text, decoded)
-                            stats['ws_preserved'] += ws_preserved
-                            stats['ws_total'] += ws_total
 
                             # Check the budget after the warmup, or as soon as
                             # the warmup has itself spent it. The call count
@@ -1076,19 +1106,14 @@ class BasicTokenizationMetrics(BaseMetrics):
                 if decoded == text:
                     stats['exact_matches'] += 1
                     if not cer_skipped:
-                        ws_total = sum(1 for c in text if _is_ws(c))
-                        stats['ws_preserved'] += ws_total
-                        stats['ws_total'] += ws_total
+                        self._accumulate_whitespace(stats, text, decoded, True)
                 else:
                     if not cer_skipped:
                         t0 = time.monotonic()
                         stats['cer_sum'] += self._character_error_rate(text, decoded)
+                        self._accumulate_whitespace(stats, text, decoded, False)
                         cer_elapsed += time.monotonic() - t0
                         n_cer_calls += 1
-
-                        ws_preserved, ws_total = self._whitespace_fidelity(text, decoded)
-                        stats['ws_preserved'] += ws_preserved
-                        stats['ws_total'] += ws_total
 
                         # Same two-sided check as the language loop above.
                         if (cer_time_budget_s > 0
@@ -1149,15 +1174,29 @@ class BasicTokenizationMetrics(BaseMetrics):
                 'cer_sum': 0.0,
                 'unk_tokens': 0, 'total_tokens': 0,
                 'ws_preserved': 0, 'ws_total': 0,
+                'ind_preserved': 0, 'ind_total': 0,
+                'nl_preserved': 0, 'nl_total': 0,
+                'tab_preserved': 0, 'tab_total': 0,
             }
 
             for domain, ds in domain_stats.items():
                 count = ds['total']
+                # No stand-in defaults. docs/OUTPUT.md's contract is that a
+                # value which could not be computed is null, and each of these
+                # four had a different zero-denominator case that read as a
+                # measurement: exact_match_rate and mean_cer 0.0 on a domain
+                # where every decode failed, unk_token_rate 0.0 for a tokenizer
+                # that declares no UNK id, whitespace_fidelity 1.0 for a text
+                # holding no whitespace at all. A mean_cer of 0.0 beside a
+                # count of 0 read as a perfect round trip.
                 per_domain[domain] = {
-                    'exact_match_rate': self.safe_divide(ds['exact_matches'], count, 0.0),
-                    'mean_cer': None if cer_skipped else self.safe_divide(ds['cer_sum'], count, 0.0),
-                    'unk_token_rate': self.safe_divide(ds['unk_tokens'], ds['total_tokens'], 0.0),
-                    'whitespace_fidelity': None if cer_skipped else self.safe_divide(ds['ws_preserved'], ds['ws_total'], 1.0),
+                    'exact_match_rate': self.safe_divide(ds['exact_matches'], count),
+                    'mean_cer': None if cer_skipped else self.safe_divide(ds['cer_sum'], count),
+                    'unk_token_rate': self.safe_divide(ds['unk_tokens'], ds['total_tokens']),
+                    'whitespace_fidelity': None if cer_skipped else self.safe_divide(ds['ws_preserved'], ds['ws_total']),
+                    'indentation_fidelity': None if cer_skipped else self.safe_divide(ds['ind_preserved'], ds['ind_total']),
+                    'newline_fidelity': None if cer_skipped else self.safe_divide(ds['nl_preserved'], ds['nl_total']),
+                    'tab_fidelity': None if cer_skipped else self.safe_divide(ds['tab_preserved'], ds['tab_total']),
                     'count': count,
                     'total_tokens': ds['total_tokens'],
                 }
@@ -1168,10 +1207,13 @@ class BasicTokenizationMetrics(BaseMetrics):
             tok_result = {
                 'by_domain': per_domain,
                 'overall': {
-                    'exact_match_rate': self.safe_divide(overall['exact_matches'], total, 0.0),
-                    'mean_cer': None if cer_skipped else self.safe_divide(overall['cer_sum'], total, 0.0),
-                    'unk_token_rate': self.safe_divide(overall['unk_tokens'], overall['total_tokens'], 0.0),
-                    'whitespace_fidelity': None if cer_skipped else self.safe_divide(overall['ws_preserved'], overall['ws_total'], 1.0),
+                    'exact_match_rate': self.safe_divide(overall['exact_matches'], total),
+                    'mean_cer': None if cer_skipped else self.safe_divide(overall['cer_sum'], total),
+                    'unk_token_rate': self.safe_divide(overall['unk_tokens'], overall['total_tokens']),
+                    'whitespace_fidelity': None if cer_skipped else self.safe_divide(overall['ws_preserved'], overall['ws_total']),
+                    'indentation_fidelity': None if cer_skipped else self.safe_divide(overall['ind_preserved'], overall['ind_total']),
+                    'newline_fidelity': None if cer_skipped else self.safe_divide(overall['nl_preserved'], overall['nl_total']),
+                    'tab_fidelity': None if cer_skipped else self.safe_divide(overall['tab_preserved'], overall['tab_total']),
                     'count': total,
                     'total_tokens': overall['total_tokens'],
                 },
@@ -1184,6 +1226,9 @@ class BasicTokenizationMetrics(BaseMetrics):
                 'mean_cer': tok_result['overall']['mean_cer'],
                 'unk_token_rate': tok_result['overall']['unk_token_rate'],
                 'whitespace_fidelity': tok_result['overall']['whitespace_fidelity'],
+                'indentation_fidelity': tok_result['overall']['indentation_fidelity'],
+                'newline_fidelity': tok_result['overall']['newline_fidelity'],
+                'tab_fidelity': tok_result['overall']['tab_fidelity'],
                 'texts_analyzed': total,
                 'total_tokens_analyzed': overall['total_tokens'],
             }
@@ -1273,43 +1318,189 @@ class BasicTokenizationMetrics(BaseMetrics):
 
         return prev[cols] / ref_len
 
+    def _accumulate_whitespace(self, stats, text: str, decoded: str, exact: bool) -> None:
+        """Add one text's whitespace outcome to a domain's accumulators.
+
+        One definition for both reconstruction loops. They have diverged
+        before, and there are four families to keep in step: overall
+        whitespace, indentation, newlines and tabs.
+
+        The three sub-rates exist because the roll-up cannot answer the
+        question this metric is for, which is whether preprocessing damaged
+        code and tabular structure. Indentation is 42% of the whitespace in the
+        bundled code corpus and 0% of FLORES prose, where 95% is inter-word
+        spaces that carry no structure, so destroying every indent in the code
+        corpus moves whitespace_fidelity only to 0.53 while collapsing inner
+        spaces harmlessly leaves it at 0.99. A Makefile tab replaced by four
+        spaces scores 0.80 and trailing whitespace stripped scores 0.50: the
+        benign change looks worse than the fatal one.
+
+        On an exact round trip nothing needs aligning: every whitespace
+        character and every indent survived by definition.
+        """
+        if exact:
+            ws, newlines, tabs = _ws_counts(text)
+            _, indents = self._indentation_fidelity(text, text)
+            stats['ws_preserved'] += ws
+            stats['ws_total'] += ws
+            stats['nl_preserved'] += newlines
+            stats['nl_total'] += newlines
+            stats['tab_preserved'] += tabs
+            stats['tab_total'] += tabs
+            stats['ind_preserved'] += indents
+            stats['ind_total'] += indents
+            return
+
+        matched, nl_matched, tab_matched, ws_total = self._whitespace_matches(text, decoded)
+        ind_matched, ind_total = self._indentation_fidelity(text, decoded)
+        stats['ws_preserved'] += matched
+        stats['ws_total'] += ws_total
+        stats['nl_preserved'] += nl_matched
+        stats['nl_total'] += text.count("\n")
+        stats['tab_preserved'] += tab_matched
+        stats['tab_total'] += text.count("\t")
+        stats['ind_preserved'] += ind_matched
+        stats['ind_total'] += ind_total
+
     @staticmethod
+    def _whitespace_matches(original: str, decoded: str) -> Tuple[int, int, int, int]:
+        """Whitespace of *original* that survives the round trip, by kind.
+
+        Returns ``(matched, matched_newlines, matched_tabs, total)``, all
+        counted over *original*. ``matched`` includes the newline and tab
+        counts, so a caller wanting spaces alone subtracts them.
+
+        A whitespace character counts as preserved when it is matched under a
+        maximum-length common subsequence of the two full texts, choosing among
+        those of maximum length the one matching the most whitespace. Two
+        cheaper rules were measured and rejected. A greedy forward scan, which
+        this used to be, left its pointer behind on any character it could not
+        match, so every later whitespace was compared at the wrong index and
+        intact whitespace counted as lost: "El nino esta aqui" decoded from
+        "El nino esta aqui" with the accents dropped reported 2 of 3. Aligning
+        the two whitespace streams alone is context-blind and credits
+        whitespace that was destroyed: "hello world" decoded as "helloworld "
+        scores 1 of 1 for a deleted word boundary against a space appended
+        somewhere else.
+
+        The common prefix and suffix are matched by construction and their
+        whitespace credited without entering the table, which is what keeps
+        this affordable. An untrimmed table over a 39.6k-character text with
+        one substituted character ran 7.9 seconds against 3.4 milliseconds for
+        the character error rate it shares a time budget with. Trimming was
+        verified to change no result, over 974,974 pairs against an oracle that
+        enumerates subsequences rather than restating this table.
+
+        The table carries the newline and tab tallies of its own optimum
+        instead of being walked back afterward, so the whole computation stays
+        in two rows. A traceback would need the full table, which on a lossy
+        decode of a large file is the size of the text squared.
+        """
+        total, total_nl, total_tab = _ws_counts(original)
+        if total == 0:
+            return (0, 0, 0, 0)
+        if original == decoded:
+            return (total, total_nl, total_tab, total)
+
+        lim = min(len(original), len(decoded))
+        pre = 0
+        while pre < lim and original[pre] == decoded[pre]:
+            pre += 1
+        suf = 0
+        while (suf < lim - pre
+               and original[len(original) - 1 - suf] == decoded[len(decoded) - 1 - suf]):
+            suf += 1
+        edges = original[:pre] + original[len(original) - suf:]
+        base_ws, base_nl, base_tab = _ws_counts(edges)
+
+        a = original[pre:len(original) - suf]
+        b = decoded[pre:len(decoded) - suf]
+        n, m = len(a), len(b)
+        # Cell: (length, whitespace, newlines, tabs). Ordered on the first two
+        # only; the last two ride along so the split that is reported belongs
+        # to the alignment that was actually chosen.
+        prev = [(0, 0, 0, 0)] * (m + 1)
+        for i in range(n - 1, -1, -1):
+            cur = [(0, 0, 0, 0)] * (m + 1)
+            ai = a[i]
+            ai_ws = 1 if _is_ws(ai) else 0
+            ai_nl = 1 if ai == "\n" else 0
+            ai_tab = 1 if ai == "\t" else 0
+            for k in range(m - 1, -1, -1):
+                if ai == b[k]:
+                    L, W, N, T = prev[k + 1]
+                    cur[k] = (L + 1, W + ai_ws, N + ai_nl, T + ai_tab)
+                else:
+                    down = prev[k]
+                    right = cur[k + 1]
+                    cur[k] = down if (down[0], down[1]) >= (right[0], right[1]) else right
+            prev = cur
+
+        _, ws, nl, tab = prev[0]
+        return (ws + base_ws, nl + base_nl, tab + base_tab, total)
+
+    @classmethod
     def _whitespace_fidelity(
+        cls,
         original: str,
         decoded: str,
     ) -> Tuple[int, int]:
-        """Count whitespace chars preserved through encode-decode round-trip.
+        """``(num_preserved, num_total_ws)`` in *original*.
 
-        Uses a greedy forward scan with indexed lookup to align original
-        characters to decoded characters, then checks whether each
-        whitespace position in the original is preserved.
-
-        Returns ``(num_preserved, num_total_ws)`` in the original.
+        The pair that the reconstruction loops and
+        ``diagnostics/sanity_check.py`` accumulate. See
+        ``_whitespace_matches`` for the rule.
         """
-        total_ws = sum(1 for c in original if _is_ws(c))
-        if total_ws == 0:
+        matched, _nl, _tab, total = cls._whitespace_matches(original, decoded)
+        return (matched, total)
+
+    @staticmethod
+    def _indentation_fidelity(original: str, decoded: str) -> Tuple[int, int]:
+        """Lines of *original* whose leading whitespace survives, and how many have any.
+
+        Run-exact, deliberately. Indentation depth is a property of the whole
+        run, so a four-space indent arriving as three is broken code rather
+        than three quarters preserved, and the character count that
+        ``whitespace_fidelity`` reports gives it 0.75. Each line's leading
+        whitespace is compared as one string.
+
+        The indents are matched as a sequence rather than line against line, so
+        a dropped or inserted line shifts nothing after it. Blank lines carry
+        no indentation to preserve and are skipped on both sides.
+
+        Returns ``(num_preserved, num_lines_with_indentation)``.
+        """
+        def indents(text: str) -> List[str]:
+            out: List[str] = []
+            for line in text.split("\n"):
+                if not line.strip():
+                    continue
+                lead = line[:len(line) - len(line.lstrip())]
+                if lead:
+                    out.append(lead)
+            return out
+
+        a, b = indents(original), indents(decoded)
+        total = len(a)
+        if total == 0:
             return (0, 0)
-
-        if original == decoded:
-            return (total_ws, total_ws)
-
-        # Greedy forward scan with indexed lookup
-        char_positions = defaultdict(list)
-        for i, c in enumerate(decoded):
-            char_positions[c].append(i)
-
-        preserved = 0
-        j = 0
-        for c in original:
-            if not _is_ws(c):
-                positions = char_positions.get(c)
-                if positions is not None:
-                    idx = bisect_left(positions, j)
-                    if idx < len(positions):
-                        j = positions[idx] + 1
-            else:
-                if j < len(decoded) and decoded[j] == c:
-                    preserved += 1
-                    j += 1
-
-        return (preserved, total_ws)
+        # Same trim as the character alignment, for the same reason: an
+        # unchanged or lightly changed file has every indent in the common
+        # prefix, which turns a table over the whole file into no table at all.
+        lim = min(len(a), len(b))
+        pre = 0
+        while pre < lim and a[pre] == b[pre]:
+            pre += 1
+        suf = 0
+        while suf < lim - pre and a[len(a) - 1 - suf] == b[len(b) - 1 - suf]:
+            suf += 1
+        credited = pre + suf
+        a, b = a[pre:len(a) - suf], b[pre:len(b) - suf]
+        n, m = len(a), len(b)
+        prev = [0] * (m + 1)
+        for i in range(n - 1, -1, -1):
+            cur = [0] * (m + 1)
+            for k in range(m - 1, -1, -1):
+                cur[k] = prev[k + 1] + 1 if a[i] == b[k] else max(prev[k], cur[k + 1])
+            prev = cur
+        return (prev[0] + credited, total)

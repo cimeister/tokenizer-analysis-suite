@@ -523,10 +523,9 @@ that tokenizer, distinguishing a skipped value from a measured one.
 ### UNK token rate (`unk_token_rate`)
 
 The fraction of encoded tokens equal to the tokenizer's UNK token id: how much
-of the input the tokenizer has no representation for. 0.0 means either no
-unknown tokens were produced or the tokenizer reports no UNK token id at all,
-in which case the count of UNK tokens is zero by construction rather than by
-measurement. The two cases are not distinguishable from `unk_token_rate` alone.
+of the input the tokenizer has no representation for. 0.0 means no unknown
+tokens were produced. A tokenizer that declares no UNK token id, or a domain
+that scored no tokens, has no denominator and publishes `null`.
 
 **Example:** encoding `"𝕳𝖊𝖑𝖑𝖔"` to `[UNK, UNK, UNK, UNK, UNK]` gives UNK rate
 1.0. Encoding `"Hello"` to `[15496]` gives 0.0.
@@ -539,14 +538,44 @@ measurement. The two cases are not distinguishable from `unk_token_rate` alone.
 > ideographic space scores differently.
 
 The fraction of whitespace characters (spaces, tabs, newlines, plus the Unicode
-Zs category) in the original text preserved through the round trip. Characters
-are paired by a greedy forward scan. 1.0 means either every whitespace
-character round-tripped or the evaluated text held no whitespace at all, in
-which case fidelity is 1.0 by convention rather than by measurement. The two
-cases are not distinguishable from `whitespace_fidelity` alone.
+Zs category) in the original text preserved through the round trip. A character
+counts as preserved when an alignment of the two texts matches it: specifically
+a maximum-length common subsequence of the two, choosing among those of maximum
+length the one that matches the most whitespace. A text holding no whitespace
+has no denominator and publishes `null`, not 1.0.
+
+Matching against the full text rather than against the whitespace alone is what
+makes this a fidelity measure. `"hello world"` decoded as `"helloworld "` scores
+0 of 1: the word boundary was deleted and a space appeared somewhere else.
 
 **Example:** original `"a b\tc"` decoded as `"a b c"`, the tab replaced by a
 space, preserves 1 of 2 whitespace characters, fidelity 0.5.
+
+### Structural whitespace (`indentation_fidelity`, `newline_fidelity`, `tab_fidelity`)
+
+`whitespace_fidelity` weights every whitespace character equally, which is not
+what a reader vetting damage to code or tabular preprocessing needs. Indentation
+is 42% of the whitespace in the bundled code corpus and 0% of FLORES prose,
+where 95% is inter-word spaces that carry no structure. Destroying every indent
+in the code corpus moves the roll-up only to 0.53, while collapsing inner spaces
+harmlessly leaves it at 0.99; a Makefile tab replaced by four spaces scores 0.80
+where trailing whitespace stripped scores 0.50.
+
+Three sub-rates are published beside it, each `null` when its denominator is
+zero:
+
+- `indentation_fidelity`: of the original's non-blank lines that begin with
+  whitespace, the fraction whose leading whitespace survives **exactly**. Run
+  exact, because indentation depth is a property of the whole run: four spaces
+  arriving as three is broken code, not 0.75 preserved. Indents are matched as a
+  sequence, so a dropped line does not shift the rest.
+- `newline_fidelity` and `tab_fidelity`: the newline and tab characters matched
+  by the same alignment `whitespace_fidelity` uses, so the three cannot
+  disagree.
+
+**Coverage limit.** No bundled corpus contains tabular data, and 470 of the
+bundled code corpus's 471 tabs are indentation. A passing `tab_fidelity` is
+evidence about code indentation, not about TSV or fixed-width data.
 
 ## UTF-8 character boundary metrics (`utf8_token_integrity`)
 
