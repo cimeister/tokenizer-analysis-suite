@@ -750,9 +750,11 @@ class UnifiedTokenizerAnalyzer:
         are therefore recomputed from the group's own languages, using the raw
         counts carried on each ``by_language`` entry.
 
-        Code and math rows are namespaced ("code:python", "math:math") in the
-        pooled ``by_language``, so matching against FLORES codes selects the
-        prose rows only, which is exactly the intended scope.
+        Code and math rows are keyed "code_python" and "math" in the pooled
+        ``by_language``, matching reconstruction fidelity. Matching against
+        FLORES codes therefore selects the prose rows only, and a prose
+        language whose name would collide with one of those keys aborts in
+        _merge_operator_accs rather than reaching this filter.
 
         The prose/code/math ``by_domain`` split is a corpus-level view, not a
         per-language-group one; it is reported once in the top-level results.

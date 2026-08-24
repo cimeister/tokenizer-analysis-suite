@@ -110,7 +110,10 @@ On a parallel corpus it is the one to read.
 the last splitting the pooled global by corpus. `by_domain` has `code` and
 `math`, plus `prose` when `--operator-prose-domain` was passed, and `global`
 pools whichever ran. Its `per_language` keys natural languages (`arb_Arab`) and
-programming languages (`code:bash`) in one dict.
+programming languages (`code_bash`) in one dict, spelled the same way
+reconstruction fidelity spells its own per-domain keys. A prose language whose
+name would collide with one of these keys aborts the run rather than being
+summed into it.
 
 The slimmed file omits four kinds of field.
 

@@ -1825,8 +1825,8 @@ class TestOperatorIsolationDomains:
 
         langs = ops["per_tokenizer"][self.TOK]["by_language"]
         assert "eng_Latn" in langs                       # prose stays a bare FLORES code
-        assert any(k.startswith("code:") for k in langs)  # code is marked
-        assert "math:math" in langs                       # math is marked
+        assert any(k.startswith("code_") for k in langs)  # code is marked
+        assert "math" in langs                            # math is marked
         # no bare code language leaked into the prose namespace
         assert "python" not in langs
 
@@ -2362,3 +2362,75 @@ class TestOperatorScoresMatchReverseMapReference:
                 "this source exists to exercise the overlap rule and reported "
                 "no character claimed by two tokens"
             )
+
+
+class TestTheOperatorDomainKeysMatchReconstructionFidelity:
+    """Two formats for the same thing. reconstruction_fidelity publishes
+    `code_bash` and a bare `math` in per_domain; operator isolation published
+    `code:bash` and `math:math` in per_language. No consumer depended on
+    either, and a reader grepping across blocks found neither.
+
+    The colon was doing real work: `_filter_operator_results` selects a
+    language group with `l in target_languages`, so a namespace a FLORES code
+    cannot contain kept code and math rows out. Dropping it needs the
+    collision closed rather than moved, which is what the abort below does.
+    """
+
+    @staticmethod
+    def _merge(domain_accs):
+        from tokenizer_analysis.metrics.math import DigitBoundaryMetrics
+        return DigitBoundaryMetrics._merge_operator_accs(domain_accs)
+
+    @staticmethod
+    def _acc(counts=1):
+        return {"tok": {"python": {"arithmetic": {
+            "isolated": counts, "total": counts,
+            "compound_ok": 0, "compound_total": 0}}}}
+
+    def test_code_and_math_use_the_underscore_form(self):
+        accs = {
+            "prose": {"tok": {"eng_Latn": {"arithmetic": {
+                "isolated": 1, "total": 1, "compound_ok": 0, "compound_total": 0}}}},
+            "code": self._acc(),
+            "math": {"tok": {"math": {"arithmetic": {
+                "isolated": 2, "total": 2, "compound_ok": 0, "compound_total": 0}}}},
+        }
+        merged = self._merge(accs)
+        assert set(merged["tok"]) == {"eng_Latn", "code_python", "math"}
+
+    def test_a_prose_language_colliding_with_a_domain_key_aborts(self):
+        """--input names languages after files, so a corpus holding math.txt
+        produces a prose language called `math`. Summing it with the math
+        corpus would put math-corpus operators into every language group that
+        selects it, which is the silent substitution the colon prevented.
+        """
+        accs = {
+            "prose": {"tok": {"math": {"arithmetic": {
+                "isolated": 1, "total": 1, "compound_ok": 0, "compound_total": 0}}}},
+            "math": {"tok": {"math": {"arithmetic": {
+                "isolated": 2, "total": 2, "compound_ok": 0, "compound_total": 0}}}},
+        }
+        with pytest.raises(ValueError, match="math"):
+            self._merge(accs)
+
+    def test_a_prose_language_named_like_a_code_key_aborts_too(self):
+        accs = {
+            "prose": {"tok": {"code_python": {"arithmetic": {
+                "isolated": 1, "total": 1, "compound_ok": 0, "compound_total": 0}}}},
+            "code": self._acc(),
+        }
+        with pytest.raises(ValueError, match="code_python"):
+            self._merge(accs)
+
+    def test_ordinary_corpora_do_not_abort(self):
+        """The benign half: the abort must not fire on any real corpus."""
+        accs = {
+            "prose": {"tok": {"eng_Latn": {"arithmetic": {
+                "isolated": 1, "total": 1, "compound_ok": 0, "compound_total": 0}}}},
+            "code": self._acc(),
+            "math": {"tok": {"math": {"arithmetic": {
+                "isolated": 2, "total": 2, "compound_ok": 0, "compound_total": 0}}}},
+        }
+        merged = self._merge(accs)
+        assert merged["tok"]["code_python"]["arithmetic"]["total"] == 1
+        assert merged["tok"]["math"]["arithmetic"]["total"] == 2

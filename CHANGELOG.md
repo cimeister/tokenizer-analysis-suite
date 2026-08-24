@@ -171,6 +171,19 @@ conflicting flags.
 
 ## Releases
 
+- **Unreleased** `operator_isolation_rate.per_language` keys code and math the
+  way `reconstruction_fidelity.per_domain` does: `code_bash` and a bare `math`,
+  where it published `code:bash` and `math:math`. One results file named the
+  same thing two ways, and neither spelling was documented on the
+  reconstruction side. **Key names change** in that block; no value moves. The
+  colon was load-bearing, not cosmetic: `_filter_operator_results` selects a
+  language group with `l in target_languages`, and a namespace no FLORES code
+  can contain kept code and math rows out. Since `--input` names languages
+  after files, a corpus holding `math.txt` now collides, so the collision is
+  refused rather than relocated: two domains that would publish under one key
+  abort naming it, instead of being summed into one number that a language
+  group would then select.
+
 - **Unreleased** Three library-path defects. A `Corpus` label given a bare
   string was split into one text per character, so `"x = 1"` became five texts
   and every per-text metric scored single characters; it is refused with the

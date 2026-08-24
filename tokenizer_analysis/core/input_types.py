@@ -107,7 +107,7 @@ PROSE_CORPUS = "prose"
 CODE_CORPUS = "code"
 #: Used twice for math: as the corpus name, and as the single label inside it,
 #: because the math corpus has no per-language split. The published
-#: ``by_language`` key for it is therefore "math:math".
+#: ``by_language`` key for it is therefore the bare corpus name, "math".
 MATH_CORPUS = "math"
 
 #: What a provider raises when it cannot supply a tokenizer object for a name

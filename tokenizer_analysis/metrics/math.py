@@ -1090,8 +1090,9 @@ class DigitBoundaryMetrics(BaseMetrics):
 
         return acc
 
-    @staticmethod
+    @classmethod
     def _merge_operator_accs(
+        cls,
         domain_accs: Dict[str, Dict[str, Dict[str, Dict[str, Dict[str, int]]]]]
     ) -> Dict[str, Dict[str, Dict[str, Dict[str, int]]]]:
         """Sum the per-domain accumulators into the pooled accumulator.
@@ -1099,25 +1100,66 @@ class DigitBoundaryMetrics(BaseMetrics):
         The three domains do not share a language namespace: prose is keyed by
         FLORES code, code by programming language, math by the literal "math".
         Prose keys are kept bare so existing per-language consumers and the
-        language-group filter keep matching FLORES codes. Code and math keys are
-        namespaced ("code:python", "math:math") so the pooled ``by_language``
-        cannot silently sum a code language into a prose one, and a reader can
-        tell which domain a row came from.
+        language-group filter keep matching FLORES codes. Code and math keys
+        take the same form reconstruction fidelity publishes in ``per_domain``,
+        ``code_<lang>`` and a bare ``math``, so one results file does not name
+        the same thing two ways.
+
+        The published key used to be ``code:python`` and ``math:math``, and the
+        colon was load-bearing rather than cosmetic: a namespace no FLORES code
+        can contain kept a code or math row from being summed into a prose one,
+        and from being selected by ``_filter_operator_results``, which picks a
+        language group with ``l in target_languages``. The underscore form has
+        no such guarantee, since ``--input`` names languages after files and a
+        corpus holding ``math.txt`` produces a prose language called ``math``.
+
+        So the pairing is kept whole here and the collision is refused rather
+        than relocated: two domains that would publish under one key abort,
+        naming it. Reporting one number for both is the substitution this
+        package refuses everywhere else, and it would be invisible in the
+        output.
         """
         merged: Dict[str, Dict[str, Dict[str, Dict[str, int]]]] = defaultdict(
             lambda: defaultdict(lambda: defaultdict(
                 lambda: {"isolated": 0, "total": 0, "compound_ok": 0, "compound_total": 0}
             ))
         )
+        # published key -> the domain that claimed it, per tokenizer
+        claimed: Dict[str, Dict[str, str]] = defaultdict(dict)
         for domain, acc in domain_accs.items():
             for tok_name, langs in acc.items():
                 for lang, categories in langs.items():
-                    key = lang if domain == "prose" else f"{domain}:{lang}"
+                    key = cls._published_language_key(domain, lang)
+                    owner = claimed[tok_name].setdefault(key, domain)
+                    if owner != domain:
+                        raise ValueError(
+                            f"The {owner!r} and {domain!r} domains would both "
+                            f"publish operator counts under by_language[{key!r}] "
+                            f"for {tok_name!r}. Summing them would report one "
+                            "number for two corpora, and a language group "
+                            "selecting that key would pull in the other domain. "
+                            "Rename the offending language in the input corpus."
+                        )
                     for category, counts in categories.items():
                         target = merged[tok_name][key][category]
                         for count_key in ("isolated", "total", "compound_ok", "compound_total"):
                             target[count_key] += counts[count_key]
         return merged
+
+    @staticmethod
+    def _published_language_key(domain: str, lang: str) -> str:
+        """The ``by_language`` key for one (domain, language) pair.
+
+        The same form ``reconstruction_fidelity`` uses for its ``per_domain``
+        keys, in metrics/basic.py: prose bare, code as ``code_<lang>``, math as
+        the bare corpus name. One definition, because the two files publishing
+        different spellings of the same thing is what this replaced.
+        """
+        if domain == PROSE_CORPUS:
+            return lang
+        if domain == CODE_CORPUS:
+            return f"{CODE_CORPUS}_{lang}"
+        return domain
 
     # ------------------------------------------------------------------
     # Result builders
