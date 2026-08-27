@@ -171,6 +171,26 @@ conflicting flags.
 
 ## Releases
 
+- **Unreleased** `benchmarks/open_source/` regenerated. The committed results
+  were produced at package version 1.0.2, before the shared-corpora refactor and
+  before every fix since, so the documentation described fields the file did not
+  contain. Regenerated at 1.1.0 with a clean tree. Every difference is accounted
+  for by a change already recorded above: 270 leaves each for
+  `indentation_fidelity`, `newline_fidelity`, `tab_fidelity` and
+  `decode_failures`; 126 for `zero_token_documents`; 144
+  `operator_isolation_rate.per_language` keys renamed from the colon form to the
+  underscore form; four aggregation labels and one `count_unit` corrected; and
+  four `whitespace_fidelity` values, all Hindi text for `gpt-neox-20b` and
+  `qwen-2.5`, moving from 0.9978 and 0.999996 to 1.0, because the old scan
+  counted whitespace as lost where it had survived. `REPORT.md` changed only its
+  provenance line, so no headline number moved.
+
+  `docs/OUTPUT.md` named `decode_failures` at a path it does not occupy. The
+  field is under `per_tokenizer.<tok>.global`. The documentation was wrong, not
+  the code, and the test exemption added when the artifact lagged behind is
+  removed: it could never have expired on its own, because the path it named
+  was never going to resolve.
+
 - **Unreleased** `operator_isolation_rate.per_language` keys code and math the
   way `reconstruction_fidelity.per_domain` does: `code_bash` and a bare `math`,
   where it published `code:bash` and `math:math`. One results file named the

@@ -58,20 +58,6 @@ PATH_PATTERN = re.compile(r"`([a-z0-9_]+(?:\.[a-zA-Z0-9_<>]+)+)`")
 # reason it is not simply a stale document.
 KNOWN_PRE_SLIM_PATHS: set = set()
 
-# Fields this release adds that the committed benchmark artifact predates. The
-# artifact is regenerated once, at the end of the fix work, and every entry
-# here must go with it: an entry that survives that regeneration is a
-# documented path the code does not produce, which is the failure this whole
-# test exists to catch.
-#
-# Each is asserted below to be absent from the artifact, so an entry cannot
-# outlive its reason unnoticed: once the artifact carries the field, the
-# assertion fails and the entry has to be deleted.
-PENDING_ARTIFACT_REGENERATION: set = {
-    "reconstruction_fidelity.decode_failures",
-}
-
-
 def _documented_paths():
     """Every dotted path the docs name, with the file and line it came from."""
     for name in DOCS:
@@ -110,9 +96,7 @@ def test_documented_result_paths_exist():
     for doc, line_no, dotted in _documented_paths():
         parts = dotted.split(".")
         # Only paths rooted at a metric this results file holds are checkable.
-        if (parts[0] not in results
-                or dotted in KNOWN_PRE_SLIM_PATHS
-                or dotted in PENDING_ARTIFACT_REGENERATION):
+        if parts[0] not in results or dotted in KNOWN_PRE_SLIM_PATHS:
             continue
         checked += 1
         ok, _ = _resolve(results, parts, tokenizer)
@@ -122,14 +106,3 @@ def test_documented_result_paths_exist():
     assert checked > 0, "no documented result paths were found to check"
     assert not unresolved, "\n".join(unresolved)
 
-    # An exemption that has outlived its reason is a hole in this test.
-    stale = []
-    for dotted in sorted(PENDING_ARTIFACT_REGENERATION):
-        ok, _ = _resolve(results, dotted.split("."), tokenizer)
-        if ok:
-            stale.append(dotted)
-    assert not stale, (
-        "the committed artifact now holds "
-        + ", ".join(stale)
-        + "; delete these from PENDING_ARTIFACT_REGENERATION"
-    )
