@@ -276,9 +276,10 @@ conflicting flags.
   refused rather than relocated: two domains that would publish under one key
   abort naming it, instead of being summed into one number that a language
   group would then select. The abort covers `operator_isolation_rate` only, and
-  only with `--operator-prose-domain`, which is off by default; the per-domain
-  block of reconstruction fidelity has the same collision and pools silently.
-  Documented rather than fixed here.
+  only with `--operator-prose-domain`, which is off by default. The per-domain
+  block of reconstruction fidelity had the same collision and pooled silently;
+  that was recorded here when this entry was written and is fixed in the entry
+  above about a prose language name colliding with a code or maths domain.
 
 - **Unreleased** Three library-path defects. A `Corpus` label given a bare
   string was split into one text per character, so `"x = 1"` became five texts
