@@ -92,14 +92,30 @@ class RawTokenizationProvider(InputProvider):
                     #
                     # This loop is deliberately not
                     # InputProvider._encode_corpus, which encodes the
-                    # registered corpora. The two differ in two ways, both of
-                    # which move published numbers:
+                    # registered corpora. An earlier version of this comment
+                    # said the two differ in two ways. They differ in at least
+                    # these, and the first four move published numbers:
                     #
-                    # 1. This one raises when a tokenizer cannot encode a text;
-                    #    _encode_corpus skips that tokenizer with a warning.
-                    # 2. This one records per-sample encode times, published as
+                    # 1. A tokenizer that cannot encode raw text: _encode_corpus
+                    #    checks before encoding and skips it with a warning.
+                    #    This loop has no such check, so whatever the wrapper
+                    #    does propagates.
+                    # 2. This loop records encode times, published as
                     #    encoding_speed; _encode_corpus records none, so a
                     #    derived corpus does not enter that measurement.
+                    # 3. A provider that cannot supply the tokenizer object:
+                    #    _encode_corpus catches that and skips the tokenizer.
+                    #    Here spec.tokenizer is always present.
+                    # 4. A tokenizer with no encode_batch_with_offsets: this
+                    #    loop calls it regardless, _encode_corpus has a
+                    #    per-text path.
+                    # 5. Malformed ids from the batch: this loop checks the
+                    #    type and names the language; _encode_corpus checks for
+                    #    None ids and names the corpus and label.
+                    # 6. The label passed to check_batch_pairing.
+                    # 7. TokenizedData.metadata: populated here, empty there.
+                    # 8. This loop caches its result and frees the source
+                    #    texts afterwards; _encode_corpus does neither.
                     #
                     # Unifying them would change which tokenizers are skipped
                     # and what encoding_speed measures.
@@ -153,7 +169,13 @@ class RawTokenizationProvider(InputProvider):
     
     @property
     def encode_times(self) -> Dict[str, List[float]]:
-        """Per-sample encoding times (seconds) for each tokenizer.
+        """Encoding time in seconds, one entry per text, for each tokenizer.
+
+        Not a per-sample measurement despite there being one entry per sample:
+        the texts of a language are encoded in one batch, and that batch's
+        elapsed time divided by its size is written into every entry. Two
+        entries from the same batch are therefore identical, and the spread
+        within a language says nothing about individual texts.
 
         Populated after ``get_tokenized_data()`` has been called.
         """
