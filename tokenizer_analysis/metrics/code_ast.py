@@ -286,13 +286,6 @@ class ASTBoundaryMetrics(BaseMetrics):
     # Timeout (seconds) for each per-language tree-sitter subprocess.
     _PER_LANG_TIMEOUT = DEFAULT_PARSE_TIMEOUT_S
 
-    # The registered code corpus, or None when this metric loaded its own. A
-    # class attribute rather than an instance one because the tests build this
-    # class with object.__new__ and set only the attributes they exercise; an
-    # attribute that exists only after __init__ ran turns those into
-    # AttributeError.
-    _code_corpus: Optional[Corpus] = None
-
     def __init__(
         self,
         input_provider: InputProvider,

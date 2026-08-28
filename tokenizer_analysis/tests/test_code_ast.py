@@ -60,6 +60,10 @@ def _make_instance():
     inst._special_token_cache = {}
     inst._subword_markers = None
     inst._subword_marker_cache = {}
+    # Set here rather than declared on the class. It used to be a class
+    # attribute purely so these bare instances would not raise, which meant
+    # every new attribute on the production class needed the same treatment.
+    inst._code_corpus = None
     return inst
 
 
@@ -831,14 +835,7 @@ class TestEndToEnd:
         provider = _MockProvider("char_tok", char_tok)
 
         # Build metrics with a single Python snippet
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -872,14 +869,7 @@ class TestEndToEnd:
         char_tok = _CharTokenizer()
         provider = _MockProvider("test_tok", char_tok)
 
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -911,14 +901,7 @@ class TestEndToEnd:
         char_tok = _CharTokenizer()
         provider = _MockProvider("test_tok", char_tok)
 
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -945,14 +928,7 @@ class TestEndToEnd:
         char_tok = _CharTokenizer()
         provider = _MockProvider("test_tok", char_tok)
 
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -988,14 +964,7 @@ class TestEndToEnd:
         tok = _PerfectTokenizer({snippet: tokens})
         provider = _MockProvider("perfect", tok)
 
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -1066,14 +1035,7 @@ class TestErrorSpansAreCountedNotScored:
         return n
 
     def _run(self, ts_pack):
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -1867,14 +1829,7 @@ class TestIdentifierFragmentationE2E:
         char_tok = _CharTokenizer()
         provider = _MockProvider("char_tok", char_tok)
 
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -1906,14 +1861,7 @@ class TestIdentifierFragmentationE2E:
         tok = _PerfectTokenizer({snippet: tokens})
         provider = _MockProvider("perfect", tok)
 
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -1951,14 +1899,7 @@ class TestIndentationConsistencyE2E:
         char_tok = _CharTokenizer()
         provider = _MockProvider("char_tok", char_tok)
 
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -1986,14 +1927,7 @@ class TestIndentationConsistencyE2E:
         char_tok = _CharTokenizer()
         provider = _MockProvider("char_tok", char_tok)
 
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -2032,14 +1966,7 @@ class TestIndentationConsistencyE2E:
         tok = _PerfectTokenizer({snippet: tokens})
         provider = _MockProvider("perf", tok)
 
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -2092,14 +2019,7 @@ class TestIndentationConsistencyE2E:
         tok = _PerfectTokenizer({snippet: tokens})
         provider = _MockProvider("const_ws", tok)
 
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -2140,14 +2060,7 @@ class TestIndentationConsistencyE2E:
         tok = _PerfectTokenizer({snippet: tokens})
         provider = _MockProvider("inv", tok)
 
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -2180,14 +2093,7 @@ class TestIndentationConsistencyE2E:
         tok = _PerfectTokenizer({snippet: tokens})
         provider = _MockProvider("shallow", tok)
 
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -2231,14 +2137,7 @@ class TestIndentationConsistencyE2E:
         tok = _PerfectTokenizer({snippet: tokens})
         provider = _MockProvider("prop", tok)
 
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -2517,14 +2416,7 @@ class TestWhitespaceStrippingTokenizer:
         tok = _WSStrippingTokenizer(tokens, offsets)
         provider = _MockProvider("ws_strip", tok)
 
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -2609,14 +2501,7 @@ class TestIndentationConsistencyBPE:
         tok = _PerfectTokenizer({snippet: tokens})
         provider = _MockProvider("bpe", tok)
 
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -2646,14 +2531,7 @@ class TestIndentationConsistencyBPE:
         tok = _PerfectTokenizer({snippet: tokens})
         provider = _MockProvider("bpe_uni", tok)
 
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -2697,14 +2575,7 @@ class TestIndentationConsistencyBPE:
         tok = _PerfectTokenizer({snippet: tokens})
         provider = _MockProvider("bpe_const", tok)
 
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -2759,14 +2630,7 @@ class TestIndentationConsistencySP:
         tok = _PerfectTokenizer({snippet: tokens})
         provider = _MockProvider("sp", tok)
 
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -3684,3 +3548,39 @@ class TestAnEmptyListLabelDoesNotPassTheEmptyCorpusGuard:
         provider = self._provider({"python": ["x = 1\n"]})
         metrics = ASTBoundaryMetrics(provider)
         assert metrics.code_loader.get_code_snippets("python") == ["x = 1\n"]
+
+
+class TestTheClassCarriesNoInstanceStateForTheTestsSake:
+    """`_code_corpus` was declared on the class so that tests building the
+    object with `object.__new__`, which skips the constructor, would not fail.
+
+    That made every future attribute on this class need the same treatment: add
+    one without a class-level default and 24 tests break. The tests set what
+    they need through a helper instead, so the class carries no state on its
+    behalf.
+    """
+
+    def test_the_corpus_is_set_on_the_instance_not_the_class(self):
+        assert not hasattr(ASTBoundaryMetrics, "_code_corpus"), (
+            "a class-level default here means the tests are dictating the "
+            "shape of the production class"
+        )
+
+    def test_a_real_instance_still_has_it(self):
+        from tokenizer_analysis.core.input_providers import RawTokenizationProvider
+        from tokenizer_analysis.core.input_types import InputSpecification
+
+        class _Tok:
+            def can_encode(self): return True
+            def encode(self, t): return [ord(c) for c in t]
+            def encode_with_offsets(self, t):
+                return self.encode(t), [(i, i + 1) for i in range(len(t))]
+            def encode_batch_with_offsets(self, ts):
+                return [self.encode_with_offsets(t) for t in ts]
+            def get_vocab_size(self): return 100
+
+        provider = RawTokenizationProvider({
+            "tok": InputSpecification(tokenizer=_Tok(), texts={"eng_Latn": ["hi"]}),
+        })
+        metrics = ASTBoundaryMetrics(provider)
+        assert "_code_corpus" in metrics.__dict__
