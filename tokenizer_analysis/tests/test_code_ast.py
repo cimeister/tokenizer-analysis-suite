@@ -3630,3 +3630,52 @@ class TestTheAbortHappensBeforeTheParsing:
         assert calls == [], (
             "the corpus was parsed before the check that rejected it"
         )
+
+
+class TestEachEmptyCorpusCheckDoesItsOwnThing:
+    """Four sites test the same condition and do four different things. Only
+    the first had a test, and reverting any of the other three left the whole
+    file passing.
+
+    They are not copies of one guard: two raise with different messages, one
+    falls back to the bundled samples, and one returns an error block instead
+    of raising. A test written as though they were the same would be wrong
+    about three of them.
+    """
+
+    def test_a_code_config_that_reads_nothing_names_the_config(self, tmp_path):
+        """Distinct from the registered-corpus case: this one names the paths
+        the caller gave, because the caller can act on that.
+        """
+        empty = tmp_path / "nothing"
+        empty.mkdir()
+        provider = _MockProvider("tok", _CharTokenizer())
+
+        with pytest.raises(ValueError, match="no snippet was read"):
+            ASTBoundaryMetrics(provider, code_config={"python": str(empty)})
+
+    def test_no_code_config_falls_back_to_the_bundled_samples(self):
+        """Not a guard at all. With nothing registered and no config, the
+        bundled samples are the documented input, so this site fills them in
+        rather than refusing.
+        """
+        provider = _MockProvider("tok", _CharTokenizer())
+        metrics = ASTBoundaryMetrics(provider)
+        assert metrics.code_loader.code_snippets, "the samples should be loaded"
+        assert "python" in metrics.code_loader.code_snippets
+
+    def test_computing_with_nothing_loaded_reports_rather_than_raises(self):
+        """The fourth site is reached after construction, so it returns a
+        result saying nothing was measured instead of raising.
+        """
+        inst = _make_instance()
+        inst.input_provider = _MockProvider("tok", _CharTokenizer())
+        inst.tokenizer_names = ["tok"]
+        inst._treesitter_available = True
+        inst._ts_pack = None
+        inst._parser_cache = {}
+        inst.code_loader = CodeDataLoader(None)
+        inst.code_loader.code_snippets = {"python": []}
+
+        results = inst.compute()
+        assert results["ast_boundary_alignment"]["error"] == "No code data loaded"
