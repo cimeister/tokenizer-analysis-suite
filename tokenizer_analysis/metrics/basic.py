@@ -723,8 +723,24 @@ class BasicTokenizationMetrics(BaseMetrics):
         avoided with an ids-only provider method: such a method would either
         encode the corpus a second time or need a second cache, and the
         configuration it would serve is narrow (a real code or math corpus with
-        both the AST metrics and the digit metrics turned off). Its cost there
-        is bounded. For HuggingFaceTokenizer and CustomBPETokenizer the offsets
+        both the AST metrics and the digit metrics turned off).
+
+        The cost, since "bounded" was doing a lot of work in an earlier version
+        of this sentence. Measured over 300 of the 1500 files
+        benchmarks/open_source/code_ast_config.json names, for one tokenizer:
+        118 MB of offsets against 25 MB of ids and 2.7 MB of source text, so
+        offsets are about four fifths of what is retained. The full corpus is
+        five times that and a run holds one entry per tokenizer, so a
+        nine-tokenizer benchmark keeps a few gigabytes of offsets. That is a
+        real number, not a rounding error.
+
+        It is still not worth avoiding, for a reason the size does not change:
+        offsets are read at six sites across the AST and digit metrics, and
+        main.py builds DigitBoundaryMetrics unconditionally, so a run cannot
+        know at encode time that nothing will want them. Dropping them fails
+        loudly in both readers. An ids-only second cache is the only shape that
+        works, and it buys memory in a configuration that has to be constructed
+        deliberately. For HuggingFaceTokenizer and CustomBPETokenizer the offsets
         come free and the provider encodes one batch per label: 4.00 s against
         10.29 s for per-text calls over the 1500 files
         benchmarks/open_source/code_ast_config.json names. Both of those figures
