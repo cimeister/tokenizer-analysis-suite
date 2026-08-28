@@ -12,7 +12,9 @@ import numpy as np
 
 from .base import BaseMetrics, TokenizedDataProcessor, format_optional
 from ..core.input_types import (
-    CODE_CORPUS, MATH_CORPUS, NO_TOKENIZER_ERRORS, TokenizedData,
+    CODE_CORPUS, MATH_CORPUS, NO_TOKENIZER_ERRORS, PROSE_CORPUS, TokenizedData,
+    is_corpus_domain_key,
+    published_language_key,
 )
 from ..core.input_providers import InputProvider
 from ..loaders.corpora import resolve_math_corpus
@@ -991,7 +993,9 @@ class BasicTokenizationMetrics(BaseMetrics):
                     texts_processed += 1
 
                     token_ids = td.tokens
-                    stats = domain_stats[td.language]
+                    stats = domain_stats[
+                        published_language_key(PROSE_CORPUS, td.language)
+                    ]
                     stats['total_tokens'] += len(token_ids)
 
                     if unk_id is not None:
@@ -1077,13 +1081,16 @@ class BasicTokenizationMetrics(BaseMetrics):
             # Empty when this tokenizer cannot encode raw text; it still gets
             # its prose domains from the ids it was handed.
             for lang, snippets in (code_texts if tokenizer_code_math else {}).items():
-                domain = f"code_{lang}"
+                domain = published_language_key(CODE_CORPUS, lang)
                 for snippet in snippets:
                     if snippet and snippet.strip():
                         code_math_pairs.append((snippet, domain, CODE_CORPUS, lang))
             for label, text in (math_items if tokenizer_code_math else []):
                 if text and text.strip():
-                    code_math_pairs.append((text, "math", MATH_CORPUS, label))
+                    code_math_pairs.append(
+                        (text, published_language_key(MATH_CORPUS, label),
+                         MATH_CORPUS, label)
+                    )
 
             for text, domain, corpus_name, label in code_math_pairs:
                 has_data = True
@@ -1184,11 +1191,11 @@ class BasicTokenizationMetrics(BaseMetrics):
             # Log after main loop using accumulated counts
             n_lang = sum(
                 ds['total'] for dom, ds in domain_stats.items()
-                if not dom.startswith('code_') and dom != 'math'
+                if not is_corpus_domain_key(dom)
             )
             n_code_math = sum(
                 ds['total'] for dom, ds in domain_stats.items()
-                if dom.startswith('code_') or dom == 'math'
+                if is_corpus_domain_key(dom)
             )
             logger.info(
                 "Reconstruction fidelity: decoding %d texts for %s (%d language, %d code/math)",

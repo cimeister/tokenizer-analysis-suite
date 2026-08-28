@@ -36,6 +36,7 @@ from ..constants import AGGREGATION_MEAN_OF_RATIOS, AGGREGATION_MICRO_POOLED
 from ..core.input_types import (
     corpus_size,
     CODE_CORPUS, MATH_CORPUS, PROSE_CORPUS, PROSE_SOURCE, Corpus, TokenizedData,
+    published_language_key,
 )
 from ..core.input_providers import InputProvider
 from ..loaders.corpora import code_corpus_from_texts, resolve_math_corpus
@@ -1129,7 +1130,7 @@ class DigitBoundaryMetrics(BaseMetrics):
         for domain, acc in domain_accs.items():
             for tok_name, langs in acc.items():
                 for lang, categories in langs.items():
-                    key = cls._published_language_key(domain, lang)
+                    key = published_language_key(domain, lang)
                     owner = claimed[tok_name].setdefault(key, domain)
                     if owner != domain:
                         raise ValueError(
@@ -1146,20 +1147,6 @@ class DigitBoundaryMetrics(BaseMetrics):
                             target[count_key] += counts[count_key]
         return merged
 
-    @staticmethod
-    def _published_language_key(domain: str, lang: str) -> str:
-        """The ``by_language`` key for one (domain, language) pair.
-
-        The same form ``reconstruction_fidelity`` uses for its ``per_domain``
-        keys, in metrics/basic.py: prose bare, code as ``code_<lang>``, math as
-        the bare corpus name. One definition, because the two files publishing
-        different spellings of the same thing is what this replaced.
-        """
-        if domain == PROSE_CORPUS:
-            return lang
-        if domain == CODE_CORPUS:
-            return f"{CODE_CORPUS}_{lang}"
-        return domain
 
     # ------------------------------------------------------------------
     # Result builders

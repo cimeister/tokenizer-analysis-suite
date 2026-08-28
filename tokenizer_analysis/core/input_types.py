@@ -138,6 +138,33 @@ CODE_DATASET_SOURCE = "code-ast dataset"
 PROSE_SOURCE = "multilingual corpus"
 
 
+def published_language_key(domain: str, lang: str) -> str:
+    """The published key for one (domain, language) pair.
+
+    Prose keeps its language name. Code becomes ``code_<lang>``. Maths is the
+    bare corpus name, because there is one maths domain and the label inside it
+    is not part of the key.
+
+    Here rather than on a metric class because two files publish these keys and
+    both already import this module. They used to build them separately, five
+    places by hand against one function, and they agreed only by coincidence.
+    """
+    if domain == PROSE_CORPUS:
+        return lang
+    if domain == CODE_CORPUS:
+        return f"{CODE_CORPUS}_{lang}"
+    return domain
+
+
+def is_corpus_domain_key(key: str) -> bool:
+    """True when *key* names a code or maths domain rather than a language.
+
+    Recognising a key is the same knowledge as building one, so it lives beside
+    ``published_language_key``. Two places tested this by hand.
+    """
+    return key.startswith(f"{CODE_CORPUS}_") or key == MATH_CORPUS
+
+
 def corpus_size(texts: 'Mapping[str, Sequence[str]]') -> Dict[str, Any]:
     """The published size block for a labelled set of texts.
 

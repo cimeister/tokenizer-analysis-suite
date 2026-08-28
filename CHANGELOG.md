@@ -171,6 +171,14 @@ conflicting flags.
 
 ## Releases
 
+- **Unreleased** The keys naming a code or maths domain are built in one place.
+  `metrics/basic.py` wrote them out by hand at three sites and recognised them
+  by hand at two more, while `metrics/math.py` had a function whose docstring
+  claimed to be the single definition. Six places, agreeing by coincidence.
+  `published_language_key` and `is_corpus_domain_key` now live in
+  `core/input_types.py`, which both files already import and which pulls in
+  nothing beyond the standard library. No published value changes.
+
 - **Unreleased** `benchmarks/open_source/` regenerated. The committed results
   were produced at package version 1.0.2, before the shared-corpora refactor and
   before every fix since, so the documentation described fields the file did not

@@ -1374,3 +1374,52 @@ class TestTheAggregationLabelNamesWhatTheGlobalBlockComputes:
         assert magnitude_metadata()["aggregation"] == AGGREGATION_MEAN_OF_RATIOS
         # The operator rate really is pooled: isolated over total.
         assert operator_metadata()["aggregation"] != AGGREGATION_MEAN_OF_RATIOS
+
+
+class TestOneDefinitionOfAPublishedDomainKey:
+    """Two files published the same domain keys, one through a shared function
+    and one by writing the strings out by hand in five places. They agreed, and
+    nothing kept them agreeing.
+
+    The assertions below are the literal expected strings. Asserting that the
+    two places agree with each other would pass for a format that is uniformly
+    wrong, which is the shape of a mistake this project has made before.
+    """
+
+    def test_each_domain_produces_its_documented_key(self):
+        from tokenizer_analysis.core.input_types import (
+            CODE_CORPUS, MATH_CORPUS, PROSE_CORPUS, published_language_key,
+        )
+
+        assert published_language_key(PROSE_CORPUS, "eng_Latn") == "eng_Latn"
+        assert published_language_key(CODE_CORPUS, "python") == "code_python"
+        assert published_language_key(MATH_CORPUS, "math") == "math"
+        # The label is ignored for maths: there is one maths domain, and the
+        # label inside it is not part of the published key.
+        assert published_language_key(MATH_CORPUS, "anything") == "math"
+
+    def test_a_key_can_be_recognised_as_belonging_to_a_corpus(self):
+        """The two places that read these keys back tested `startswith("code_")
+        or == "math"` by hand. That is the same format knowledge as building
+        the key, so it lives with it.
+        """
+        from tokenizer_analysis.core.input_types import is_corpus_domain_key
+
+        assert is_corpus_domain_key("code_python") is True
+        assert is_corpus_domain_key("math") is True
+        assert is_corpus_domain_key("eng_Latn") is False
+        assert is_corpus_domain_key("rus_Cyrl") is False
+
+    def test_building_and_recognising_agree(self):
+        """Not a substitute for the literal assertions above: this only checks
+        the two halves are consistent, which they would be if both were wrong.
+        """
+        from tokenizer_analysis.core.input_types import (
+            CODE_CORPUS, MATH_CORPUS, PROSE_CORPUS,
+            is_corpus_domain_key, published_language_key,
+        )
+
+        for domain, lang in ((CODE_CORPUS, "rust"), (MATH_CORPUS, "math")):
+            assert is_corpus_domain_key(published_language_key(domain, lang))
+        assert not is_corpus_domain_key(
+            published_language_key(PROSE_CORPUS, "deu_Latn"))
