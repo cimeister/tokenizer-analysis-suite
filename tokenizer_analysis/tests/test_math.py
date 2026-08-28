@@ -2434,3 +2434,70 @@ class TestTheOperatorDomainKeysMatchReconstructionFidelity:
         merged = self._merge(accs)
         assert merged["tok"]["code_python"]["arithmetic"]["total"] == 1
         assert merged["tok"]["math"]["arithmetic"]["total"] == 2
+
+
+class TestAGroupGetsNoDigitNumbersRatherThanTheWholeCorpus:
+    """`include_code_math=False` means "this is one language group, not the
+    whole corpus". The digit metrics ignored it and replaced whatever data they
+    were handed with the entire maths corpus, so every group got identical
+    whole-corpus figures.
+
+    The fix is to measure nothing, not to fall back to counting digits in the
+    group's prose. That fallback exists for a run with no maths corpus at all,
+    and its own comment says its numbers are not comparable with a real maths
+    corpus and that most of the sample is vacuous. Publishing that under the
+    same field name would swap one quantity for another.
+    """
+
+    TOK = "tok"
+
+    def _provider_with_math(self):
+        from tokenizer_analysis.core.input_types import Corpus, InputSpecification
+        from tokenizer_analysis.core.input_providers import RawTokenizationProvider
+
+        class _Tok:
+            def can_encode(self): return True
+            def encode(self, t): return [ord(c) for c in t]
+            def encode_with_offsets(self, t):
+                return self.encode(t), [(i, i + 1) for i in range(len(t))]
+            def encode_batch_with_offsets(self, ts):
+                return [self.encode_with_offsets(t) for t in ts]
+            def get_vocab_size(self): return 5000
+
+        provider = RawTokenizationProvider({
+            self.TOK: InputSpecification(tokenizer=_Tok(),
+                                         texts={"eng_Latn": ["about 1234 things"]}),
+        })
+        provider.add_corpus(Corpus(name="math", texts={"math": ["1234 + 5678"]},
+                                   source="a real corpus", synthetic=False))
+        provider.corpus_reads = []
+        inner = provider.get_corpus_data
+
+        def spy(name):
+            provider.corpus_reads.append(name)
+            return inner(name)
+
+        provider.get_corpus_data = spy
+        return provider
+
+    def test_a_group_reports_no_digit_numbers_and_reads_no_maths(self):
+        provider = self._provider_with_math()
+        metrics = DigitBoundaryMetrics(provider)
+        results = metrics.compute(provider.get_tokenized_data(),
+                                  include_code_math=False)
+
+        per_tok = results["three_digit_boundary_alignment"]["per_tokenizer"]
+        assert per_tok.get(self.TOK, {}).get("overall", {}) == {}
+        assert "math" not in provider.corpus_reads, provider.corpus_reads
+
+    def test_the_whole_corpus_run_still_measures_the_maths_texts(self):
+        """The benign half. Without it the fix could be "never measure"."""
+        provider = self._provider_with_math()
+        metrics = DigitBoundaryMetrics(provider)
+        results = metrics.compute(provider.get_tokenized_data(),
+                                  include_code_math=True)
+
+        per_lang = results["three_digit_boundary_alignment"]["per_tokenizer"][
+            self.TOK]["overall"]
+        assert set(per_lang) == {"math"}, per_lang
+        assert "math" in provider.corpus_reads

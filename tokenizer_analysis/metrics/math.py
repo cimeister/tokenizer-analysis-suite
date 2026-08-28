@@ -486,11 +486,17 @@ class DigitBoundaryMetrics(BaseMetrics):
         metrics tokenize the loaded math texts and use that data **instead of**
         the ``tokenized_data`` parameter.
 
+        *include_code_math* says whether this call covers the whole corpus or
+        one language group. With it off, the digit metrics measure nothing:
+        neither the maths corpus, which is not part of the group, nor the
+        group's prose, which is a different quantity from the one these fields
+        hold in a whole-corpus run. It used to read the maths corpus whatever
+        this said, so every group reported identical whole-corpus figures.
+
         Operator isolation is reported per domain under
         ``operator_isolation_rate["by_domain"]``, and the top-level ``summary``
         pools them. Each domain records the corpus it used. **code** and
-        **math** run unless *include_code_math* is False, which is what a run
-        over one language group passes. **prose**, the main corpus, runs only
+        **math** run unless *include_code_math* is False. **prose**, the main corpus, runs only
         when the instance was built with ``include_prose_operators=True``. With
         code and math off and prose off, which is a grouped run at the default
         settings, ``by_domain`` is empty.
@@ -508,7 +514,30 @@ class DigitBoundaryMetrics(BaseMetrics):
             else self.input_provider.get_tokenized_data()
         )
 
-        if self._math_texts:
+        if not include_code_math:
+            # A language group is a subset of the prose corpus, and neither the
+            # maths corpus nor the code corpus is part of it. Measuring nothing
+            # is the honest answer.
+            #
+            # The two alternatives are both worse. Reading the maths corpus, as
+            # this used to, gives every group the same whole-corpus figures.
+            # Falling through to the prose branch below measures a different
+            # quantity: that branch's own comment records that its numbers are
+            # not comparable with a run that has a maths corpus, and that most
+            # of the sample is vacuous. Publishing either under the same field
+            # name reports one thing under the name of another.
+            #
+            # The filtered grouped path already produced empty digit blocks,
+            # because it selects the group's prose languages and the rows are
+            # keyed by the maths corpus. This makes the unfiltered path agree
+            # with it instead of publishing whole-corpus numbers.
+            tokenized_data = {}
+            logger.info(
+                "include_code_math is off, so the digit metrics measure "
+                "nothing: neither the maths corpus nor the group's prose is "
+                "the corpus these numbers are defined over."
+            )
+        elif self._math_texts:
             # The registered math corpus IS _math_texts whenever the caller
             # asked for math texts, so the digit corpus and the math operator
             # domain below share one encoding.

@@ -171,6 +171,18 @@ conflicting flags.
 
 ## Releases
 
+- **Unreleased** With `include_code_math` off, the digit metrics measure
+  nothing instead of reading the whole maths corpus. That setting says a call
+  covers one language group rather than the whole corpus, and the digit metrics
+  ignored it, so every group got identical whole-corpus figures. Reachable
+  through `run_grouped_analysis` without base results; the command-line tool
+  always takes the filtered path, where the group's own languages are selected
+  and the maths rows drop out, so no published number of ours was affected.
+  Measuring the group's prose instead was the other option and is worse: that
+  branch's own comment records that its numbers are not comparable with a run
+  that has a maths corpus, so publishing them under the same field name would
+  report one quantity under the name of another.
+
 - **Unreleased** `reconstruction_fidelity` refuses a corpus whose prose language
   name collides with a code or maths domain, instead of adding the two together
   in one row. A corpus with a language named `math`, which `--input` produces
