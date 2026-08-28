@@ -62,8 +62,14 @@ def synthetic_code_corpus(max_snippets_per_lang: Optional[int] = None) -> Corpus
     """
     texts = CodeDataLoader.generate_synthetic_samples()
     cap = max_snippets_per_lang or 0
+    dropped: Dict[str, int] = {}
     if cap > 0:
-        texts = {lang: snippets[:cap] for lang, snippets in texts.items()}
+        capped = {}
+        for lang, snippets in texts.items():
+            capped[lang] = snippets[:cap]
+            if len(snippets) > cap:
+                dropped[lang] = len(snippets) - cap
+        texts = capped
     return Corpus(
         name=CODE_CORPUS,
         texts=texts,
@@ -72,7 +78,7 @@ def synthetic_code_corpus(max_snippets_per_lang: Optional[int] = None) -> Corpus
         caps=CorpusCaps(
             max_snippets_per_lang=cap,
             max_snippet_chars=0,
-            dropped_file_counts={},
+            dropped_file_counts=dropped,
             truncated_char_counts={},
             dropped_whitespace_only_counts={},
         ),
@@ -93,8 +99,14 @@ def code_corpus_from_texts(
     if not code_texts:
         return synthetic_code_corpus(max_snippets_per_lang)
     cap = max_snippets_per_lang or 0
-    kept = {lang: (texts[:cap] if cap > 0 else texts)
-            for lang, texts in code_texts.items() if texts}
+    kept = {}
+    dropped: Dict[str, int] = {}
+    for lang, texts in code_texts.items():
+        if not texts:
+            continue
+        kept[lang] = texts[:cap] if cap > 0 else texts
+        if cap > 0 and len(texts) > cap:
+            dropped[lang] = len(texts) - cap
     return Corpus(
         name=CODE_CORPUS,
         texts=kept,
@@ -103,7 +115,7 @@ def code_corpus_from_texts(
         caps=CorpusCaps(
             max_snippets_per_lang=cap,
             max_snippet_chars=0,
-            dropped_file_counts={},
+            dropped_file_counts=dropped,
             truncated_char_counts={},
             dropped_whitespace_only_counts={},
         ),

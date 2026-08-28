@@ -276,3 +276,36 @@ class TestPublishedCorpusSizesCountOnlyWhatIsScored:
 
         stats = corpus_size({"python": ["a", "b"], "rust": ["c"]})
         assert (stats["n_texts"], stats["n_languages"]) == (3, 2)
+
+
+class TestTheCapRecordsWhatItDiscardedOnEveryPath:
+    """`CorpusCaps` was added in a commit called "keep what the caps removed",
+    and two of its three construction sites recorded an empty dictionary. The
+    bundled-samples path discards 19 snippets at a cap of 2 and recorded none
+    of them.
+    """
+
+    def test_the_bundled_path_records_what_the_cap_dropped(self):
+        from tokenizer_analysis.loaders.corpora import resolve_code_corpus
+
+        corpus = resolve_code_corpus(None, max_snippets_per_lang=2)
+        dropped = corpus.caps.dropped_file_counts
+        assert dropped, "the cap discarded snippets and recorded none"
+        # 19 languages, 3 bundled samples each, capped to 2.
+        assert sum(dropped.values()) == 19
+        assert set(dropped.values()) == {1}
+
+    def test_no_cap_records_nothing(self):
+        """The benign half: an empty record must mean nothing was dropped."""
+        from tokenizer_analysis.loaders.corpora import resolve_code_corpus
+
+        corpus = resolve_code_corpus(None)
+        assert corpus.caps.dropped_file_counts == {}
+
+    def test_caller_supplied_texts_record_their_own_drops(self):
+        from tokenizer_analysis.loaders.corpora import code_corpus_from_texts
+
+        corpus = code_corpus_from_texts(
+            {"python": ["a", "b", "c"], "rust": ["d"]}, max_snippets_per_lang=1,
+        )
+        assert corpus.caps.dropped_file_counts == {"python": 2}

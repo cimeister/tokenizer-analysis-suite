@@ -205,7 +205,10 @@ class CorpusCaps:
         max_snippet_chars: the character cap in force, 0 for no cap. This is
             the value the texts were truncated with, not a value a caller
             asked for and nothing honoured.
-        dropped_file_counts: label -> candidate files the file cap skipped.
+        dropped_file_counts: label -> candidates the file cap discarded. Files
+            on the real-files path, where the walk counts paths it never
+            opened; bundled samples or caller-supplied texts on the other two,
+            where there are no files and the cap slices a list.
         truncated_char_counts: label -> characters the character cap removed.
         dropped_whitespace_only_counts: label -> snippets dropped because
             truncation left them whitespace-only.
