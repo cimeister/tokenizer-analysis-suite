@@ -115,12 +115,19 @@ def full_and_slim_results(tmp_path_factory):
 
     A separate run from demo_results above: that fixture never passes
     --save-full-results, so it has no full file to compare against.
+
+    --run-grouped-analysis is here because without it this fixture could not
+    see the defect it exists to catch. The slim file invented two fields per
+    single-language group, twenty in a real run, and no group of one language
+    exists unless the run is grouped. The check was live and passing the whole
+    time.
     """
     out = tmp_path_factory.mktemp("full_and_slim")
     proc = subprocess.run(
         [sys.executable, "-m", "tokenizer_analysis.cli.run_analysis",
          "--use-sample-data", "--samples-per-lang", "10",
          "--no-plots", "--no-code-ast", "--save-full-results",
+         "--run-grouped-analysis",
          "--output-dir", str(out)],
         cwd=REPO_ROOT, capture_output=True, timeout=900,
     )

@@ -171,6 +171,24 @@ conflicting flags.
 
 ## Releases
 
+- **Unreleased** `tokenizer_fairness_gini` publishes the same keys whether or
+  not a group has enough languages to define a coefficient. The
+  fewer-than-two-languages case omitted seven of them, directly below a comment
+  saying every block carries the same keys so a consumer can index rather than
+  test for existence. Both cases now come from one function, so they cannot
+  drift apart. Only the coefficient and the standard deviation are null with a
+  single language: the smallest and largest cost are that language's cost,
+  their ratio is 1.0, and the most and least efficient language are both that
+  one. **Values appear where keys were absent** in the full results file for
+  single-language groups; the slim file is unchanged.
+
+  The slim writer read those fields with `.get()`, so a key the metric never
+  produced became a null and the slim file published two fields per
+  single-language group that the full file did not have, twenty in a real run.
+  It copies only what is present now. The check that the slim file is a subset
+  of the full one was live and passing throughout, because its fixture ran no
+  grouped analysis and so produced no group of one language. It does now.
+
 - **Unreleased** Grouped analysis computes UTF-8 integrity metrics when the
   caller passed no base results, instead of omitting the block entirely. A
   whole metric was present or absent depending on how the function was called.
