@@ -273,6 +273,37 @@ class LaTeXTableGenerator:
                 'err_key': None,
                 'format': '{:.3f}',
                 'lower_is_better': False
+            },
+            # The three structural measures beside the roll-up. They existed in
+            # the results file and in no table. All three are null on a corpus
+            # with no indentation, no tabs or no newlines, which is every
+            # prose-only run, so a table of a default run shows them empty.
+            'indentation_fidelity': {
+                'title': 'Indent Fidelity',
+                'key_path': ['reconstruction_fidelity', 'summary'],
+                'value_key': 'indentation_fidelity',
+                'stat_key': None,
+                'err_key': None,
+                'format': '{:.3f}',
+                'lower_is_better': False
+            },
+            'newline_fidelity': {
+                'title': 'Newline Fidelity',
+                'key_path': ['reconstruction_fidelity', 'summary'],
+                'value_key': 'newline_fidelity',
+                'stat_key': None,
+                'err_key': None,
+                'format': '{:.3f}',
+                'lower_is_better': False
+            },
+            'tab_fidelity': {
+                'title': 'Tab Fidelity',
+                'key_path': ['reconstruction_fidelity', 'summary'],
+                'value_key': 'tab_fidelity',
+                'stat_key': None,
+                'err_key': None,
+                'format': '{:.3f}',
+                'lower_is_better': False
             }
         }
 

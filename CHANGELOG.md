@@ -171,6 +171,12 @@ conflicting flags.
 
 ## Releases
 
+- **Unreleased** `reconstruction_fidelity`'s three structural whitespace
+  measures appear in the LaTeX tables. They were published in the results file
+  and rendered nowhere. All three are null on a corpus with no indentation, no
+  tabs or no newlines, which is every prose-only run, so a table of a default
+  run shows them empty.
+
 - **Unreleased** `tokenizer_fairness_gini` publishes the same keys whether or
   not a group has enough languages to define a coefficient. The
   fewer-than-two-languages case omitted seven of them, directly below a comment
