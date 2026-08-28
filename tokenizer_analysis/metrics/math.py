@@ -228,12 +228,14 @@ class DigitBoundaryMetrics(BaseMetrics):
             # bool(): an empty code_texts asks for nothing, unlike the
             # code_config of the AST metrics, where {} means the bundled
             # samples.
-            CODE_CORPUS, {"code_texts": bool(code_texts)}
+            CODE_CORPUS, {"code_texts": bool(code_texts)},
+            build=lambda: code_corpus_from_texts(code_texts),
         )
         self._math_corpus = self._corpus_or_refuse_arguments(
             MATH_CORPUS,
             {"math_data_path": bool(math_data_path),
              "use_builtin_math_data": bool(use_builtin_math_data)},
+            build=lambda: resolve_math_corpus(math_data_path, use_builtin_math_data),
         )
 
         # Both corpora are resolved before either is registered, so a failure

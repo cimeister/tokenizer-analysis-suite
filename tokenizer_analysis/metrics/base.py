@@ -193,7 +193,7 @@ class BaseMetrics(ABC):
         return get_corpus(name)
 
     def _corpus_or_refuse_arguments(
-        self, name: str, arguments: Dict[str, bool]
+        self, name: str, arguments: Dict[str, bool], build=None,
     ) -> Optional['Corpus']:
         """The registered corpus under *name*, refusing arguments it overrides.
 
@@ -211,6 +211,13 @@ class BaseMetrics(ABC):
         ask for nothing. Testing the values here instead got all three wrong in
         one direction or the other.
 
+        *build* is how the arguments would be turned into a corpus, used only
+        to compare against the registered one. Without it this refused any
+        arguments at all when something was registered, so two metrics handed
+        the same code_texts failed from the second, each asking for a corpus
+        the other had already put there. Asking for what is already present is
+        not a conflict.
+
         Returns None when nothing is registered, which is the signal to build
         the corpus from the arguments instead.
         """
@@ -219,6 +226,18 @@ class BaseMetrics(ABC):
             return None
         supplied = sorted(key for key, was_supplied in arguments.items()
                           if was_supplied)
+        if supplied and build is not None:
+            # Compared by value. Two metrics that each resolve the bundled
+            # samples produce equal corpora from different objects, and that
+            # is agreement, not conflict.
+            try:
+                asked_for = build()
+            except Exception:
+                # Whatever went wrong building it is the caller's problem to
+                # see, not something to convert into a conflict report.
+                asked_for = None
+            if asked_for is not None and asked_for == corpus:
+                return corpus
         if supplied:
             raise ValueError(
                 f"{type(self).__name__} was given {', '.join(supplied)}, but a "

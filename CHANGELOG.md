@@ -171,6 +171,16 @@ conflicting flags.
 
 ## Releases
 
+- **Unreleased** A metric constructed with the same corpus arguments as one
+  built before it is accepted rather than refused. Metric constructors register
+  the corpus they build, and the check that stops a later metric silently
+  reading someone else's corpus asked only whether anything was registered, not
+  whether it was the same thing. So passing identical `code_texts` to two
+  classes failed from the second, each asking for the corpus the other had
+  already put there. The check now compares what the arguments would build
+  against what is registered, and refuses only when they differ, which is the
+  case it exists for.
+
 - **Unreleased** `reconstruction_fidelity`'s three structural whitespace
   measures appear in the LaTeX tables. They were published in the results file
   and rendered nowhere. All three are null on a corpus with no indentation, no

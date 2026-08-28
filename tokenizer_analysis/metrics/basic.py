@@ -17,7 +17,7 @@ from ..core.input_types import (
     published_language_key,
 )
 from ..core.input_providers import InputProvider
-from ..loaders.corpora import resolve_math_corpus
+from ..loaders.corpora import code_corpus_from_texts, resolve_math_corpus
 from ..config import TextMeasurementConfig, TextMeasurer, DEFAULT_TEXT_MEASUREMENT_CONFIG, DEFAULT_WORD_MEASUREMENT_CONFIG
 from ..config.language_metadata import LanguageMetadata
 from ..constants import (
@@ -164,7 +164,8 @@ class BasicTokenizationMetrics(BaseMetrics):
         self._corpus_backed: Dict[str, bool] = {}
 
         code_corpus = self._corpus_or_refuse_arguments(
-            CODE_CORPUS, {"code_texts": bool(code_texts)}
+            CODE_CORPUS, {"code_texts": bool(code_texts)},
+            build=lambda: code_corpus_from_texts(code_texts),
         )
         self._corpus_backed[CODE_CORPUS] = code_corpus is not None
         if code_corpus is None:

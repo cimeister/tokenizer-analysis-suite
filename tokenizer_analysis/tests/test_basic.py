@@ -1548,3 +1548,62 @@ class TestTwoDomainsCannotShareOnePublishedRow:
         assert set(domains) == {"eng_Latn", "math"}
         assert domains["eng_Latn"]["count"] == 1
         assert domains["math"]["count"] == 1
+
+
+class TestAskingForTheCorpusThatIsAlreadyThere:
+    """A metric constructor registers the corpus it built, so a metric built
+    afterwards with the same arguments was refused for asking for a corpus
+    that was already there and identical to what it wanted.
+
+    Refusing when they differ is right, and stays: using the registered one
+    would report numbers measured on it under a request for the other. The
+    question is only whether they differ.
+    """
+
+    @staticmethod
+    def _provider():
+        from tokenizer_analysis.core.input_types import InputSpecification
+        from tokenizer_analysis.core.input_providers import RawTokenizationProvider
+
+        class _Tok:
+            def can_encode(self): return True
+            def encode(self, t): return [ord(c) for c in t]
+            def encode_with_offsets(self, t):
+                return self.encode(t), [(i, i + 1) for i in range(len(t))]
+            def encode_batch_with_offsets(self, ts):
+                return [self.encode_with_offsets(t) for t in ts]
+            def get_vocab_size(self): return 5000
+
+        return RawTokenizationProvider({
+            "tok": InputSpecification(tokenizer=_Tok(), texts={"eng_Latn": ["hi"]}),
+        })
+
+    def test_the_same_texts_passed_twice_are_accepted(self):
+        from tokenizer_analysis.metrics.math import DigitBoundaryMetrics
+
+        provider = self._provider()
+        texts = {"python": ["a = 1\n"]}
+        DigitBoundaryMetrics(provider, code_texts=dict(texts))
+        metrics = BasicTokenizationMetrics(provider, code_texts=dict(texts))
+        # Corpus freezes its texts to tuples.
+        assert {k: list(v) for k, v in metrics._code_texts.items()} == texts
+
+    def test_different_texts_are_still_refused(self):
+        """The benign half, and the reason this check exists at all."""
+        from tokenizer_analysis.metrics.math import DigitBoundaryMetrics
+
+        provider = self._provider()
+        DigitBoundaryMetrics(provider, code_texts={"python": ["a = 1\n"]})
+        with pytest.raises(ValueError, match="already registered"):
+            BasicTokenizationMetrics(provider, code_texts={"python": ["b = 2\n"]})
+
+    def test_a_default_build_still_blocks_a_different_explicit_one(self):
+        """Building with no arguments registers the bundled samples, which are
+        a different corpus from any the caller names.
+        """
+        from tokenizer_analysis.metrics.math import DigitBoundaryMetrics
+
+        provider = self._provider()
+        DigitBoundaryMetrics(provider)
+        with pytest.raises(ValueError, match="already registered"):
+            BasicTokenizationMetrics(provider, code_texts={"python": ["a = 1\n"]})
