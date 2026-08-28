@@ -790,6 +790,23 @@ class InputProvider(ABC):
                             # and only encode path for such a tokenizer, not a
                             # fallback from one that failed.
                             ids, offsets = encode(text), None
+                            if ids is None:
+                                # Checked because this is the only encode this
+                                # tokenizer gets. Without it the None reached
+                                # TokenizedData and failed as "tokens must be
+                                # a list of integers", naming neither the
+                                # tokenizer nor the method that produced it.
+                                # An empty list is a different thing and is
+                                # kept: a tokenizer that encodes a text to
+                                # nothing has measured something.
+                                raise RuntimeError(
+                                    f"encode returned None for {tok_name!r} on "
+                                    f"the {corpus.name!r} corpus at label "
+                                    f"{lang!r}. This tokenizer has no "
+                                    "encode_with_offsets, so encode is the "
+                                    "only path it has and there is nothing to "
+                                    f"fall back to. Text starts: {text[:60]!r}"
+                                )
                         encoded.append((ids, offsets))
                 check_batch_pairing(
                     tok_name, lang, usable, encoded, f"{corpus.name} corpus",

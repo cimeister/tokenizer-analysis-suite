@@ -919,3 +919,53 @@ class TestTheBatchPathChecksItsIdsToo:
         })
         provider.add_corpus(CODE)
         assert provider.get_corpus_data("code")["tok"]
+
+
+class TestThePrimaryEncodePathChecksWhatItGotBack:
+    """A tokenizer with no `encode_with_offsets` is encoded by the plain
+    `encode`, which is its only path rather than a fallback from a failure.
+    That result was never checked, so a tokenizer returning nothing failed
+    later with "tokens must be a list of integers", naming neither the
+    tokenizer nor the method that produced it.
+
+    An empty list is a different thing and is kept deliberately: a tokenizer
+    that encodes a text to nothing has measured something, and other metrics
+    publish a count of exactly that.
+    """
+
+    @staticmethod
+    def _provider(tokenizer):
+        from tokenizer_analysis.core.input_providers import RawTokenizationProvider
+        from tokenizer_analysis.core.input_types import InputSpecification
+        return RawTokenizationProvider({
+            "tok": InputSpecification(tokenizer=tokenizer, texts={"eng_Latn": ["hi"]}),
+        })
+
+    def test_nothing_returned_names_the_tokenizer_and_the_method(self):
+        class _ReturnsNothing:
+            def can_encode(self): return True
+            def encode(self, t): return None
+            def get_vocab_size(self): return 100
+
+        provider = self._provider(_ReturnsNothing())
+        provider.add_corpus(CODE)
+        with pytest.raises(RuntimeError) as exc:
+            provider.get_corpus_data("code")
+        message = str(exc.value)
+        assert "tok" in message and "encode" in message, message
+
+    def test_an_empty_result_is_kept(self):
+        """The benign half. A tokenizer that erases a text has measured
+        something, and refusing it here would contradict the count another
+        metric publishes for exactly that case.
+        """
+        class _ErasesEverything:
+            def can_encode(self): return True
+            def encode(self, t): return []
+            def get_vocab_size(self): return 100
+
+        provider = self._provider(_ErasesEverything())
+        provider.add_corpus(CODE)
+        data = provider.get_corpus_data("code")
+        assert data["tok"], "the records should still be built"
+        assert all(d.tokens == [] for d in data["tok"])
