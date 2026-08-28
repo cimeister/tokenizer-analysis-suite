@@ -480,20 +480,11 @@ class ASTBoundaryMetrics(BaseMetrics):
         """
         if self._code_corpus is None:
             return None
-        encoded = self.input_provider.get_corpus_data(CODE_CORPUS)
-        lookup: Dict[str, Dict[Tuple[str, str], TokenizedData]] = {}
-        for tok_name, records in encoded.items():
-            per_tokenizer: Dict[Tuple[str, str], TokenizedData] = {}
-            for record in records:
-                # A record carrying no text cannot be matched to a snippet.
-                # InputProvider._encode_corpus always sets it; a provider that
-                # supplies its own records for this corpus need not. Such a
-                # record is left out of the index, and the snippet it was meant
-                # for then raises from compute() naming the tokenizer.
-                if record.text is None:
-                    continue
-                per_tokenizer[(record.language, record.text)] = record
-            lookup[tok_name] = per_tokenizer
+        # The walk and the key belong to the provider, which builds the same
+        # index for reconstruction fidelity. The check below stays here: it
+        # uses this metric's own notion of an active tokenizer, which the
+        # provider has no view of.
+        lookup = self.input_provider.index_corpus(CODE_CORPUS)
         missing = sorted(
             name for name, _ in active_tokenizers if name not in lookup
         )

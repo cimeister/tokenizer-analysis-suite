@@ -969,3 +969,72 @@ class TestThePrimaryEncodePathChecksWhatItGotBack:
         data = provider.get_corpus_data("code")
         assert data["tok"], "the records should still be built"
         assert all(d.tokens == [] for d in data["tok"])
+
+
+class TestTheCorpusIndexIsBuiltOnceAndReadPublicly:
+    """Two metrics built the same lookup from a corpus's encoded records, each
+    walking them and keying by (label, text). One stored the token ids and the
+    other the whole record, and each rebuilt it on every call.
+
+    The provider builds it now. Two constraints that are easy to get wrong:
+    it must read through the public get_corpus_data, because the tests that
+    guard against pairing texts by position replace that method, and it must
+    be memoised, because the metrics call it once per language group.
+    """
+
+    @staticmethod
+    def _provider():
+        class _Counting(_CharTokenizer):
+            pass
+        provider = _raw_provider(_Counting())
+        provider.add_corpus(CODE)
+        provider.public_reads = 0
+        inner = provider.get_corpus_data
+
+        def counted(name):
+            provider.public_reads += 1
+            return inner(name)
+
+        provider.get_corpus_data = counted
+        return provider
+
+    def test_it_reads_through_the_public_accessor(self):
+        provider = self._provider()
+        provider.index_corpus("code")
+        assert provider.public_reads == 1, (
+            "reaching past get_corpus_data would make the position-pairing "
+            "guards pass no matter what the code does"
+        )
+
+    def test_it_is_built_once(self):
+        provider = self._provider()
+        first = provider.index_corpus("code")
+        second = provider.index_corpus("code")
+        assert first is second
+
+    def test_it_keys_by_label_and_text(self):
+        provider = self._provider()
+        index = provider.index_corpus("code")
+        keys = index["tok"]
+        assert ("python", "a = 1") in keys
+        assert keys[("python", "a = 1")].text == "a = 1"
+
+    def test_a_record_with_no_text_is_left_out(self):
+        """It cannot be matched to anything, and the caller raises for the
+        text it was meant for.
+        """
+        class _NoTextProvider(RawTokenizationProvider):
+            def get_corpus_data(self, name):
+                data = super().get_corpus_data(name)
+                for records in data.values():
+                    records[0].text = None
+                return data
+
+        from tokenizer_analysis.core.input_types import InputSpecification
+        provider = _NoTextProvider({
+            "tok": InputSpecification(tokenizer=_CharTokenizer(),
+                                      texts={"eng_Latn": ["hi"]}),
+        })
+        provider.add_corpus(CODE)
+        index = provider.index_corpus("code")
+        assert all(text is not None for _, text in index["tok"])

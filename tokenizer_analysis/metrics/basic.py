@@ -765,21 +765,13 @@ class BasicTokenizationMetrics(BaseMetrics):
             # another metric's constructor does not change it.
             if not has_texts or not self._corpus_backed.get(corpus_name):
                 continue
-            encoded = self.input_provider.get_corpus_data(corpus_name)
-            per_corpus: Dict[str, Dict[Tuple[str, str], List[int]]] = {}
-            for tok_name, records in encoded.items():
-                per_tokenizer: Dict[Tuple[str, str], List[int]] = {}
-                for record in records:
-                    # A record carrying no text cannot be matched to a text of
-                    # this metric's. InputProvider._encode_corpus always sets
-                    # it; a provider supplying its own records for this corpus
-                    # need not. Such a record is left out of the index, and the
-                    # text it was meant for then raises from the loop below.
-                    if record.text is None:
-                        continue
-                    per_tokenizer[(record.language, record.text)] = record.tokens
-                per_corpus[tok_name] = per_tokenizer
-            lookup[corpus_name] = per_corpus
+            # The walk and the key belong to the provider, which builds the
+            # same index for the AST metrics. This metric reads ids only.
+            lookup[corpus_name] = {
+                tok_name: {key: record.tokens for key, record in per_tokenizer.items()}
+                for tok_name, per_tokenizer
+                in self.input_provider.index_corpus(corpus_name).items()
+            }
         return lookup
 
     def compute_reconstruction_fidelity_analysis(

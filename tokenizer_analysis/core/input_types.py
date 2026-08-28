@@ -601,6 +601,54 @@ class InputProvider(ABC):
             )
         return self._tokenized_corpus(name)
 
+    def index_corpus(self, name: str) -> Dict[str, Dict[Tuple[str, str], 'TokenizedData']]:
+        """A registered corpus's records, keyed by ``(label, text)`` per tokenizer.
+
+        Two metrics built this separately, one keeping the token ids and the
+        other the whole record, and each rebuilt it on every call. What is
+        shared is the walk and the key; what each metric does with the result,
+        and what it does when a corpus or a tokenizer is missing, stays with
+        the metric.
+
+        Keyed by text and never by position. The provider keeps only texts
+        satisfying ``text and text.strip()``, so its list for a label is
+        shorter than a metric's whenever one of those texts is blank, and
+        pairing the two lists by index after such a drop would score every
+        later text against the following text's tokens with nothing in the
+        results showing it.
+
+        A record carrying no text is left out, because it cannot be matched to
+        anything. ``_encode_corpus`` always sets it; a provider supplying its
+        own records need not, and the text it was meant for then raises from
+        whichever metric was looking for it.
+
+        Memoised beside the encoding it reads, because ``compute()`` runs once
+        per language group and the corpus does not change between those calls.
+        """
+        cached = self._corpus_indexes.get(name)
+        if cached is not None:
+            return cached
+        index: Dict[str, Dict[Tuple[str, str], 'TokenizedData']] = {}
+        # Through the public accessor, not the memo behind it: the tests that
+        # guard against pairing by position replace this method, and reaching
+        # past it would make them pass whatever the code did.
+        for tok_name, records in self.get_corpus_data(name).items():
+            per_tokenizer: Dict[Tuple[str, str], 'TokenizedData'] = {}
+            for record in records:
+                if record.text is None:
+                    continue
+                per_tokenizer[(record.language, record.text)] = record
+            index[tok_name] = per_tokenizer
+        self._corpus_indexes[name] = index
+        return index
+
+    @property
+    def _corpus_indexes(self) -> Dict[str, Dict[str, Dict[Tuple[str, str], 'TokenizedData']]]:
+        """Lazily created, so a provider written before this existed still works."""
+        if not hasattr(self, '_corpus_index_cache'):
+            self._corpus_index_cache = {}
+        return self._corpus_index_cache
+
     def _tokenized_corpus(self, name: str) -> Dict[str, List[TokenizedData]]:
         """A registered corpus, encoded with every tokenizer, memoized by name.
 
