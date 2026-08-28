@@ -3584,3 +3584,49 @@ class TestTheClassCarriesNoInstanceStateForTheTestsSake:
         })
         metrics = ASTBoundaryMetrics(provider)
         assert "_code_corpus" in metrics.__dict__
+
+
+class TestTheAbortHappensBeforeTheParsing:
+    """The check that can stop this metric ran after every snippet had been
+    parsed in per-language subprocesses. On the 1500-file corpus a run did all
+    that work and threw it away.
+
+    The check rejects a tokenizer that says it can encode but has no entry in
+    the encoded corpus. It reads only the tokenizer list and the registered
+    corpus, both known before any parsing.
+
+    Nothing exercised this abort before, so building the scenario is most of
+    the test. A per-snippet miss is a different failure, raised later while
+    scoring, and moving this check does not affect it.
+    """
+
+    def test_no_snippet_is_parsed_before_the_abort(self, monkeypatch):
+        from tokenizer_analysis.core.input_types import CODE_CORPUS, Corpus
+        from tokenizer_analysis.metrics import code_ast as code_ast_module
+
+        class _EncodesNothingProvider(_MockProvider):
+            def get_corpus_data(self, name):
+                # The tokenizer says it can encode, and the corpus comes back
+                # with no entry for it at all.
+                return {}
+
+        provider = _EncodesNothingProvider("tok", _CharTokenizer())
+        provider.add_corpus(Corpus(
+            name=CODE_CORPUS,
+            texts={"python": ["def add(a, b):\n    return a + b\n"]},
+            source="test code", synthetic=False,
+        ))
+
+        calls = []
+        real = code_ast_module.parse_snippets_fenced
+        monkeypatch.setattr(
+            code_ast_module, "parse_snippets_fenced",
+            lambda *a, **k: (calls.append(1), real(*a, **k))[1],
+        )
+
+        with pytest.raises(ValueError, match="can_encode"):
+            ASTBoundaryMetrics(provider).compute()
+
+        assert calls == [], (
+            "the corpus was parsed before the check that rejected it"
+        )

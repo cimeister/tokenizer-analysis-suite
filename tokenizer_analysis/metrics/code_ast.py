@@ -1215,6 +1215,24 @@ class ASTBoundaryMetrics(BaseMetrics):
             )
         lang_to_treesitter = CodeDataLoader._LANG_TO_TREESITTER
 
+        # Before Phase 1, not after. This reads only the tokenizer list and
+        # the registered corpus, both known already, and it can stop the whole
+        # metric. It used to run after every snippet had been parsed in
+        # per-language subprocesses, so a run that was going to abort paid for
+        # the full parse of the 1500-file corpus first and discarded it.
+        active_tokenizers: List[Tuple[str, Any]] = []
+        for tok_name in self.tokenizer_names:
+            tokenizer = self.input_provider.get_tokenizer(tok_name)
+            if tokenizer.can_encode():
+                active_tokenizers.append((tok_name, tokenizer))
+            else:
+                logger.info(
+                    "Tokenizer %s cannot encode text; skipping AST metrics",
+                    tok_name,
+                )
+
+        shared_encodings = self._shared_code_encodings(active_tokenizers)
+
         total_input = sum(len(v) for v in code_snippets.values())
         logger.info(
             "Phase 1: parsing %d snippet(s) across %d language(s) via "
@@ -1265,20 +1283,6 @@ class ASTBoundaryMetrics(BaseMetrics):
         # tokenizer-independent per-snippet work (byte_to_char, indentation,
         # byte→char span conversion) is computed ONCE and reused across all
         # tokenizers.
-
-        # Pre-filter encodable tokenizers (avoid repeated can_encode() checks).
-        active_tokenizers: List[Tuple[str, Any]] = []
-        for tok_name in self.tokenizer_names:
-            tokenizer = self.input_provider.get_tokenizer(tok_name)
-            if tokenizer.can_encode():
-                active_tokenizers.append((tok_name, tokenizer))
-            else:
-                logger.info(
-                    "Tokenizer %s cannot encode text; skipping AST metrics",
-                    tok_name,
-                )
-
-        shared_encodings = self._shared_code_encodings(active_tokenizers)
 
         for code_lang, spans_list in parsed_spans.items():
             snippets = code_snippets[code_lang]
