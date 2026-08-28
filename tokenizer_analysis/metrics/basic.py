@@ -947,6 +947,32 @@ class BasicTokenizationMetrics(BaseMetrics):
             unk_id = tokenizer.get_unk_token_id()
 
             # Per-domain accumulators
+            # published key -> the domain that claimed it. Prose is keyed by
+            # language and the corpora by their own names, so a prose language
+            # called `math`, or `code_python` beside a python code corpus,
+            # lands in the row the corpus is using and the two are summed with
+            # nothing in the output saying so. --input names languages after
+            # files, so a directory holding math.txt produces exactly that.
+            #
+            # The operator metric refuses the same collision and keeps its own
+            # record. Sharing one is wrong: it only sees languages that
+            # produced operator characters, so a prose language named `math`
+            # containing none reaches here and never reaches that check.
+            claimed: Dict[str, str] = {}
+
+            def claim(domain: str, label: str) -> str:
+                key = published_language_key(domain, label)
+                owner = claimed.setdefault(key, domain)
+                if owner != domain:
+                    raise ValueError(
+                        f"The {owner!r} and {domain!r} domains would both be "
+                        f"reported under by_domain[{key!r}] for {tok_name!r}. "
+                        "Their counts, token totals and rates would be added "
+                        "together with nothing saying so. Rename the "
+                        f"{key!r} language in the input corpus."
+                    )
+                return key
+
             domain_stats: Dict[str, Dict[str, Any]] = defaultdict(
                 lambda: {
                     'exact_matches': 0, 'total': 0,
@@ -993,9 +1019,7 @@ class BasicTokenizationMetrics(BaseMetrics):
                     texts_processed += 1
 
                     token_ids = td.tokens
-                    stats = domain_stats[
-                        published_language_key(PROSE_CORPUS, td.language)
-                    ]
+                    stats = domain_stats[claim(PROSE_CORPUS, td.language)]
                     stats['total_tokens'] += len(token_ids)
 
                     if unk_id is not None:
@@ -1081,15 +1105,14 @@ class BasicTokenizationMetrics(BaseMetrics):
             # Empty when this tokenizer cannot encode raw text; it still gets
             # its prose domains from the ids it was handed.
             for lang, snippets in (code_texts if tokenizer_code_math else {}).items():
-                domain = published_language_key(CODE_CORPUS, lang)
+                domain = claim(CODE_CORPUS, lang)
                 for snippet in snippets:
                     if snippet and snippet.strip():
                         code_math_pairs.append((snippet, domain, CODE_CORPUS, lang))
             for label, text in (math_items if tokenizer_code_math else []):
                 if text and text.strip():
                     code_math_pairs.append(
-                        (text, published_language_key(MATH_CORPUS, label),
-                         MATH_CORPUS, label)
+                        (text, claim(MATH_CORPUS, label), MATH_CORPUS, label)
                     )
 
             for text, domain, corpus_name, label in code_math_pairs:

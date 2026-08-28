@@ -1478,3 +1478,73 @@ class TestADecodeFailureIsCountedRatherThanJustSkipped:
         assert dom["decode_failures"] == 1
         assert dom["exact_match_rate"] is None
         assert dom["mean_cer"] is None
+
+
+class TestTwoDomainsCannotShareOnePublishedRow:
+    """A corpus whose prose language is named `math` lands in the same row as
+    the maths corpus, and their counts, token totals and rates are added
+    together with nothing in the output saying so. `--input` names languages
+    after files, so a directory holding `math.txt` produces exactly this.
+
+    The operator metric already refuses the same collision. Its check is not
+    shared here on purpose: it only sees languages that produced operator
+    characters, so a prose language named `math` containing none reaches this
+    metric and never reaches that one. One shared check would refuse runs that
+    work today.
+    """
+
+    @staticmethod
+    def _provider(prose_language, corpus_name, corpus_label):
+        from tokenizer_analysis.core.input_types import Corpus, InputSpecification
+        from tokenizer_analysis.core.input_providers import RawTokenizationProvider
+
+        class _Tok:
+            def can_encode(self): return True
+            def can_decode(self): return True
+            def encode(self, t): return [ord(c) for c in t]
+            def encode_with_offsets(self, t):
+                return self.encode(t), [(i, i + 1) for i in range(len(t))]
+            def encode_batch_with_offsets(self, ts):
+                return [self.encode_with_offsets(t) for t in ts]
+            def decode(self, ids, skip_special_tokens=True):
+                return "".join(chr(i) for i in ids)
+            def get_vocab_size(self): return 5000
+            def get_unk_token_id(self): return None
+
+        provider = RawTokenizationProvider({
+            "tok": InputSpecification(tokenizer=_Tok(),
+                                      texts={prose_language: ["one two"]}),
+        })
+        provider.add_corpus(Corpus(name=corpus_name,
+                                   texts={corpus_label: ["1 + 1 = 2"]},
+                                   source="a real corpus", synthetic=False))
+        return provider
+
+    def test_a_prose_language_named_math_is_refused(self):
+        provider = self._provider("math", "math", "math")
+        metrics = BasicTokenizationMetrics(provider)
+        with pytest.raises(ValueError) as exc:
+            metrics.compute_reconstruction_fidelity_analysis(
+                provider.get_tokenized_data())
+        message = str(exc.value)
+        assert "math" in message and "prose" in message, message
+
+    def test_a_prose_language_named_like_a_code_domain_is_refused(self):
+        """The collision is not specific to maths."""
+        provider = self._provider("code_python", "code", "python")
+        metrics = BasicTokenizationMetrics(provider, code_texts=None)
+        with pytest.raises(ValueError) as exc:
+            metrics.compute_reconstruction_fidelity_analysis(
+                provider.get_tokenized_data())
+        assert "code_python" in str(exc.value), str(exc.value)
+
+    def test_an_ordinary_corpus_is_unaffected(self):
+        """The benign half. Without this the check could be "always refuse"."""
+        provider = self._provider("eng_Latn", "math", "math")
+        metrics = BasicTokenizationMetrics(provider)
+        results = metrics.compute_reconstruction_fidelity_analysis(
+            provider.get_tokenized_data())
+        domains = results["reconstruction_fidelity"]["per_tokenizer"]["tok"]["by_domain"]
+        assert set(domains) == {"eng_Latn", "math"}
+        assert domains["eng_Latn"]["count"] == 1
+        assert domains["math"]["count"] == 1

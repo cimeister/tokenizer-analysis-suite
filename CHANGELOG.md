@@ -171,6 +171,16 @@ conflicting flags.
 
 ## Releases
 
+- **Unreleased** `reconstruction_fidelity` refuses a corpus whose prose language
+  name collides with a code or maths domain, instead of adding the two together
+  in one row. A corpus with a language named `math`, which `--input` produces
+  from a directory holding `math.txt`, had its counts, token totals and rates
+  summed with the maths corpus and nothing in the output said so. The same
+  applied to a language named `code_<lang>` beside a code corpus of that
+  language. `operator_isolation_rate` already refused this; the two checks stay
+  separate because the operator metric only sees languages that produced
+  operator characters, so one shared check would refuse runs that work today.
+
 - **Unreleased** The keys naming a code or maths domain are built in one place.
   `metrics/basic.py` wrote them out by hand at three sites and recognised them
   by hand at two more, while `metrics/math.py` had a function whose docstring
