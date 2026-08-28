@@ -1126,6 +1126,39 @@ class TestBaseResultsSemanticsInGroupedAnalysis:
         assert "operator_isolation_rate" not in latin
 
 
+    def test_utf8_is_computed_when_nothing_was_precomputed(self, analyzer):
+        """The gap: with no base results there was no UTF-8 block at all."""
+        groups = analyzer.run_grouped_analysis(
+            group_by=["script_family"], save_plots=False, base_results={},
+            include_reconstruction=False,
+        )
+        assert "utf8_token_integrity" in groups["script_family"]["Latin"]
+
+    def test_utf8_is_not_resurrected_when_the_caller_turned_it_off(self, analyzer):
+        """The half a bare "compute it either way" would break.
+
+        A base run that passed --no-utf8-integrity produces base results with
+        no UTF-8 key. That missing key is the only signal the grouped path
+        gets, so computing unconditionally would switch the metric back on for
+        someone who asked for it off. The digit metrics next door already
+        handle this with the same three cases.
+        """
+        groups = analyzer.run_grouped_analysis(
+            group_by=["script_family"], save_plots=False,
+            base_results={"fertility": {"per_tokenizer": {}}},
+            include_reconstruction=False,
+        )
+        assert "utf8_token_integrity" not in groups["script_family"]["Latin"]
+
+    def test_utf8_is_filtered_when_the_base_run_had_it(self, analyzer):
+        groups = analyzer.run_grouped_analysis(
+            group_by=["script_family"], save_plots=False,
+            base_results={"utf8_token_integrity": {"per_tokenizer": {}}},
+            include_reconstruction=False,
+        )
+        assert "utf8_token_integrity" in groups["script_family"]["Latin"]
+
+
 class TestAGroupBlockCarriesNoWholeCorpusStatistics:
     """A group block must hold group numbers or nothing, never corpus ones.
 

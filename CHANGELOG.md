@@ -171,6 +171,15 @@ conflicting flags.
 
 ## Releases
 
+- **Unreleased** Grouped analysis computes UTF-8 integrity metrics when the
+  caller passed no base results, instead of omitting the block entirely. A
+  whole metric was present or absent depending on how the function was called.
+  It still reports none when the base run produced no UTF-8 metrics, which is
+  what `--no-utf8-integrity` does: that missing key is the only signal the
+  grouped path receives, so computing unconditionally would switch the metric
+  back on for someone who asked for it off. Three cases now, matching the digit
+  metrics beside it.
+
 - **Unreleased** With `include_code_math` off, the digit metrics measure
   nothing instead of reading the whole maths corpus. That setting says a call
   covers one language group rather than the whole corpus, and the digit metrics

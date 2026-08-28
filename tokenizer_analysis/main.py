@@ -510,11 +510,32 @@ class UnifiedTokenizerAnalyzer:
                     morphscore_results = self.morphscore_metrics.compute(filtered_data)
                     group_result.update(morphscore_results)
 
-                # UTF-8 integrity metrics - recompute on filtered data (fast)
+                # UTF-8 integrity metrics, recomputed on the filtered data
+                # because it is cheap. Three cases, the same three the digit
+                # metrics below use, and for the same reasons.
                 if base_results and 'utf8_token_integrity' in base_results:
                     logger.info(f"Computing UTF-8 integrity results for group {group_name}")
                     utf8_results = self.utf8_integrity_metrics.compute(filtered_data)
                     group_result.update(utf8_results)
+                elif base_results:
+                    # Truthy base results without the key means the base run
+                    # produced no UTF-8 metrics, which is what
+                    # --no-utf8-integrity does. The missing key is the only
+                    # signal the grouped path gets, so computing here anyway
+                    # would switch the metric back on for a caller who asked
+                    # for it off.
+                    logger.info(
+                        "No UTF-8 integrity results in the base run, so group "
+                        "%s reports none either.", group_name,
+                    )
+                else:
+                    # Nothing precomputed at all, so compute them. This branch
+                    # published no UTF-8 block whatsoever, which made a whole
+                    # metric depend on how the caller invoked the function.
+                    logger.info(f"Computing UTF-8 integrity results for group {group_name}")
+                    group_result.update(
+                        self.utf8_integrity_metrics.compute(filtered_data)
+                    )
 
                 # Digit boundary metrics - filter from base results if available
                 if base_results and 'three_digit_boundary_alignment' in base_results:
