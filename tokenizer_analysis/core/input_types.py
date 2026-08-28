@@ -7,6 +7,7 @@ from typing import Dict, List, Any, Mapping, Optional, Sequence, Tuple, Union, P
 from types import MappingProxyType
 from abc import ABC, abstractmethod
 import logging
+import time
 
 if TYPE_CHECKING:
     from .tokenizer_wrapper import TokenizerWrapper
@@ -769,8 +770,13 @@ class InputProvider(ABC):
                 encoded = None
                 if callable(encode_batch):
                     try:
-                        encoded = [(ids, offsets)
-                                   for ids, offsets in encode_batch(usable)]
+                        # Shared with the prose loop. The elapsed time it
+                        # returns is discarded here: a derived corpus does not
+                        # enter the encoding_speed measurement, which is one of
+                        # the differences between the two loops.
+                        encoded, _elapsed = encode_batch_timed(
+                            encode_batch, usable,
+                        )
                     except Exception as exc:
                         raise RuntimeError(
                             f"encode_batch_with_offsets failed for {tok_name!r} "
@@ -859,6 +865,9 @@ class InputProvider(ABC):
                                     f"fall back to. Text starts: {text[:60]!r}"
                                 )
                         encoded.append((ids, offsets))
+                # Outside the try above, so a pairing failure raises the error
+                # naming the two counts rather than being wrapped as a failure
+                # of the batch method.
                 check_batch_pairing(
                     tok_name, lang, usable, encoded, f"{corpus.name} corpus",
                 )
@@ -906,6 +915,39 @@ class InputProvider(ABC):
         except Exception as e:
             logger.error(f"Error validating data: {e}")
             return False
+
+def encode_batch_timed(batch_method, texts):
+    """Call a batch encode, materialise the result, and time the call.
+
+    This is all the two encode loops genuinely share, and it is deliberately
+    small. Everything around it is policy that differs between them on
+    purpose: whether a failure propagates or is wrapped, which checks run on
+    the returned ids, whether the time is recorded, and what metadata the
+    records carry.
+
+    The pairing check is not in here, though it looks like it belongs. In the
+    corpus loop the batch call sits inside a try that turns any failure into
+    an error about the batch method; a pairing failure caught there would stop
+    raising the error that names the two counts. So each loop checks pairing
+    itself, outside its own error handling.
+
+    Materialising is the one thing worth sharing, and it does two jobs: a
+    wrapper returning a generator would otherwise reach
+    ``check_batch_pairing``, which calls ``len()`` on it, and unpacking each
+    element here is what rejects a wrapper returning something other than
+    (ids, offsets) pairs. Both loops failed on that shape before, at different
+    points and with different messages; they now fail at the same point.
+
+    The elapsed time covers this call and nothing else, so a caller publishing
+    it as an encoding speed times the encode rather than the encode plus
+    whatever follows. Folding the pairing check into that figure inflates it
+    by about a twentieth on a real corpus, and the comparison harness ignores
+    the field by name, so nothing would catch it.
+    """
+    start = time.perf_counter()
+    pairs = [(ids, offsets) for ids, offsets in batch_method(texts)]
+    return pairs, time.perf_counter() - start
+
 
 def check_batch_pairing(tokenizer_name: str, language: str, texts, encoded, corpus: str) -> None:
     """Raise unless a batch result has one entry per text it was given.

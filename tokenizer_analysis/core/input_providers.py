@@ -7,6 +7,7 @@ import dataclasses
 import logging
 import time
 from .input_types import (
+    encode_batch_timed,
     InputProvider, TokenizedData, InputSpecification,
     VocabularyProvider, check_batch_pairing
 )
@@ -119,10 +120,13 @@ class RawTokenizationProvider(InputProvider):
                     #
                     # Unifying them would change which tokenizers are skipped
                     # and what encoding_speed measures.
-                    t0 = time.perf_counter()
-                    batch_results = spec.tokenizer.encode_batch_with_offsets(valid_texts)
-                    batch_elapsed = time.perf_counter() - t0
-
+                    # The elapsed time covers the encode alone. Publishing a
+                    # figure that also included the pairing check would inflate
+                    # it by about a twentieth, and the comparison harness
+                    # ignores this field by name, so nothing would catch it.
+                    batch_results, batch_elapsed = encode_batch_timed(
+                        spec.tokenizer.encode_batch_with_offsets, valid_texts,
+                    )
                     per_sample_time = batch_elapsed / len(valid_texts)
                     self._encode_times[tok_name].extend(
                         [per_sample_time] * len(valid_texts)

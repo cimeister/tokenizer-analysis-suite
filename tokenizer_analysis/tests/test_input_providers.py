@@ -1038,3 +1038,49 @@ class TestTheCorpusIndexIsBuiltOnceAndReadPublicly:
         provider.add_corpus(CODE)
         index = provider.index_corpus("code")
         assert all(text is not None for _, text in index["tok"])
+
+
+class TestTheEncodingSpeedFigureCoversTheEncodeAlone:
+    """`encoding_speed` is measured around the batch call and nothing else.
+
+    Pulling the shared parts of the two encode loops into one function makes
+    it easy to put that function inside the timer, which would silently fold
+    the pairing and type checks into a published figure. The comparison
+    harness ignores encoding_speed by name, so nothing else would catch it.
+
+    The clock here is fake and the pairing check is made expensive on it, so
+    the test fails on the boundary moving rather than on a wall-clock
+    tolerance that a slow machine could trip.
+    """
+
+    def test_the_timer_excludes_the_pairing_check(self, monkeypatch):
+        import tokenizer_analysis.core.input_providers as providers
+        from tokenizer_analysis.core.input_types import InputSpecification
+
+        clock = {"t": 0.0}
+        monkeypatch.setattr(providers.time, "perf_counter", lambda: clock["t"])
+
+        class _SlowEncode(_CharTokenizer):
+            def encode_batch_with_offsets(self, texts):
+                clock["t"] += 10.0
+                return super().encode_batch_with_offsets(texts)
+
+        real_pairing = providers.check_batch_pairing
+
+        def expensive_pairing(*a, **k):
+            clock["t"] += 100.0
+            return real_pairing(*a, **k)
+
+        monkeypatch.setattr(providers, "check_batch_pairing", expensive_pairing)
+
+        provider = providers.RawTokenizationProvider({
+            "tok": InputSpecification(tokenizer=_SlowEncode(),
+                                      texts={"eng_Latn": ["one", "two"]}),
+        })
+        provider.get_tokenized_data()
+
+        times = provider.encode_times["tok"]
+        assert times, "no encode time was recorded"
+        # 10 seconds of encoding over two texts. If the pairing check were
+        # inside the timer this would be 55.
+        assert times[0] == pytest.approx(5.0), times
