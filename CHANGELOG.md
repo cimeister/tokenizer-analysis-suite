@@ -171,7 +171,7 @@ conflicting flags.
 
 ## Releases
 
-- **Unreleased** A metric constructed with the same corpus arguments as one
+- **1.1.0** A metric constructed with the same corpus arguments as one
   built before it is accepted rather than refused. Metric constructors register
   the corpus they build, and the check that stops a later metric silently
   reading someone else's corpus asked only whether anything was registered, not
@@ -181,13 +181,13 @@ conflicting flags.
   against what is registered, and refuses only when they differ, which is the
   case it exists for.
 
-- **Unreleased** `reconstruction_fidelity`'s three structural whitespace
+- **1.1.0** `reconstruction_fidelity`'s three structural whitespace
   measures appear in the LaTeX tables. They were published in the results file
   and rendered nowhere. All three are null on a corpus with no indentation, no
   tabs or no newlines, which is every prose-only run, so a table of a default
   run shows them empty.
 
-- **Unreleased** `tokenizer_fairness_gini` publishes the same keys whether or
+- **1.1.0** `tokenizer_fairness_gini` publishes the same keys whether or
   not a group has enough languages to define a coefficient. The
   fewer-than-two-languages case omitted seven of them, directly below a comment
   saying every block carries the same keys so a consumer can index rather than
@@ -205,7 +205,7 @@ conflicting flags.
   of the full one was live and passing throughout, because its fixture ran no
   grouped analysis and so produced no group of one language. It does now.
 
-- **Unreleased** Grouped analysis computes UTF-8 integrity metrics when the
+- **1.1.0** Grouped analysis computes UTF-8 integrity metrics when the
   caller passed no base results, instead of omitting the block entirely. A
   whole metric was present or absent depending on how the function was called.
   It still reports none when the base run produced no UTF-8 metrics, which is
@@ -214,7 +214,7 @@ conflicting flags.
   back on for someone who asked for it off. Three cases now, matching the digit
   metrics beside it.
 
-- **Unreleased** With `include_code_math` off, the digit metrics measure
+- **1.1.0** With `include_code_math` off, the digit metrics measure
   nothing instead of reading the whole maths corpus. That setting says a call
   covers one language group rather than the whole corpus, and the digit metrics
   ignored it, so every group got identical whole-corpus figures. Reachable
@@ -226,7 +226,7 @@ conflicting flags.
   that has a maths corpus, so publishing them under the same field name would
   report one quantity under the name of another.
 
-- **Unreleased** `reconstruction_fidelity` refuses a corpus whose prose language
+- **1.1.0** `reconstruction_fidelity` refuses a corpus whose prose language
   name collides with a code or maths domain, instead of adding the two together
   in one row. A corpus with a language named `math`, which `--input` produces
   from a directory holding `math.txt`, had its counts, token totals and rates
@@ -236,7 +236,7 @@ conflicting flags.
   separate because the operator metric only sees languages that produced
   operator characters, so one shared check would refuse runs that work today.
 
-- **Unreleased** The keys naming a code or maths domain are built in one place.
+- **1.1.0** The keys naming a code or maths domain are built in one place.
   `metrics/basic.py` wrote them out by hand at three sites and recognised them
   by hand at two more, while `metrics/math.py` had a function whose docstring
   claimed to be the single definition. Six places, agreeing by coincidence.
@@ -244,7 +244,7 @@ conflicting flags.
   `core/input_types.py`, which both files already import and which pulls in
   nothing beyond the standard library. No published value changes.
 
-- **Unreleased** `benchmarks/open_source/` regenerated. The committed results
+- **1.1.0** `benchmarks/open_source/` regenerated. The committed results
   were produced at package version 1.0.2, before the shared-corpora refactor and
   before every fix since, so the documentation described fields the file did not
   contain. Regenerated at 1.1.0 with a clean tree. Every difference is accounted
@@ -264,7 +264,7 @@ conflicting flags.
   removed: it could never have expired on its own, because the path it named
   was never going to resolve.
 
-- **Unreleased** `operator_isolation_rate.per_language` keys code and math the
+- **1.1.0** `operator_isolation_rate.per_language` keys code and math the
   way `reconstruction_fidelity.per_domain` does: `code_bash` and a bare `math`,
   where it published `code:bash` and `math:math`. One results file named the
   same thing two ways, and neither spelling was documented on the
@@ -281,7 +281,7 @@ conflicting flags.
   that was recorded here when this entry was written and is fixed in the entry
   above about a prose language name colliding with a code or maths domain.
 
-- **Unreleased** Three library-path defects. A `Corpus` label given a bare
+- **1.1.0** Three library-path defects. A `Corpus` label given a bare
   string was split into one text per character, so `"x = 1"` became five texts
   and every per-text metric scored single characters; it is refused with the
   list form named. `RawTokenizationProvider.get_vocab_size` returned 0 for a
@@ -292,7 +292,7 @@ conflicting flags.
   returned set order, so `per_language` key order was hash-dependent across
   runs of one dump; it is sorted.
 
-- **Unreleased** `InputProvider._encode_corpus` aborts instead of falling back
+- **1.1.0** `InputProvider._encode_corpus` aborts instead of falling back
   to a second encode path. A failing or malformed `encode_batch_with_offsets`
   re-encoded the corpus one text at a time under a warning asserting that the
   ids and offsets were the same either way; nothing verified that, and a
@@ -304,7 +304,7 @@ conflicting flags.
   `None` returned *by* that method is now an error. Library-reachable only; no
   shipped wrapper triggers any of it.
 
-- **Unreleased** `PreTokenizedProvider` refuses a record whose
+- **1.1.0** `PreTokenizedProvider` refuses a record whose
   `tokenizer_name` disagrees with the key it is filed under, naming both. It
   copied the record under the key's name at warning level, and every metric
   then scored one tokenizer's ids under another's name. Both name-agreement
@@ -312,7 +312,7 @@ conflicting flags.
   Reachable through `--tokenized-data-file`; a dump that loaded with a warning
   now aborts.
 
-- **Unreleased** `by_domain.<domain>.corpus` counts only texts the metrics
+- **1.1.0** `by_domain.<domain>.corpus` counts only texts the metrics
   scored. `corpus_size` applied no blank filter while every scored path filters
   on `text and text.strip()`, so a corpus holding a whitespace-only text
   published one text more than any metric read, in the block whose purpose is
@@ -320,7 +320,7 @@ conflicting flags.
   whose every label holds an empty list, which passed the previous
   empty-corpus guard because the dict itself was non-empty.
 
-- **Unreleased** `reconstruction_fidelity` publishes `decode_failures` per
+- **1.1.0** `reconstruction_fidelity` publishes `decode_failures` per
   domain, in `overall` and in `summary`, and logs one line per failure naming
   the tokenizer, the domain and the text. A text whose `decode()` returns
   `None` leaves every reconstruction denominator, so a domain with one failure
@@ -331,7 +331,7 @@ conflicting flags.
   texts that decoded, so `total_tokens / count` is inflated by the failures,
   and this is now stated in `docs/OUTPUT.md`.
 
-- **Unreleased** A document a tokenizer encodes to zero tokens is logged, and
+- **1.1.0** A document a tokenizer encodes to zero tokens is logged, and
   each metric that reads one now states its position rather than differing by
   accident. `fertility` excludes it and publishes
   `zero_token_documents` per tokenizer and per language; `token_length`,
@@ -340,26 +340,26 @@ conflicting flags.
   `reconstruction_fidelity` keep it deliberately: a zero-cost language is how a
   fairness metric reports that a tokenizer erased a language, and a total
   round-trip failure is what reconstruction fidelity measures. The recorded
-  justification for dropping the `TokenizedData` emptiness check in 1.1.0 was
-  wrong, and is corrected: blank-to-`strip()` and empty-after-encoding are
+  justification for dropping the `TokenizedData` emptiness check when the
+  corpora were made shared was wrong, and is corrected: blank-to-`strip()` and empty-after-encoding are
   different properties, and a text of C0 control characters is the second
   without being the first, reachable through `--input`.
 
-- **Unreleased** The bundled code samples honour `--max-code-files-per-lang`,
+- **1.1.0** The bundled code samples honour `--max-code-files-per-lang`,
   so the two code metrics score the same texts. The cap reached
   `ASTBoundaryMetrics` through `get_code_snippets` and nothing else, so with
   `--max-code-files-per-lang 2` and no `--code-ast-config` the operator and
   digit metrics measured 57 texts over 19 languages while the AST metrics
   measured 2 per language, both published under one corpus name and source.
   **Values move on any run that sets the flag without a code config**; both
-  caps default to 0, and all 126 result sets under `results/` recorded 0, so no
-  published number of ours is affected. `--max-code-file-chars` is now refused
+  caps default to 0, and every result file carrying `code_corpus_caps` recorded
+  0, so no published number of ours is affected. `--max-code-file-chars` is now refused
   on this path with a warning rather than silently ignored: the 57 samples
   parse with zero tree-sitter errors at full length and 19 with a 400-character
   cut, so truncating them would move every AST alignment rate for a reason
   unrelated to tokenization, and the whole corpus is 48715 characters.
 
-- **Unreleased** `fertility`, `token_length`, `three_digit_boundary_alignment`
+- **1.1.0** `fertility`, `token_length`, `three_digit_boundary_alignment`
   and `numeric_magnitude_consistency` declare `aggregation: mean_of_ratios`.
   All four averaged one ratio per document or per number while declaring
   `micro_pooled`, which `constants.py` defines as one ratio from summed counts.
@@ -373,7 +373,7 @@ conflicting flags.
   `metadata.aggregation_exceptions`, because six of its seven rates are pooled
   counts and `mean_cer` is not. No computed value changes.
 
-- **Unreleased** `reconstruction_fidelity.whitespace_fidelity` counts
+- **1.1.0** `reconstruction_fidelity.whitespace_fidelity` counts
   whitespace an alignment of the two texts can match, and three structural
   sub-rates are published beside it. The old greedy scan left its pointer
   behind on any character it could not match, so every whitespace after a
@@ -393,7 +393,7 @@ conflicting flags.
   inner spaces harmlessly leaves it at 0.980. No bundled corpus holds tabular
   data, so `tab_fidelity` is evidence about code indentation only.
 
-- **Unreleased** `reconstruction_fidelity` publishes `null` where a rate has no
+- **1.1.0** `reconstruction_fidelity` publishes `null` where a rate has no
   denominator, with no stand-in defaults. `exact_match_rate` and `mean_cer`
   were `0.0` on a domain where every decode failed, which read as a perfect
   round trip beside a `count` of 0; `unk_token_rate` was `0.0` for a tokenizer
