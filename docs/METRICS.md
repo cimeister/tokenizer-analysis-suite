@@ -81,10 +81,10 @@ titles carry an arrow for a subset of these metrics and none for the rest; see
 Two more top-level keys are not metrics. `run_metadata` is described under
 [Provenance](OUTPUT.md#provenance). `grouped_analysis` is written when
 `--run-grouped-analysis` is passed, and holds the metrics recomputed within each
-language group: `grouped_analysis.<group type>.<group name>.<metric>`. In
-`analysis_results.json` it is written as an empty object, because the slimming
-step matches only per-metric shapes; the populated version is in
-`analysis_results_full.json`, so pass `--save-full-results` to read it.
+language group: `grouped_analysis.<group type>.<group name>.<metric>`. Both
+output files carry it: `analysis_results.json` holds the slimmed per-group
+blocks (the slimming step recurses into `grouped_analysis` with the same
+per-metric rules), and `analysis_results_full.json` the full ones.
 
 ## Metrics reported under another metric
 
@@ -107,7 +107,16 @@ records the merge and its evidence under `metadata.merged_metrics`.
 
 - **Compression rate** (`compression_rate`): total text units (bytes, characters
   or lines) divided by total tokens across the corpus.
-- **Fertility** (`fertility`): tokens per word or per character.
+- **Fertility** (`fertility`): tokens per word or per character, as a mean of
+  per-document ratios (`aggregation: mean_of_ratios`), so a long document counts
+  the same as a short one. A document the tokenizer encodes to zero tokens is
+  excluded and counted separately in `zero_token_documents`, published per
+  tokenizer and per language: its ratio is a defined 0 that would drag the mean
+  down with nothing in the output saying a document had vanished. `count` is
+  therefore the documents that produced at least one token, and re-deriving the
+  pooled weighting needs `count + zero_token_documents`. `token_length`,
+  `avg_tokens_per_line` and `compression_rate` exclude the same documents and
+  publish no such count.
 - **Token length** (`token_length`): mean token size in bytes and in characters.
   This is a mean of per-document ratios, where `compression_rate` is a ratio of
   totals, so the two differ on short documents.
@@ -509,9 +518,17 @@ characters, CER 0.2. Original `"a"` decoded as `"abcd"` is edit distance 3 over
 1 character, CER 3.0.
 
 CER is the most expensive field in this group, and `--cer-time-budget` caps it
-per tokenizer. When the budget is exceeded, `mean_cer` and `whitespace_fidelity`
-are `null` for that tokenizer and the run logs the projection that triggered the
-skip. `--cer-time-budget 0` disables the cap.
+per tokenizer. When the budget is exceeded, `mean_cer`, `whitespace_fidelity`
+and the three structural sub-rates are all `null` for that tokenizer and the run
+logs the projection that triggered the skip. `--cer-time-budget 0` disables the
+cap.
+
+**The budget covers more work than it used to.** The whitespace alignment runs
+inside the same timed region as the edit distance and costs the same order, so
+the projection roughly doubled at an unchanged budget value. A run that
+previously completed CER on a lossy tokenizer may now skip it, and the skip
+nulls all five fields. Raise `--cer-time-budget`, or pass 0 to remove the cap,
+to get the previous coverage.
 
 Which tokenizers report `mean_cer` therefore depends on how fast the machine
 running the analysis is: a tokenizer skipped at a given `--cer-time-budget` on a
@@ -523,10 +540,9 @@ that tokenizer, distinguishing a skipped value from a measured one.
 ### UNK token rate (`unk_token_rate`)
 
 The fraction of encoded tokens equal to the tokenizer's UNK token id: how much
-of the input the tokenizer has no representation for. 0.0 means either no
-unknown tokens were produced or the tokenizer reports no UNK token id at all,
-in which case the count of UNK tokens is zero by construction rather than by
-measurement. The two cases are not distinguishable from `unk_token_rate` alone.
+of the input the tokenizer has no representation for. 0.0 means no unknown
+tokens were produced. A tokenizer that declares no UNK token id, or a domain
+that scored no tokens, has no denominator and publishes `null`.
 
 **Example:** encoding `"𝕳𝖊𝖑𝖑𝖔"` to `[UNK, UNK, UNK, UNK, UNK]` gives UNK rate
 1.0. Encoding `"Hello"` to `[15496]` gives 0.0.
@@ -539,14 +555,49 @@ measurement. The two cases are not distinguishable from `unk_token_rate` alone.
 > ideographic space scores differently.
 
 The fraction of whitespace characters (spaces, tabs, newlines, plus the Unicode
-Zs category) in the original text preserved through the round trip. Characters
-are paired by a greedy forward scan. 1.0 means either every whitespace
-character round-tripped or the evaluated text held no whitespace at all, in
-which case fidelity is 1.0 by convention rather than by measurement. The two
-cases are not distinguishable from `whitespace_fidelity` alone.
+Zs category) in the original text preserved through the round trip. A character
+counts as preserved when an alignment of the two texts matches it: specifically
+a maximum-length common subsequence of the two, choosing among those of maximum
+length the one that matches the most whitespace. A text holding no whitespace
+has no denominator and publishes `null`, not 1.0.
+
+Matching against the full text rather than against the whitespace alone is what
+makes this a fidelity measure. `"hello world"` decoded as `"helloworld "` scores
+0 of 1: the word boundary was deleted and a space appeared somewhere else.
 
 **Example:** original `"a b\tc"` decoded as `"a b c"`, the tab replaced by a
 space, preserves 1 of 2 whitespace characters, fidelity 0.5.
+
+### Structural whitespace (`indentation_fidelity`, `newline_fidelity`, `tab_fidelity`)
+
+`whitespace_fidelity` weights every whitespace character equally, which is not
+what a reader vetting damage to code or tabular preprocessing needs. Indentation
+is 42% of the whitespace in the bundled code corpus and 0% of FLORES prose,
+where 95% is inter-word spaces that carry no structure. Destroying every indent
+in the code corpus moves the roll-up only to 0.578, while collapsing inner spaces
+harmlessly leaves it at 0.980; a Makefile tab replaced by four spaces scores 0.80
+where trailing whitespace stripped scores 0.50.
+
+Three sub-rates are published beside it, each `null` when its denominator is
+zero:
+
+- `indentation_fidelity`: of the original's non-blank lines that begin with
+  whitespace, the fraction whose leading whitespace survives **exactly**. Run
+  exact, because indentation depth is a property of the whole run: four spaces
+  arriving as three is broken code, not 0.75 preserved. Indents are matched as a
+  sequence, so a dropped line does not shift the rest.
+- `newline_fidelity` and `tab_fidelity`: the newline and tab characters matched
+  by the same alignment `whitespace_fidelity` uses, so their sum never exceeds
+  it. How a tie is split between them is not defined: several alignments can
+  match the same number of whitespace characters while attributing them to
+  different kinds, and the implementation reports one of them. `"\n\t"`
+  decoded as `"\t\n"` reports one tab preserved, and the same damage written
+  `"\t\n"` to `"\n\t"` reports one newline. Read the pair as "one of these two
+  survived", not as which one.
+
+**Coverage limit.** No bundled corpus contains tabular data, and 470 of the
+bundled code corpus's 471 tabs are indentation. A passing `tab_fidelity` is
+evidence about code indentation, not about TSV or fixed-width data.
 
 ## UTF-8 character boundary metrics (`utf8_token_integrity`)
 

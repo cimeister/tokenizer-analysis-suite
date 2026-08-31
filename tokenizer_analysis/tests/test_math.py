@@ -1825,8 +1825,8 @@ class TestOperatorIsolationDomains:
 
         langs = ops["per_tokenizer"][self.TOK]["by_language"]
         assert "eng_Latn" in langs                       # prose stays a bare FLORES code
-        assert any(k.startswith("code:") for k in langs)  # code is marked
-        assert "math:math" in langs                       # math is marked
+        assert any(k.startswith("code_") for k in langs)  # code is marked
+        assert "math" in langs                            # math is marked
         # no bare code language leaked into the prose namespace
         assert "python" not in langs
 
@@ -2364,191 +2364,140 @@ class TestOperatorScoresMatchReverseMapReference:
             )
 
 
-class _RecordingTokenizer:
-    """Char-level tokenizer that records how it was asked to encode.
+class TestTheOperatorDomainKeysMatchReconstructionFidelity:
+    """Two formats for the same thing. reconstruction_fidelity publishes
+    `code_bash` and a bare `math` in per_domain; operator isolation published
+    `code:bash` and `math:math` in per_language. No consumer depended on
+    either, and a reader grepping across blocks found neither.
 
-    ``_tokenize_texts`` builds the code and math operator-isolation corpora. It
-    used to call ``encode_with_offsets`` once per text; the Rust backends encode
-    a batch across threads, so it now calls ``encode_batch_with_offsets`` once
-    per language.
+    The colon was doing real work: `_filter_operator_results` selects a
+    language group with `l in target_languages`, so a namespace a FLORES code
+    cannot contain kept code and math rows out. Dropping it needs the
+    collision closed rather than moved, which is what the abort below does.
     """
 
-    def __init__(self, batch_raises=False, batch_returns_short=False):
-        self._batch_raises = batch_raises
-        self._batch_returns_short = batch_returns_short
-        self.batch_calls = []
-        self.single_calls = []
+    @staticmethod
+    def _merge(domain_accs):
+        from tokenizer_analysis.metrics.math import DigitBoundaryMetrics
+        return DigitBoundaryMetrics._merge_operator_accs(domain_accs)
 
-    def can_encode(self):
-        return True
+    @staticmethod
+    def _acc(counts=1):
+        return {"tok": {"python": {"arithmetic": {
+            "isolated": counts, "total": counts,
+            "compound_ok": 0, "compound_total": 0}}}}
 
-    def encode(self, text):
-        return [ord(c) for c in text]
+    def test_code_and_math_use_the_underscore_form(self):
+        accs = {
+            "prose": {"tok": {"eng_Latn": {"arithmetic": {
+                "isolated": 1, "total": 1, "compound_ok": 0, "compound_total": 0}}}},
+            "code": self._acc(),
+            "math": {"tok": {"math": {"arithmetic": {
+                "isolated": 2, "total": 2, "compound_ok": 0, "compound_total": 0}}}},
+        }
+        merged = self._merge(accs)
+        assert set(merged["tok"]) == {"eng_Latn", "code_python", "math"}
 
-    def encode_with_offsets(self, text):
-        self.single_calls.append(text)
-        return [ord(c) for c in text], [(i, i + 1) for i in range(len(text))]
-
-    def encode_batch_with_offsets(self, texts):
-        self.batch_calls.append(list(texts))
-        if self._batch_raises:
-            raise RuntimeError("no batch API here")
-        out = [
-            ([ord(c) for c in t], [(i, i + 1) for i in range(len(t))])
-            for t in texts
-        ]
-        return out[:-1] if self._batch_returns_short else out
-
-
-class TestTokenizeTextsBatchesTheDerivedCorpora:
-
-    TOK = "batch_tok"
-    CORPUS = {
-        "python": ["a = 1", "b = 2", "   ", "c = a + b"],
-        "rust": ["let x = 1;"],
-    }
-
-    def _metrics(self, tokenizer):
-        return DigitBoundaryMetrics(_MockProvider(self.TOK, tokenizer))
-
-    def test_one_batch_call_per_language(self):
-        tok = _RecordingTokenizer()
-        out = self._metrics(tok)._tokenize_texts(self.CORPUS)
-
-        assert tok.batch_calls == [["a = 1", "b = 2", "c = a + b"], ["let x = 1;"]], (
-            "one call per language, whitespace-only texts dropped before the call"
-        )
-        assert tok.single_calls == []
-        assert [item.text for item in out[self.TOK]] == [
-            "a = 1", "b = 2", "c = a + b", "let x = 1;"
-        ]
-        assert [item.language for item in out[self.TOK]] == [
-            "python", "python", "python", "rust"
-        ]
-
-    def test_a_failed_batch_call_falls_back_to_one_call_per_text(self):
-        """The plumbing of the fallback, not a claim about any tokenizer.
-
-        Both paths here run against the same stub, whose batch method returns
-        what its single method returns, so this checks that `_tokenize_texts`
-        assembles the same items either way. That a real tokenizer's batch
-        encoding equals its per-text encoding is a separate claim, checked in
-        `test_a_real_tokenizer_encodes_a_batch_as_it_encodes_each_text`.
+    def test_a_prose_language_colliding_with_a_domain_key_aborts(self):
+        """--input names languages after files, so a corpus holding math.txt
+        produces a prose language called `math`. Summing it with the math
+        corpus would put math-corpus operators into every language group that
+        selects it, which is the silent substitution the colon prevented.
         """
-        batched = self._metrics(_RecordingTokenizer())._tokenize_texts(self.CORPUS)
+        accs = {
+            "prose": {"tok": {"math": {"arithmetic": {
+                "isolated": 1, "total": 1, "compound_ok": 0, "compound_total": 0}}}},
+            "math": {"tok": {"math": {"arithmetic": {
+                "isolated": 2, "total": 2, "compound_ok": 0, "compound_total": 0}}}},
+        }
+        with pytest.raises(ValueError, match="math"):
+            self._merge(accs)
 
-        per_text_tok = _RecordingTokenizer(batch_raises=True)
-        per_text = self._metrics(per_text_tok)._tokenize_texts(self.CORPUS)
+    def test_a_prose_language_named_like_a_code_key_aborts_too(self):
+        accs = {
+            "prose": {"tok": {"code_python": {"arithmetic": {
+                "isolated": 1, "total": 1, "compound_ok": 0, "compound_total": 0}}}},
+            "code": self._acc(),
+        }
+        with pytest.raises(ValueError, match="code_python"):
+            self._merge(accs)
 
-        assert per_text_tok.single_calls == [
-            "a = 1", "b = 2", "c = a + b", "let x = 1;"
-        ], "the batch failure falls back to one call per text"
-        assert [(i.text, i.language, i.tokens, i.offsets)
-                for i in batched[self.TOK]] == [
-            (i.text, i.language, i.tokens, i.offsets) for i in per_text[self.TOK]
-        ]
+    def test_ordinary_corpora_do_not_abort(self):
+        """The benign half: the abort must not fire on any real corpus."""
+        accs = {
+            "prose": {"tok": {"eng_Latn": {"arithmetic": {
+                "isolated": 1, "total": 1, "compound_ok": 0, "compound_total": 0}}}},
+            "code": self._acc(),
+            "math": {"tok": {"math": {"arithmetic": {
+                "isolated": 2, "total": 2, "compound_ok": 0, "compound_total": 0}}}},
+        }
+        merged = self._merge(accs)
+        assert merged["tok"]["code_python"]["arithmetic"]["total"] == 1
+        assert merged["tok"]["math"]["arithmetic"]["total"] == 2
 
-    def test_a_real_tokenizer_encodes_a_batch_as_it_encodes_each_text(self):
-        """Switching to the batch API rests on this, and nothing checked it.
 
-        `C8` in the sanity checker compares the two, but on ids only, over 50
-        prose probes, and reports WARN rather than failing. This compares ids
-        and offsets on the corpus shape the batch call is used for.
-        """
-        from tokenizer_analysis.core.tokenizer_wrapper import create_tokenizer_wrapper
+class TestAGroupGetsNoDigitNumbersRatherThanTheWholeCorpus:
+    """`include_code_math=False` means "this is one language group, not the
+    whole corpus". The digit metrics ignored it and replaced whatever data they
+    were handed with the entire maths corpus, so every group got identical
+    whole-corpus figures.
 
-        tokenizer = create_tokenizer_wrapper(
-            "bundled-bpe", {"class": "huggingface", "path": "tokenizers/bpe.json"}
-        )
-        texts = [t for texts in self.CORPUS.values() for t in texts if t.strip()]
-        texts += [
-            "def f(a, b): return a <= b and a != 0",
-            "résumé = naïve  # 字符 >= 10",
-            "x" * 500 + " == " + "y" * 500,
-        ]
-        batch = tokenizer.encode_batch_with_offsets(texts)
-        loop = [tokenizer.encode_with_offsets(t) for t in texts]
+    The fix is to measure nothing, not to fall back to counting digits in the
+    group's prose. That fallback exists for a run with no maths corpus at all,
+    and its own comment says its numbers are not comparable with a real maths
+    corpus and that most of the sample is vacuous. Publishing that under the
+    same field name would swap one quantity for another.
+    """
 
-        assert [ids for ids, _ in batch] == [ids for ids, _ in loop]
-        assert [list(offs) for _, offs in batch] == [list(offs) for _, offs in loop]
-        assert all(offs for _, offs in batch), "the bundled BPE reports offsets"
+    TOK = "tok"
 
-    def test_a_tokenizer_without_the_batch_api_is_encoded_one_text_at_a_time(self):
-        class _NoBatch:
-            def can_encode(self):
-                return True
+    def _provider_with_math(self):
+        from tokenizer_analysis.core.input_types import Corpus, InputSpecification
+        from tokenizer_analysis.core.input_providers import RawTokenizationProvider
 
-            def encode(self, text):
-                return [ord(c) for c in text]
+        class _Tok:
+            def can_encode(self): return True
+            def encode(self, t): return [ord(c) for c in t]
+            def encode_with_offsets(self, t):
+                return self.encode(t), [(i, i + 1) for i in range(len(t))]
+            def encode_batch_with_offsets(self, ts):
+                return [self.encode_with_offsets(t) for t in ts]
+            def get_vocab_size(self): return 5000
 
-            def encode_with_offsets(self, text):
-                return ([ord(c) for c in text],
-                        [(i, i + 1) for i in range(len(text))])
+        provider = RawTokenizationProvider({
+            self.TOK: InputSpecification(tokenizer=_Tok(),
+                                         texts={"eng_Latn": ["about 1234 things"]}),
+        })
+        provider.add_corpus(Corpus(name="math", texts={"math": ["1234 + 5678"]},
+                                   source="a real corpus", synthetic=False))
+        provider.corpus_reads = []
+        inner = provider.get_corpus_data
 
-        out = self._metrics(_NoBatch())._tokenize_texts(self.CORPUS)
-        assert [i.text for i in out[self.TOK]] == [
-            "a = 1", "b = 2", "c = a + b", "let x = 1;"
-        ]
-        assert all(i.offsets for i in out[self.TOK])
+        def spy(name):
+            provider.corpus_reads.append(name)
+            return inner(name)
 
-    def test_a_tokenizer_with_neither_offset_method_yields_items_without_offsets(self):
-        """Ids but no offsets, so operator isolation skips it and says so.
+        provider.get_corpus_data = spy
+        return provider
 
-        The alternative would be to guess which token covers an operator, which
-        is what the reconstruction this metric moved off did.
-        """
-        class _IdsOnly:
-            def can_encode(self):
-                return True
+    def test_a_group_reports_no_digit_numbers_and_reads_no_maths(self):
+        provider = self._provider_with_math()
+        metrics = DigitBoundaryMetrics(provider)
+        results = metrics.compute(provider.get_tokenized_data(),
+                                  include_code_math=False)
 
-            def encode(self, text):
-                return [ord(c) for c in text]
+        per_tok = results["three_digit_boundary_alignment"]["per_tokenizer"]
+        assert per_tok.get(self.TOK, {}).get("overall", {}) == {}
+        assert "math" not in provider.corpus_reads, provider.corpus_reads
 
-        out = self._metrics(_IdsOnly())._tokenize_texts(self.CORPUS)
-        assert [i.text for i in out[self.TOK]] == [
-            "a = 1", "b = 2", "c = a + b", "let x = 1;"
-        ]
-        assert all(i.offsets is None for i in out[self.TOK])
-        assert all(i.tokens for i in out[self.TOK])
+    def test_the_whole_corpus_run_still_measures_the_maths_texts(self):
+        """The benign half. Without it the fix could be "never measure"."""
+        provider = self._provider_with_math()
+        metrics = DigitBoundaryMetrics(provider)
+        results = metrics.compute(provider.get_tokenized_data(),
+                                  include_code_math=True)
 
-    def test_a_malformed_batch_return_falls_back_rather_than_raising(self):
-        """A backend returning something other than (ids, offsets) pairs.
-
-        Before this method encoded in batches, a bad return from
-        `encode_with_offsets` was caught and the text was encoded with
-        `encode()` instead. Unpacking inside the try keeps that: the batch
-        result is rejected and the per-text path runs.
-        """
-        class _BadBatch(_RecordingTokenizer):
-            def encode_batch_with_offsets(self, texts):
-                self.batch_calls.append(list(texts))
-                return [(self.encode(t), [], "extra") for t in texts]
-
-        tok = _BadBatch()
-        out = self._metrics(tok)._tokenize_texts(self.CORPUS)
-        assert tok.single_calls == ["a = 1", "b = 2", "c = a + b", "let x = 1;"]
-        assert [i.text for i in out[self.TOK]] == tok.single_calls
-
-    def test_a_short_batch_result_raises_rather_than_mispairing(self):
-        """Pairing by position would attach one text's offsets to another.
-
-        Silently zipping a short result drops the last text and shifts nothing,
-        but a backend that reorders or merges would misalign every pair after
-        the first, and the metric would then be computed against the wrong
-        source with no sign in the output.
-        """
-        tok = _RecordingTokenizer(batch_returns_short=True)
-        with pytest.raises(ValueError, match="encodings for the 3 'python' texts"):
-            self._metrics(tok)._tokenize_texts(self.CORPUS)
-
-    def test_a_tokenizer_that_cannot_encode_raw_text_is_left_out(self):
-        """Unchanged by the batching: no batch call is made for it either."""
-        class _PreTokenizedOnly:
-            def can_encode(self):
-                return False
-
-            def encode(self, text):
-                raise RuntimeError("pre-tokenized input carries ids, not text")
-
-        out = self._metrics(_PreTokenizedOnly())._tokenize_texts(self.CORPUS)
-        assert out == {}
+        per_lang = results["three_digit_boundary_alignment"]["per_tokenizer"][
+            self.TOK]["overall"]
+        assert set(per_lang) == {"math"}, per_lang
+        assert "math" in provider.corpus_reads

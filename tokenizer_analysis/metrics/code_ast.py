@@ -29,6 +29,7 @@ import logging
 
 from .base import BaseMetrics, format_optional
 from ..constants import AGGREGATION_MICRO_POOLED
+from ..core.input_types import CODE_CORPUS, Corpus, TokenizedData
 from ..core.input_providers import InputProvider
 
 # Import constants and helpers from the lightweight worker module.
@@ -271,9 +272,13 @@ def parse_snippets_fenced(
 class ASTBoundaryMetrics(BaseMetrics):
     """AST boundary alignment metrics for code tokenization.
 
-    This metric loads its own code data (from config paths or synthetic
-    samples) and encodes it with each tokenizer.  It does **not** use the
-    ``tokenized_data`` parameter passed to :meth:`compute`.
+    The code this metric measures is the corpus the run registered on the input
+    provider, or, when there is none, code this metric loads itself from config
+    paths or from the bundled samples. A registered corpus is read back from the
+    provider already encoded, so it is encoded once for the whole run rather
+    than once per metric; code this metric loaded itself is encoded here. Either
+    way it does **not** use the ``tokenized_data`` parameter passed to
+    :meth:`compute`.
     """
 
     _CATEGORIES = _CATEGORIES_TUPLE
@@ -298,6 +303,43 @@ class ASTBoundaryMetrics(BaseMetrics):
         # read as a language that scored zero.
         self._dropped_languages: Dict[str, str] = {}
 
+        # Refuse a code_config the registered corpus would override, before
+        # any of it is read. The registry used to win silently, so a caller who
+        # named real paths while a run had registered the bundled samples got
+        # AST numbers measured on synthetic code under the name of their own
+        # corpus: 0.562 full alignment against 0.493 on StarCoder for the same
+        # tokenizer. UnifiedTokenizerAnalyzer passes no code_config, because it
+        # registers the corpus that argument would have built.
+        #
+        # max_snippets_per_lang is not refused, because it does not select a
+        # corpus, it bounds one: get_code_snippets re-applies it to whatever
+        # this loader holds, registered corpus included, and the run passes the
+        # value it resolved the corpus with. It is now a second application
+        # rather than the only one. synthetic_code_corpus applies the same cap
+        # when it builds the bundled samples, because this re-application
+        # reached only these metrics and left the operator and digit metrics
+        # reading the corpus uncapped: 57 texts against 2 per language, under
+        # one corpus name. Kept as the final safety net it is documented to
+        # be, and harmless when the corpus already honours the cap.
+        #
+        # max_snippet_chars is refused, because nothing here can honour it. It
+        # takes effect only inside CodeDataLoader.load_all, which the registered
+        # branch never calls, and get_code_snippets applies the snippet cap
+        # alone. Accepting it meant self.max_snippet_chars read back the value
+        # the caller passed while every snippet stayed full length. The value
+        # the registered corpus was truncated with is read off Corpus.caps
+        # below instead, which is a fact about the corpus rather than a request
+        # this metric cannot honour.
+        self._code_corpus = self._corpus_or_refuse_arguments(
+            CODE_CORPUS,
+            # code_config is not None, not bool(): {} is a request for the
+            # bundled samples here, which is what --code-ast-config passes when
+            # it is absent. max_snippet_chars=0 disables truncation, so it asks
+            # for nothing.
+            {"code_config": code_config is not None,
+             "max_snippet_chars": bool(max_snippet_chars)},
+        )
+
         # Load code data
         from ..loaders.code_data import CodeDataLoader
 
@@ -309,27 +351,156 @@ class ASTBoundaryMetrics(BaseMetrics):
         self.max_snippets_per_lang = self.code_loader.max_snippets_per_lang
         self.max_snippet_chars = self.code_loader.max_snippet_chars
 
-        if code_config:
-            self.code_loader.load_all()
-            # Synthetic samples are the documented behaviour for an empty
-            # code_config only. Substituting them for a config that named real
-            # paths reports code metrics computed on toy snippets under the name
-            # of the corpus the user asked for: measured 0.562 full AST
-            # alignment on synthetic against 0.493 on StarCoder for the same
-            # tokenizer.
-            if not self.code_loader.code_snippets:
+        if self._code_corpus is not None:
+            # The run resolved the code corpus once and registered it. Loading
+            # it again here read every configured file a second time and applied
+            # the caps a second time, with nothing checking that the two loads
+            # agreed, while this metric and the code domain of operator
+            # isolation both reported on "the" code corpus.
+            #
+            # It still goes through the loader rather than being read straight
+            # off the corpus, so that get_code_snippets keeps applying
+            # max_snippets_per_lang as its final safety net.
+            # Language names are checked here, because a registered corpus
+            # need not have come through CodeDataLoader._validate_config.
+            # code_corpus_from_texts, which is how DigitBoundaryMetrics turns a
+            # caller's code_texts into a corpus, validates nothing, so a label
+            # like "cobol" reached the parser and was dropped at debug level
+            # with nothing in dropped_languages recording it.
+            unknown = sorted(
+                set(self._code_corpus.texts) - set(CodeDataLoader._LANG_EXTENSIONS)
+            )
+            if unknown:
                 raise ValueError(
-                    "The code config named "
-                    f"{', '.join(sorted(code_config))} but no snippet was read "
-                    "from any of those paths. Check that the directories hold "
-                    "files with the expected extensions."
+                    f"The registered {CODE_CORPUS!r} corpus from "
+                    f"{self._code_corpus.source!r} holds language(s) "
+                    f"{', '.join(unknown)}, which these metrics have no parser "
+                    "for. They would be dropped from the results with nothing "
+                    "saying so. Supported: "
+                    f"{', '.join(sorted(CodeDataLoader._LANG_EXTENSIONS))}."
                 )
+            self.code_loader.code_snippets.update(
+                {lang: list(texts) for lang, texts in self._code_corpus.texts.items()}
+            )
+            # What the caps did to this corpus, taken from the corpus itself.
+            # The loader that applied them was built and discarded inside
+            # resolve_code_corpus, so the one constructed above has the
+            # defaults: self.max_snippet_chars reported 0 and the three
+            # counters reported {} however much a cap had removed. A corpus
+            # built by hand carries no caps and is left alone, because
+            # inventing zeros for it would say a cap ran and removed nothing.
+            caps = self._code_corpus.caps
+            if caps is not None:
+                self.max_snippet_chars = caps.max_snippet_chars
+                self.code_loader.max_snippet_chars = caps.max_snippet_chars
+                self.code_loader.dropped_file_counts = dict(caps.dropped_file_counts)
+                self.code_loader.truncated_char_counts = dict(caps.truncated_char_counts)
+                self.code_loader.dropped_whitespace_only_counts = dict(
+                    caps.dropped_whitespace_only_counts
+                )
+            # A registered corpus with no texts is refused rather than scored.
+            # The synthetic fallback below is reachable only when nothing was
+            # registered, so an empty registered corpus used to leave this
+            # metric with zero snippets and publish empty per-language blocks
+            # for every tokenizer, with no error and no warning saying that
+            # nothing had been measured. code_corpus_from_texts drops labels
+            # whose list is empty, so code_texts={"python": []} produces exactly
+            # this.
+            if not any(self.code_loader.code_snippets.values()):
+                raise ValueError(
+                    f"The registered {CODE_CORPUS!r} corpus from "
+                    f"{self._code_corpus.source!r} holds no texts, so these "
+                    "metrics have nothing to measure. Publishing an empty "
+                    "result for every tokenizer would read as a corpus that "
+                    "scored nothing rather than one that was never there. "
+                    "Register a corpus with texts, or register none and let "
+                    "this metric load its own."
+                )
+        else:
+            if code_config:
+                self.code_loader.load_all()
+                # Synthetic samples are the documented behaviour for an empty
+                # code_config only. Substituting them for a config that named real
+                # paths reports code metrics computed on toy snippets under the name
+                # of the corpus the user asked for: measured 0.562 full AST
+                # alignment on synthetic against 0.493 on StarCoder for the same
+                # tokenizer.
+                if not any(self.code_loader.code_snippets.values()):
+                    raise ValueError(
+                        "The code config named "
+                        f"{', '.join(sorted(code_config))} but no snippet was read "
+                        "from any of those paths. Check that the directories hold "
+                        "files with the expected extensions."
+                    )
 
-        # With no code config, synthetic samples are the documented input.
-        if not self.code_loader.code_snippets:
-            synthetic = CodeDataLoader.generate_synthetic_samples()
-            for lang, snippets in synthetic.items():
-                self.code_loader.code_snippets.setdefault(lang, []).extend(snippets)
+            # With no code config, synthetic samples are the documented input.
+            if not any(self.code_loader.code_snippets.values()):
+                synthetic = CodeDataLoader.generate_synthetic_samples()
+                for lang, snippets in synthetic.items():
+                    self.code_loader.code_snippets.setdefault(lang, []).extend(snippets)
+
+    def _shared_code_encodings(
+        self, active_tokenizers: List[Tuple[str, Any]]
+    ) -> Optional[Dict[str, Dict[Tuple[str, str], TokenizedData]]]:
+        """The registered code corpus already encoded, indexed by (language, text).
+
+        Returns None when no code corpus is registered, which tells
+        :meth:`compute` to encode each snippet itself as it always has.
+
+        The provider encodes a registered corpus once and memoizes it, so
+        reading the encoding from there rather than calling
+        ``encode_with_offsets`` per snippet means the corpus is encoded once for
+        the whole run instead of once per metric that reads it. It is also the
+        faster encode, because the provider encodes one batch per language.
+        Measured with tokenizers/bpe.json over the 1500 files the config
+        benchmarks/open_source/code_ast_config.json names: 10.29 s of
+        per-snippet ``encode_with_offsets`` against 4.00 s for the provider's
+        batched encode, and 0.00 s for every read after the first.
+        ``HuggingFaceTokenizer`` and ``CustomBPETokenizer`` are the wrappers
+        with a native batch path. ``UniMixLMTokenizer`` subclasses the first but
+        overrides ``encode_batch_with_offsets`` back to a per-text loop, because
+        langspec encoding scores each text against every per-language tokenizer.
+        For it, and for every wrapper that inherits the base implementation, the
+        method is a per-text loop, so only the single-encoding part of this
+        applies.
+
+        The index is keyed by ``(language, text)`` and never by position. The
+        provider's encode keeps only texts satisfying ``text and text.strip()``,
+        so its list for a language is shorter than the loader's snippet list
+        whenever a snippet is empty or whitespace-only. Pairing the two lists by
+        index after one such drop would score every later AST span against the
+        following snippet's tokens, and nothing in the results would show it.
+        The one cause of such a snippet this package used to produce,
+        ``max_snippet_chars`` truncating an indented file down to its leading
+        whitespace, is fixed where it arose, in
+        ``CodeDataLoader._load_language``. A corpus supplied by a caller can
+        still contain one, so the key stays the text. Two identical snippets
+        collapse onto one entry, which is harmless: identical text encodes to
+        identical ids and identical offsets.
+        """
+        if self._code_corpus is None:
+            return None
+        # The walk and the key belong to the provider, which builds the same
+        # index for reconstruction fidelity. The check below stays here: it
+        # uses this metric's own notion of an active tokenizer, which the
+        # provider has no view of.
+        lookup = self.input_provider.index_corpus(CODE_CORPUS)
+        missing = sorted(
+            name for name, _ in active_tokenizers if name not in lookup
+        )
+        if missing:
+            raise ValueError(
+                f"Tokenizer(s) {missing} report can_encode() true, which is how "
+                "this metric selects the tokenizers it scores, but the shared "
+                f"{CODE_CORPUS!r} corpus holds no encoding for them. "
+                "InputProvider._encode_corpus selects on can_encode_raw_text, "
+                "which additionally requires a callable encode attribute, so "
+                "the two predicates disagree for these tokenizers. Encoding "
+                "them here instead would undo the single encoding this path "
+                "exists for, and skipping them would drop them from the AST "
+                "results with nothing in the output saying they are absent."
+            )
+        return lookup
 
     # ------------------------------------------------------------------
     # Tree-sitter helpers
@@ -922,8 +1093,9 @@ class ASTBoundaryMetrics(BaseMetrics):
 
         .. note::
 
-           *tokenized_data* is **not used**: the metric loads its own code
-           snippets and encodes them with each tokenizer.
+           *tokenized_data* is **not used**: the metric reads the registered
+           code corpus, or the snippets it loaded itself, and encodes them with
+           each tokenizer.
         """
         if not self._ensure_treesitter():
             return {
@@ -934,7 +1106,7 @@ class ASTBoundaryMetrics(BaseMetrics):
                 "indentation_consistency": {},
             }
 
-        if not self.code_loader.code_snippets:
+        if not any(self.code_loader.code_snippets.values()):
             return {
                 "ast_boundary_alignment": {
                     "error": "No code data loaded",
@@ -1003,8 +1175,18 @@ class ASTBoundaryMetrics(BaseMetrics):
 
         from ..loaders.code_data import CodeDataLoader
 
+        # The `text and text.strip()` filter is the one
+        # InputProvider._encode_corpus applies, so a snippet kept here has an
+        # encoding to look up and a snippet it drops has none. Without it a
+        # blank entry in a registered corpus reached the (language, text) lookup,
+        # missed, and aborted the whole metric. code_corpus_from_texts drops a
+        # label whose list is empty, not a blank string inside one, so
+        # code_texts={"python": ["   ", "x = 1"]} produces exactly that.
+        # basic.py applies the same filter for the same reason, and the
+        # lookup is keyed by text, so skipping carries no mis-pairing risk.
         code_snippets = {
-            lang: self.code_loader.get_code_snippets(lang)
+            lang: [s for s in self.code_loader.get_code_snippets(lang)
+                   if s and s.strip()]
             for lang in self.code_loader.get_languages()
             if lang not in _UNSUPPORTED_CODE_LANGS
         }
@@ -1023,6 +1205,24 @@ class ASTBoundaryMetrics(BaseMetrics):
                           for lang in sorted(skipped)),
             )
         lang_to_treesitter = CodeDataLoader._LANG_TO_TREESITTER
+
+        # Before Phase 1, not after. This reads only the tokenizer list and
+        # the registered corpus, both known already, and it can stop the whole
+        # metric. It used to run after every snippet had been parsed in
+        # per-language subprocesses, so a run that was going to abort paid for
+        # the full parse of the 1500-file corpus first and discarded it.
+        active_tokenizers: List[Tuple[str, Any]] = []
+        for tok_name in self.tokenizer_names:
+            tokenizer = self.input_provider.get_tokenizer(tok_name)
+            if tokenizer.can_encode():
+                active_tokenizers.append((tok_name, tokenizer))
+            else:
+                logger.info(
+                    "Tokenizer %s cannot encode text; skipping AST metrics",
+                    tok_name,
+                )
+
+        shared_encodings = self._shared_code_encodings(active_tokenizers)
 
         total_input = sum(len(v) for v in code_snippets.values())
         logger.info(
@@ -1074,19 +1274,6 @@ class ASTBoundaryMetrics(BaseMetrics):
         # tokenizer-independent per-snippet work (byte_to_char, indentation,
         # byte→char span conversion) is computed ONCE and reused across all
         # tokenizers.
-
-        # Pre-filter encodable tokenizers (avoid repeated can_encode() checks).
-        active_tokenizers: List[Tuple[str, Any]] = []
-        for tok_name in self.tokenizer_names:
-            tokenizer = self.input_provider.get_tokenizer(tok_name)
-            if tokenizer.can_encode():
-                active_tokenizers.append((tok_name, tokenizer))
-            else:
-                logger.info(
-                    "Tokenizer %s cannot encode text; skipping AST metrics",
-                    tok_name,
-                )
-
 
         for code_lang, spans_list in parsed_spans.items():
             snippets = code_snippets[code_lang]
@@ -1153,16 +1340,52 @@ class ASTBoundaryMetrics(BaseMetrics):
 
                 # Per-tokenizer work
                 for tok_name, tokenizer in active_tokenizers:
-                    try:
-                        token_ids, enc_offsets = tokenizer.encode_with_offsets(
-                            snippet
+                    if shared_encodings is None:
+                        # No corpus was registered, so this metric loaded its
+                        # own code and there is nothing to share. It encodes
+                        # here, as it always has. scripts/run_ast_only.py,
+                        # per_example.py and most of the test suite reach this
+                        # branch.
+                        try:
+                            token_ids, enc_offsets = tokenizer.encode_with_offsets(
+                                snippet
+                            )
+                        except Exception as e:
+                            logger.debug(
+                                "Encoding failed for %s on %s snippet: %s",
+                                tok_name, code_lang, e,
+                            )
+                            continue
+                    else:
+                        record = shared_encodings[tok_name].get(
+                            (code_lang, snippet)
                         )
-                    except Exception as e:
-                        logger.debug(
-                            "Encoding failed for %s on %s snippet: %s",
-                            tok_name, code_lang, e,
-                        )
-                        continue
+                        if record is None:
+                            raise ValueError(
+                                f"The shared {CODE_CORPUS!r} corpus holds no "
+                                f"encoding of {code_lang} snippet {si + 1} of "
+                                f"{len(spans_list)} for tokenizer {tok_name!r}. "
+                                "The snippet this metric parsed and the texts "
+                                "the provider encoded are supposed to be the "
+                                "same strings; they are not. The cause is "
+                                "InputProvider._encode_corpus dropping a text "
+                                "that is empty or whitespace-only. This is not "
+                                "reachable through --max-code-file-chars: "
+                                "CodeDataLoader drops a snippet its truncation "
+                                "leaves whitespace-only, so look at the corpus "
+                                "the provider was given. Scoring this snippet "
+                                "against "
+                                "another snippet's tokens is what keying the "
+                                "lookup by text instead of by position "
+                                "prevents, so it fails here rather than "
+                                "reporting a number measured against the wrong "
+                                "source. Snippet starts: "
+                                f"{snippet[:60]!r}"
+                            )
+                        token_ids, enc_offsets = record.tokens, record.offsets
+                    # A record whose tokens are empty lands here too, which is
+                    # the case this skip already covered when the encoding
+                    # happened above.
                     if not token_ids:
                         continue
 

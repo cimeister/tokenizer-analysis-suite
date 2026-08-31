@@ -59,7 +59,7 @@ over the whole file rather than a sample:
   `token_length` and `encoding_speed` have one that duplicates a block they
   already publish, because an exception in the schema costs a reader more than a
   duplicated number does.
-- `metadata.aggregation` names which average `global` reports, one of four
+- `metadata.aggregation` names which average `global` reports, one of five
   labels. See [Aggregation labels](#aggregation-labels) below.
 - Every `per_language` entry includes a `count`, in the unit named by
   `metadata.count_unit`, so a consumer can re-derive the other weighting.
@@ -110,7 +110,17 @@ On a parallel corpus it is the one to read.
 the last splitting the pooled global by corpus. `by_domain` has `code` and
 `math`, plus `prose` when `--operator-prose-domain` was passed, and `global`
 pools whichever ran. Its `per_language` keys natural languages (`arb_Arab`) and
-programming languages (`code:bash`) in one dict.
+programming languages (`code_bash`) in one dict, spelled the same way
+reconstruction fidelity spells its own per-domain keys.
+
+In `operator_isolation_rate`, a prose language whose name would collide with one
+of these keys aborts the run rather than being summed into it. The check only
+has anything to compare against when `--operator-prose-domain` is passed, since
+without it there are no prose rows in this block.
+The per-domain block of reconstruction fidelity has the same collision and does
+**not** abort: a corpus with a language literally named `math`, or `code_<lang>` for a
+programming language that also has code, is pooled into one row there. Rename
+the language if your corpus can produce one.
 
 The slimmed file omits four kinds of field.
 
@@ -151,10 +161,21 @@ left the two files impossible to cross-reference.
 #### Aggregation labels
 
 `metadata.aggregation` names which average `global` reports: `micro_pooled`,
-`macro_languages`, `ratio_of_sums` or `set_union`. This matters because
-`global` means different things in different metrics, and on a parallel corpus
-where every language holds the same number of lines micro and macro agree, so
-the difference only shows on an unequal corpus.
+`macro_languages`, `ratio_of_sums`, `set_union` or `mean_of_ratios`. This
+matters because `global` means different things in different metrics, and on a
+parallel corpus where every language holds the same number of lines micro and
+macro agree, so the difference only shows on an unequal corpus.
+
+`mean_of_ratios` is the unweighted mean of one ratio per item, where the item
+is a document or a number rather than a language, so a long document counts the
+same as a short one. `fertility`, `token_length`,
+`three_digit_boundary_alignment` and `numeric_magnitude_consistency` carry it.
+On the committed benchmark it differs from the pooled value by up to 18.7%.
+
+Where one label cannot describe a whole block, `metadata.aggregation_exceptions`
+names the fields that differ. `reconstruction_fidelity` uses it: its rates are
+pooled counts except `mean_cer`, which normalises by each reference's own
+length before summing.
 
 #### `null` means not measured
 
@@ -172,9 +193,24 @@ A field is `null` when:
   `vocabulary_utilization.per_tokenizer.<tok>.per_language_cov` is `null` and
   omitted from its plot.
 - A domain holds nothing of the relevant kind.
-- The CER time budget was exceeded. `reconstruction_fidelity`'s `mean_cer` and
-  `whitespace_fidelity` are `null` for that tokenizer, and the log names it and
-  the projected time. `--cer-time-budget 0` removes the cap.
+- The CER time budget was exceeded. `reconstruction_fidelity`'s `mean_cer`,
+  `whitespace_fidelity` and the three structural sub-rates are `null` for that
+  tokenizer, and the log names it and the projected time. `--cer-time-budget 0`
+  removes the cap.
+`reconstruction_fidelity.per_tokenizer.<tok>.global.decode_failures` counts
+texts whose `decode()`
+returned `None`. They leave every reconstruction denominator, so `count` is the
+texts that decoded while `total_tokens` is every text's tokens: dividing one by
+the other is inflated by the failures. The field appears per domain, in
+`overall`, and in `summary`.
+
+- Every rate in `reconstruction_fidelity` follows this rule with no stand-in
+  default. A domain where every decode failed publishes `exact_match_rate` and
+  `mean_cer` as `null` rather than `0.0`, which used to read as a perfect round
+  trip beside a `count` of 0; a tokenizer that declares no UNK token id
+  publishes `unk_token_rate` `null`; a text holding no whitespace publishes
+  `whitespace_fidelity` `null`. `cer_skipped` is what distinguishes a `null`
+  the time budget caused from one that had no denominator.
 
 Consumers doing arithmetic on these fields need a `None` check.
 

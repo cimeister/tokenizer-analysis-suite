@@ -256,7 +256,10 @@ class TestMergedMetricsStillRender:
             'reconstruction_fidelity': {
                 'summary': {'A': {'exact_match_rate': 0.99, 'mean_cer': 0.002,
                                   'unk_token_rate': 0.0,
-                                  'whitespace_fidelity': 0.86}},
+                                  'whitespace_fidelity': 0.86,
+                                  'indentation_fidelity': 0.91,
+                                  'newline_fidelity': 0.99,
+                                  'tab_fidelity': 1.0}},
             },
         }
         # Every metric the merge relocates is in the fixture, so the merge runs

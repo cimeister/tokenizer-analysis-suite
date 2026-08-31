@@ -560,7 +560,7 @@ class InformationTheoreticMetrics(BaseMetrics):
                 'min_bigram_occurrences': min_occ,
                 'normalizer': 'log2(distinct successors of this context)',
                 # aggregation names which average the global block reports,
-                # from the four labels in constants.AGGREGATION_LABELS. The
+                # from the labels in constants.AGGREGATION_LABELS. The
                 # global entropy is computed over the bigrams of every language
                 # pooled together, so a language contributing more bigrams
                 # counts for more. How contexts are weighted within that pool is
@@ -737,7 +737,7 @@ class InformationTheoreticMetrics(BaseMetrics):
                 'interpretation': 'Higher = more uniform successor distributions given bigram context',
                 'min_trigram_occurrences': min_occ,
                 'normalizer': 'log2(distinct successors of this bigram context)',
-                # Same split as bigram_entropy: aggregation is one of the four
+                # Same split as bigram_entropy: aggregation is one of the
                 # labels in constants.AGGREGATION_LABELS and describes the
                 # global block, which pools the trigrams of every language;
                 # context_weighting describes how contexts are weighted inside

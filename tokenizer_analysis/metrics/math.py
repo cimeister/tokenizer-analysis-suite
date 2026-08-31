@@ -32,12 +32,94 @@ from scipy.stats import spearmanr
 import logging
 
 from .base import BaseMetrics, TokenizedDataProcessor, format_optional
-from ..constants import AGGREGATION_MICRO_POOLED
-from ..core.input_types import TokenizedData, check_batch_pairing
+from ..constants import AGGREGATION_MEAN_OF_RATIOS, AGGREGATION_MICRO_POOLED
+from ..core.input_types import (
+    corpus_size,
+    CODE_CORPUS, MATH_CORPUS, PROSE_CORPUS, PROSE_SOURCE, Corpus, TokenizedData,
+    published_language_key,
+)
 from ..core.input_providers import InputProvider
-from ..utils.text_utils import load_math_data, BUILTIN_MATH_SAMPLES_PATH
+from ..loaders.corpora import code_corpus_from_texts, resolve_math_corpus
 
 logger = logging.getLogger(__name__)
+
+
+def operator_metadata(include_code_math: bool = True,
+                      filtered: bool = False) -> Dict[str, Any]:
+    """The published ``operator_isolation_rate`` metadata block.
+
+    One definition, because the description names the domains the block holds
+    and a second copy drifted before: main.py's grouped filter used to copy
+    the whole-corpus metadata, so every group block said "Code and math
+    always run" beside an empty ``per_tokenizer`` and no ``by_domain``
+    (RELEASE_AUDIT Q35.2 R2).
+
+    ``include_code_math=True`` is the whole-corpus run. ``False`` is the
+    per-group recompute, whose block carries ``by_domain`` holding the
+    domains that ran, which is empty at the default settings (prose off).
+    ``filtered=True`` is main.py's filter over base results, whose block is
+    re-aggregated from the base run and carries no ``by_domain`` at all.
+    """
+    if filtered:
+        description = (
+            "How often a mathematical operator is a token of its own, "
+            "re-aggregated over this group's prose languages from the base "
+            "run. The code and math domains belong to no language group and "
+            "are not included; prose rows appear only with "
+            "--operator-prose-domain. The corpus-level by_domain split is "
+            "reported once in the top-level results, not per group."
+        )
+    elif include_code_math:
+        description = (
+            "How often a mathematical operator is a token of its own, "
+            "pooled over the domains that ran, with the split kept in "
+            "by_domain. Code and math always run; prose runs only "
+            "with --operator-prose-domain. Read by_domain to see which."
+        )
+    else:
+        description = (
+            "How often a mathematical operator is a token of its own, "
+            "pooled over the domains that ran, with the split kept in "
+            "by_domain. This run covers one group of prose languages, "
+            "so the code and math domains do not run; prose runs only "
+            "with --operator-prose-domain. by_domain holds the domains "
+            "that ran, and is empty when prose is off."
+        )
+    return {
+        "description": description,
+        "aggregation": AGGREGATION_MICRO_POOLED,
+        "count_unit": "operator occurrences",
+    }
+
+
+def magnitude_metadata(grouped: bool = False) -> Dict[str, Any]:
+    """The published ``numeric_magnitude_consistency`` metadata block.
+
+    The grouped variant exists because the ``scaling`` fit pools every
+    language of the run, so main.py's grouped filter drops it from a group
+    block rather than copying the whole-corpus fit under a group label, and
+    the description has to stop promising it (RELEASE_AUDIT Q35.2 R1).
+    """
+    if grouped:
+        description = (
+            "Tokens per digit, re-aggregated over this group's languages "
+            "from the base run. The scaling fit pools every language of the "
+            "run, so a group block does not carry one; it is in the "
+            "top-level results."
+        )
+    else:
+        description = (
+            "Tokens per digit, and how it scales with the number of digits."
+        )
+    return {
+        "description": description,
+        # mean_fertility is the mean of tokens-per-digit over numbers, one
+        # ratio each, not a ratio of summed counts. Same shape as
+        # three_digit_boundary_alignment beside it, and built from the same
+        # accumulator, so the two carry the same label.
+        "aggregation": AGGREGATION_MEAN_OF_RATIOS,
+        "count_unit": "numbers",
+    }
 
 
 def _relative_to_package(path: Any) -> Any:
@@ -135,76 +217,70 @@ class DigitBoundaryMetrics(BaseMetrics):
         # score: a web corpus is far larger than a code corpus and 78.5% of its
         # documents contain at least one character the regex matches.
         self._include_prose_operators = include_prose_operators
-        self._math_data_path = math_data_path
+
+        # The corpora for the per-domain operator-isolation split. Prose is the
+        # corpus the metric already ran on; code and math are registered on the
+        # provider by the run, and built here from the constructor arguments
+        # when this class is constructed on its own. Supplying both is refused
+        # rather than resolved, so the corpus reported is always the corpus the
+        # caller asked for.
+        self._code_corpus = self._corpus_or_refuse_arguments(
+            # bool(): an empty code_texts asks for nothing, unlike the
+            # code_config of the AST metrics, where {} means the bundled
+            # samples.
+            CODE_CORPUS, {"code_texts": bool(code_texts)},
+            build=lambda: code_corpus_from_texts(code_texts),
+        )
+        self._math_corpus = self._corpus_or_refuse_arguments(
+            MATH_CORPUS,
+            {"math_data_path": bool(math_data_path),
+             "use_builtin_math_data": bool(use_builtin_math_data)},
+            build=lambda: resolve_math_corpus(math_data_path, use_builtin_math_data),
+        )
+
+        # Both corpora are resolved before either is registered, so a failure
+        # resolving the second leaves the provider untouched. Registering as
+        # they resolved meant a math path that does not exist aborted with the
+        # code corpus already on the provider, and the retry then failed with
+        # "a corpus named 'code' is already registered", naming neither the
+        # original problem nor the fix. UnifiedTokenizerAnalyzer does the same
+        # thing for the same reason.
+        built_code = (
+            code_corpus_from_texts(code_texts)
+            if self._code_corpus is None else None
+        )
+        built_math = (
+            resolve_math_corpus(math_data_path, use_builtin_math_data)
+            if self._math_corpus is None else None
+        )
+        if built_code is not None:
+            self._code_corpus = self._register_corpus(built_code)
+        if built_math is not None:
+            self._math_corpus = self._register_corpus(built_math)
+
+        # The digit metrics run on the math corpus only when the caller asked
+        # for one. The bundled samples are registered as `synthetic` so that the
+        # math operator-isolation domain always has something to score, and the
+        # digit metrics then fall back to the prose corpus, which is what they
+        # have always done. compute() logs what that costs.
         self._math_texts: List[str] = []
-        if math_data_path:
-            self._math_texts = load_math_data(math_data_path)
-            if not self._math_texts:
-                raise ValueError(
-                    f"math_data_path {math_data_path!r} loaded 0 texts. Refusing to "
-                    "fall back to the bundled samples: the run would silently measure "
-                    "a different corpus than the one asked for."
-                )
-            logger.info(
-                "Loaded %d math texts from %s", len(self._math_texts), math_data_path
-            )
-        elif use_builtin_math_data:
-            self._math_texts = load_math_data(BUILTIN_MATH_SAMPLES_PATH)
-            logger.info(
-                "Loaded %d built-in math samples", len(self._math_texts)
-            )
-
-        # Corpora for the per-domain operator-isolation split. Prose is the
-        # corpus the metric already ran on; math and code use the caller's
-        # datasets when given and the bundled samples otherwise. The corpus
-        # actually used is recorded and reported, so a fallback is never silent.
-        if self._math_texts:
-            self._op_math_texts = self._math_texts
-            self._op_math_source = math_data_path or BUILTIN_MATH_SAMPLES_PATH
-        else:
-            self._op_math_texts = load_math_data(BUILTIN_MATH_SAMPLES_PATH)
-            self._op_math_source = BUILTIN_MATH_SAMPLES_PATH
-        if code_texts:
-            self._op_code_texts = {k: v for k, v in code_texts.items() if v}
-            self._op_code_source = "code-ast dataset"
-        else:
-            from ..loaders.code_data import CodeDataLoader
-            self._op_code_texts = CodeDataLoader.generate_synthetic_samples()
-            self._op_code_source = CodeDataLoader._BUILTIN_CODE_SAMPLES_PATH
-
-        # Encoding the derived corpora is the expensive part, and compute() can be
-        # called once per language group. Cache per corpus and per tokenizer.
-        self._encoded_corpus_cache: Dict[str, Dict[str, List[TokenizedData]]] = {}
-        self._decode_table_cache: Dict[str, Any] = {}
+        if not self._math_corpus.synthetic:
+            self._math_texts = [
+                text for texts in self._math_corpus.texts.values() for text in texts
+            ]
 
         if include_prose_operators:
             logger.info(
                 "Operator isolation domains: prose=multilingual, math=%s, code=%s",
-                self._op_math_source, self._op_code_source,
+                self._math_corpus.source, self._code_corpus.source,
             )
         else:
             logger.info(
                 "Operator isolation domains: math=%s, code=%s. The prose domain "
                 "is off; pass --operator-prose-domain to score the main corpus "
                 "as well.",
-                self._op_math_source, self._op_code_source,
+                self._math_corpus.source, self._code_corpus.source,
             )
-
-    @staticmethod
-    def _corpus_stats(texts_by_lang: Dict[str, List[str]]) -> Dict[str, Any]:
-        """Size of a corpus, so a reported domain can be traced to what it measured.
-
-        The pooled summary is a micro-average, so the domain that contributes the
-        most operators sets it. Publishing each domain's size is what lets a reader
-        see which corpus is doing the work.
-        """
-        per_lang = {lang: len(texts) for lang, texts in texts_by_lang.items()}
-        return {
-            "n_texts": sum(per_lang.values()),
-            "n_chars": sum(len(t) for texts in texts_by_lang.values() for t in texts),
-            "n_languages": len(per_lang),
-            "texts_per_language": dict(sorted(per_lang.items())),
-        }
 
     # ------------------------------------------------------------------
     # Digit-span boundary extraction
@@ -402,7 +478,8 @@ class DigitBoundaryMetrics(BaseMetrics):
     # ------------------------------------------------------------------
 
     def compute(
-        self, tokenized_data: Optional[Dict[str, List[TokenizedData]]] = None
+        self, tokenized_data: Optional[Dict[str, List[TokenizedData]]] = None,
+        include_code_math: bool = True,
     ) -> Dict[str, Any]:
         """Compute digit boundary alignment, digit split variability,
         numeric magnitude consistency, and operator isolation rate.
@@ -411,11 +488,20 @@ class DigitBoundaryMetrics(BaseMetrics):
         metrics tokenize the loaded math texts and use that data **instead of**
         the ``tokenized_data`` parameter.
 
+        *include_code_math* says whether this call covers the whole corpus or
+        one language group. With it off, the digit metrics measure nothing:
+        neither the maths corpus, which is not part of the group, nor the
+        group's prose, which is a different quantity from the one these fields
+        hold in a whole-corpus run. It used to read the maths corpus whatever
+        this said, so every group reported identical whole-corpus figures.
+
         Operator isolation is reported per domain under
         ``operator_isolation_rate["by_domain"]``, and the top-level ``summary``
         pools them. Each domain records the corpus it used. **code** and
-        **math** always run. **prose**, the main corpus, runs only when the
-        instance was built with ``include_prose_operators=True``.
+        **math** run unless *include_code_math* is False. **prose**, the main corpus, runs only
+        when the instance was built with ``include_prose_operators=True``. With
+        code and math off and prose off, which is a grouped run at the default
+        settings, ``by_domain`` is empty.
 
         Returns a dict with four top-level keys:
         ``three_digit_boundary_alignment``, ``digit_split_variability``,
@@ -430,12 +516,34 @@ class DigitBoundaryMetrics(BaseMetrics):
             else self.input_provider.get_tokenized_data()
         )
 
-        if self._math_texts:
-            # _op_math_texts IS _math_texts whenever math texts were supplied, so
-            # the digit corpus and the math operator domain share one encoding.
-            tokenized_data = self._tokenize_texts_cached(
-                "math", {"math": self._math_texts}
+        if not include_code_math:
+            # A language group is a subset of the prose corpus, and neither the
+            # maths corpus nor the code corpus is part of it. Measuring nothing
+            # is the honest answer.
+            #
+            # The two alternatives are both worse. Reading the maths corpus, as
+            # this used to, gives every group the same whole-corpus figures.
+            # Falling through to the prose branch below measures a different
+            # quantity: that branch's own comment records that its numbers are
+            # not comparable with a run that has a maths corpus, and that most
+            # of the sample is vacuous. Publishing either under the same field
+            # name reports one thing under the name of another.
+            #
+            # The filtered grouped path already produced empty digit blocks,
+            # because it selects the group's prose languages and the rows are
+            # keyed by the maths corpus. This makes the unfiltered path agree
+            # with it instead of publishing whole-corpus numbers.
+            tokenized_data = {}
+            logger.info(
+                "include_code_math is off, so the digit metrics measure "
+                "nothing: neither the maths corpus nor the group's prose is "
+                "the corpus these numbers are defined over."
             )
+        elif self._math_texts:
+            # The registered math corpus IS _math_texts whenever the caller
+            # asked for math texts, so the digit corpus and the math operator
+            # domain below share one encoding.
+            tokenized_data = self.input_provider.get_corpus_data(MATH_CORPUS)
             logger.info(
                 "Using %d dedicated math texts for digit boundary metrics",
                 len(self._math_texts),
@@ -537,7 +645,7 @@ class DigitBoundaryMetrics(BaseMetrics):
                         keep_later_token_on_overlap=True,
                     )
                     if char_to_token is None:
-                        if self._can_encode_raw_text(tokenizer_obj):
+                        if InputProvider.can_encode_raw_text(tokenizer_obj):
                             raise ValueError(
                                 "The digit metrics need character offsets, and "
                                 f"tokenizer {tok_name!r} encodes text but "
@@ -649,13 +757,21 @@ class DigitBoundaryMetrics(BaseMetrics):
         # code-and-math number.
         domain_accs = {}
         if self._include_prose_operators:
-            domain_accs["prose"] = self._accumulate_operators(prose_data)
-        domain_accs["code"] = self._accumulate_operators(
-            self._tokenize_texts_cached("code", self._op_code_texts)
-        )
-        domain_accs["math"] = self._accumulate_operators(
-            self._tokenize_texts_cached("math", {"math": self._op_math_texts})
-        )
+            domain_accs[PROSE_CORPUS] = self._accumulate_operators(prose_data)
+        # include_code_math is False for a run over one language group. The
+        # group selects prose languages and the code and math corpora belong to
+        # no language, so reporting the whole of both inside every group made
+        # each group's pooled figure a number measured mostly on texts the group
+        # does not contain. With prose operators off, which is the default, a
+        # group then has no operator domain at all, and by_domain is empty
+        # rather than describing corpora the group never saw.
+        if include_code_math:
+            domain_accs[CODE_CORPUS] = self._accumulate_operators(
+                self.input_provider.get_corpus_data(CODE_CORPUS)
+            )
+            domain_accs[MATH_CORPUS] = self._accumulate_operators(
+                self.input_provider.get_corpus_data(MATH_CORPUS)
+            )
         # Bundled paths are recorded relative to the package. They are derived
         # from __file__, so the absolute form bakes the author's checkout
         # directory into every results file, and a reader comparing two files
@@ -663,17 +779,25 @@ class DigitBoundaryMetrics(BaseMetrics):
         # Keyed on domain_accs, so a domain that did not run is described
         # nowhere rather than being described with an empty result beside it.
         all_sources = {
-            "prose": "multilingual corpus",
-            "code": _relative_to_package(self._op_code_source),
-            "math": _relative_to_package(self._op_math_source),
+            PROSE_CORPUS: PROSE_SOURCE,
+            CODE_CORPUS: _relative_to_package(self._code_corpus.source),
+            MATH_CORPUS: _relative_to_package(self._math_corpus.source),
         }
         domain_sources = {d: all_sources[d] for d in domain_accs}
         # Size of each domain's corpus, so the pooled micro-average can be traced
-        # back to which corpus supplied the operators.
+        # back to which corpus supplied the operators. Prose is described as a
+        # Corpus too, recovered from the data the metric was handed, because the
+        # prose texts are never registered: they are whatever corpus the caller
+        # (or the provider) supplied for this call.
         all_corpora = {
-            "code": lambda: self._corpus_stats(self._op_code_texts),
-            "math": lambda: self._corpus_stats({"math": self._op_math_texts}),
-            "prose": lambda: self._corpus_stats(self._texts_by_language(prose_data)),
+            CODE_CORPUS: lambda: self._code_corpus.stats(),
+            MATH_CORPUS: lambda: self._math_corpus.stats(),
+            # corpus_size, not a throwaway Corpus: prose is never registered,
+            # and building one copied every prose text into a tuple on each
+            # call to reach the same four numbers.
+            PROSE_CORPUS: lambda: corpus_size(
+                self._texts_by_language(prose_data)
+            ),
         }
         domain_corpora = {d: all_corpora[d]() for d in domain_accs}
 
@@ -684,11 +808,11 @@ class DigitBoundaryMetrics(BaseMetrics):
         # ``domain_operator_counts`` so that weighting is visible rather than
         # implicit.
         operator_results = self._build_operator_results(
-            self._merge_operator_accs(domain_accs)
+            self._merge_operator_accs(domain_accs), include_code_math,
         )
         operator_results["by_domain"] = {
             domain: dict(
-                self._build_operator_results(acc),
+                self._build_operator_results(acc, include_code_math),
                 source=domain_sources[domain],
                 corpus=domain_corpora[domain],
             )
@@ -734,142 +858,13 @@ class DigitBoundaryMetrics(BaseMetrics):
         for items in tokenized_data.values():
             by_lang: Dict[str, List[str]] = defaultdict(list)
             for item in items:
-                if item.text:
+                # text and text.strip(), matching every scored path and
+                # corpus_size. A truthy check alone counted a whitespace-only
+                # text into the published prose corpus size that no metric read.
+                if item.text and item.text.strip():
                     by_lang[item.language].append(item.text)
             return dict(by_lang)
         return {}
-
-    def _tokenize_texts_cached(
-        self, key: str, texts_by_lang: Dict[str, List[str]]
-    ) -> Dict[str, List[TokenizedData]]:
-        """``_tokenize_texts`` memoized per corpus.
-
-        ``compute()`` is called once per language group, and the code/math corpora
-        do not change between those calls, so they are encoded once rather than
-        re-encoded for every group.
-        """
-        if key not in self._encoded_corpus_cache:
-            self._encoded_corpus_cache[key] = self._tokenize_texts(texts_by_lang)
-        return self._encoded_corpus_cache[key]
-
-    @staticmethod
-    def _can_encode_raw_text(tokenizer_obj: Any) -> bool:
-        """Whether *tokenizer_obj* can encode raw text.
-
-        ``can_encode()`` is the predicate, not ``hasattr(tok, "encode")``:
-        ``PreTokenizedDataTokenizer`` *defines* ``encode`` and raises from it.
-
-        Used to tell two situations apart when no character offsets are
-        available: a tokenizer that encodes text and reported none is a defect
-        the caller has to know about, while a provider that only supplies
-        pre-tokenized ids never had offsets to give.
-        """
-        can_encode = getattr(tokenizer_obj, "can_encode", None)
-        encode = getattr(tokenizer_obj, "encode", None)
-        if callable(can_encode) and not can_encode():
-            return False
-        return callable(encode)
-
-    def _tokenize_texts(
-        self, texts_by_lang: Dict[str, List[str]]
-    ) -> Dict[str, List[TokenizedData]]:
-        """Tokenize a ``{language: [text, ...]}`` corpus with every tokenizer.
-
-        The code and math domains are derived corpora, so they have to be
-        encoded here. A tokenizer that cannot encode raw text (a provider that
-        only supplies pre-tokenized data) is omitted from the returned corpus
-        and logged; it then simply has no code/math domain rather than crashing
-        the whole metric.
-        """
-        out: Dict[str, List[TokenizedData]] = {}
-        for tok_name in self.tokenizer_names:
-            try:
-                tokenizer_obj = self.input_provider.get_tokenizer(tok_name)
-            except (ValueError, KeyError, AttributeError) as exc:
-                logger.warning(
-                    "No tokenizer available for %r (%s); it gets no code/math "
-                    "operator-isolation domain (prose only).", tok_name, exc,
-                )
-                continue
-            encode = getattr(tokenizer_obj, "encode", None)
-            if not self._can_encode_raw_text(tokenizer_obj):
-                logger.warning(
-                    "Tokenizer %r cannot encode raw text; it gets no code/math "
-                    "operator-isolation domain (prose only).", tok_name,
-                )
-                continue
-            # Encode with offsets where the wrapper supports it. The corpus
-            # loader already does this for prose, and operator isolation resolves
-            # operators to tokens through offsets, so a derived corpus without
-            # them would be skipped entirely and the code and math domains would
-            # silently vanish from the results.
-            encode_batch = getattr(tokenizer_obj, "encode_batch_with_offsets", None)
-            encode_offsets = getattr(tokenizer_obj, "encode_with_offsets", None)
-            items: List[TokenizedData] = []
-            for lang, texts in texts_by_lang.items():
-                usable = [text for text in texts if text and text.strip()]
-                if not usable:
-                    continue
-                # One batch call per language rather than one call per text.
-                # The Rust backends encode a batch across threads, which the
-                # per-text loop this replaced gave up: 4.14 s against 0.98 s
-                # over 300 files of the benchmark code corpus with gpt2, for
-                # the same ids.
-                #
-                # A batch is paired with its texts by position, which is the
-                # batch API's contract and what InputProvider already relies on
-                # for the prose corpus. check_batch_pairing below verifies the
-                # count for both corpora; a backend that returned the right
-                # number of encodings in the wrong order is caught by neither.
-                #
-                # The unpacking sits inside the try, so a backend that returns
-                # something other than (ids, offsets) pairs falls back to the
-                # per-text path rather than raising from the zip below. That is
-                # what the per-text path did with a bad return before this
-                # method encoded in batches.
-                encoded = None
-                if callable(encode_batch):
-                    try:
-                        encoded = [(ids, offsets)
-                                   for ids, offsets in encode_batch(usable)]
-                    except Exception as exc:
-                        logger.debug(
-                            "encode_batch_with_offsets failed for %r (%s); "
-                            "encoding one text at a time instead", tok_name, exc,
-                        )
-                        encoded = None
-                if encoded is None:
-                    encoded = []
-                    for text in usable:
-                        ids, offsets = None, None
-                        if callable(encode_offsets):
-                            try:
-                                ids, offsets = encode_offsets(text)
-                            except Exception as exc:
-                                logger.debug(
-                                    "encode_with_offsets failed for %r: %s",
-                                    tok_name, exc,
-                                )
-                                ids = None
-                        if ids is None:
-                            ids, offsets = encode(text), None
-                        encoded.append((ids, offsets))
-                check_batch_pairing(
-                    tok_name, lang, usable, encoded,
-                    "operator-isolation corpus",
-                )
-                for text, (ids, offsets) in zip(usable, encoded):
-                    items.append(
-                        TokenizedData(
-                            tokenizer_name=tok_name,
-                            language=lang,
-                            tokens=ids,
-                            text=text,
-                            offsets=offsets,
-                        )
-                    )
-            out[tok_name] = items
-        return out
 
     @staticmethod
     def _char_to_token_from_offsets(
@@ -1127,8 +1122,9 @@ class DigitBoundaryMetrics(BaseMetrics):
 
         return acc
 
-    @staticmethod
+    @classmethod
     def _merge_operator_accs(
+        cls,
         domain_accs: Dict[str, Dict[str, Dict[str, Dict[str, Dict[str, int]]]]]
     ) -> Dict[str, Dict[str, Dict[str, Dict[str, int]]]]:
         """Sum the per-domain accumulators into the pooled accumulator.
@@ -1136,25 +1132,52 @@ class DigitBoundaryMetrics(BaseMetrics):
         The three domains do not share a language namespace: prose is keyed by
         FLORES code, code by programming language, math by the literal "math".
         Prose keys are kept bare so existing per-language consumers and the
-        language-group filter keep matching FLORES codes. Code and math keys are
-        namespaced ("code:python", "math:math") so the pooled ``by_language``
-        cannot silently sum a code language into a prose one, and a reader can
-        tell which domain a row came from.
+        language-group filter keep matching FLORES codes. Code and math keys
+        take the same form reconstruction fidelity publishes in ``per_domain``,
+        ``code_<lang>`` and a bare ``math``, so one results file does not name
+        the same thing two ways.
+
+        The published key used to be ``code:python`` and ``math:math``, and the
+        colon was load-bearing rather than cosmetic: a namespace no FLORES code
+        can contain kept a code or math row from being summed into a prose one,
+        and from being selected by ``_filter_operator_results``, which picks a
+        language group with ``l in target_languages``. The underscore form has
+        no such guarantee, since ``--input`` names languages after files and a
+        corpus holding ``math.txt`` produces a prose language called ``math``.
+
+        So the pairing is kept whole here and the collision is refused rather
+        than relocated: two domains that would publish under one key abort,
+        naming it. Reporting one number for both is the substitution this
+        package refuses everywhere else, and it would be invisible in the
+        output.
         """
         merged: Dict[str, Dict[str, Dict[str, Dict[str, int]]]] = defaultdict(
             lambda: defaultdict(lambda: defaultdict(
                 lambda: {"isolated": 0, "total": 0, "compound_ok": 0, "compound_total": 0}
             ))
         )
+        # published key -> the domain that claimed it, per tokenizer
+        claimed: Dict[str, Dict[str, str]] = defaultdict(dict)
         for domain, acc in domain_accs.items():
             for tok_name, langs in acc.items():
                 for lang, categories in langs.items():
-                    key = lang if domain == "prose" else f"{domain}:{lang}"
+                    key = published_language_key(domain, lang)
+                    owner = claimed[tok_name].setdefault(key, domain)
+                    if owner != domain:
+                        raise ValueError(
+                            f"The {owner!r} and {domain!r} domains would both "
+                            f"publish operator counts under by_language[{key!r}] "
+                            f"for {tok_name!r}. Summing them would report one "
+                            "number for two corpora, and a language group "
+                            "selecting that key would pull in the other domain. "
+                            "Rename the offending language in the input corpus."
+                        )
                     for category, counts in categories.items():
                         target = merged[tok_name][key][category]
                         for count_key in ("isolated", "total", "compound_ok", "compound_total"):
                             target[count_key] += counts[count_key]
         return merged
+
 
     # ------------------------------------------------------------------
     # Result builders
@@ -1171,7 +1194,9 @@ class DigitBoundaryMetrics(BaseMetrics):
                     "How often the tokenizer's boundaries inside a number fall "
                     "at the three-digit positions comma grouping would use."
                 ),
-                "aggregation": AGGREGATION_MICRO_POOLED,
+                # mean_f1 averages one F1 per number. count_unit is right:
+                # the count really is digit spans.
+                "aggregation": AGGREGATION_MEAN_OF_RATIOS,
                 "count_unit": "digit spans",
             },
         }
@@ -1533,14 +1558,10 @@ class DigitBoundaryMetrics(BaseMetrics):
         results: Dict[str, Any] = {
             "per_tokenizer": {},
             "summary": {},
-            "metadata": {
-                "description": (
-                    "Tokens per digit, and how it scales with the number of "
-                    "digits."
-                ),
-                "aggregation": AGGREGATION_MICRO_POOLED,
-                "count_unit": "numbers",
-            },
+            # Single-sourced in magnitude_metadata so main.py's grouped
+            # filter, which drops the corpus-level scaling fit, can publish
+            # the description that matches its block.
+            "metadata": magnitude_metadata(),
         }
 
         for tok_name in self.tokenizer_names:
@@ -1629,22 +1650,23 @@ class DigitBoundaryMetrics(BaseMetrics):
     # ------------------------------------------------------------------
 
     def _build_operator_results(
-        self, acc: Dict[str, Dict[str, Dict[str, Dict[str, int]]]]
+        self, acc: Dict[str, Dict[str, Dict[str, Dict[str, int]]]],
+        include_code_math: bool = True,
     ) -> Dict[str, Any]:
-        """Build the ``operator_isolation_rate`` result dict."""
+        """Build the ``operator_isolation_rate`` result dict.
+
+        *include_code_math* only reaches the published metadata, which has to
+        describe the domains this run actually has.
+        """
         results: Dict[str, Any] = {
             "per_tokenizer": {},
             "summary": {},
-            "metadata": {
-                "description": (
-                    "How often a mathematical operator is a token of its own, "
-                    "pooled over the domains that ran, with the split kept in "
-                    "by_domain. Code and math always run; prose runs only with "
-                    "--operator-prose-domain. Read by_domain to see which."
-                ),
-                "aggregation": AGGREGATION_MICRO_POOLED,
-                "count_unit": "operator occurrences",
-            },
+            # Conditional for the same reason reconstruction fidelity's
+            # per_domain string is: a grouped run has no code or math domain,
+            # and a fixed string described domains the block cannot hold.
+            # Single-sourced in operator_metadata so main.py's grouped filter
+            # publishes the same contract rather than a copy that can drift.
+            "metadata": operator_metadata(include_code_math),
         }
 
         for tok_name in self.tokenizer_names:

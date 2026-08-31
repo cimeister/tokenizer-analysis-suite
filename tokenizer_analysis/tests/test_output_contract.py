@@ -115,12 +115,19 @@ def full_and_slim_results(tmp_path_factory):
 
     A separate run from demo_results above: that fixture never passes
     --save-full-results, so it has no full file to compare against.
+
+    --run-grouped-analysis is here because without it this fixture could not
+    see the defect it exists to catch. The slim file invented two fields per
+    single-language group, twenty in a real run, and no group of one language
+    exists unless the run is grouped. The check was live and passing the whole
+    time.
     """
     out = tmp_path_factory.mktemp("full_and_slim")
     proc = subprocess.run(
         [sys.executable, "-m", "tokenizer_analysis.cli.run_analysis",
          "--use-sample-data", "--samples-per-lang", "10",
          "--no-plots", "--no-code-ast", "--save-full-results",
+         "--run-grouped-analysis",
          "--output-dir", str(out)],
         cwd=REPO_ROOT, capture_output=True, timeout=900,
     )
@@ -996,3 +1003,463 @@ def test_corpus_paths_under_the_working_directory_are_recorded_relative(demo_res
         "corpus paths under the working directory recorded as absolute: "
         + ", ".join(f"{k} -> {v}" for k, v in sorted(absolute.items()))
     )
+
+
+@pytest.fixture(scope="module")
+def default_code_config_results(tmp_path_factory):
+    """A run with no --code-ast-config, which is the documented default.
+
+    `_resolve_code_ast_config` returns `{}` for this, meaning "use synthetic
+    samples", where `None` would mean "disabled". The two are read differently
+    on purpose, and the mechanism changed when the corpora moved onto the input
+    provider. It is now: `resolve_code_corpus` tests truthiness, so `{}` gives
+    the registered corpus the bundled samples with `synthetic=True`;
+    `BasicTokenizationMetrics.__init__` reads that flag and takes no code
+    domain from a synthetic corpus; and `UnifiedTokenizerAnalyzer` tests
+    `is not None` before building the AST metrics, so they are built and score
+    the bundled samples.
+
+    The asymmetry is the same one; only where it is decided has moved.
+    """
+    out = tmp_path_factory.mktemp("default_code_config")
+    proc = subprocess.run(
+        [sys.executable, "-m", "tokenizer_analysis.cli.run_analysis",
+         "--use-sample-data", "--samples-per-lang", "5",
+         "--use-builtin-math-data", "--cer-time-budget", "0",
+         "--no-plots", "--output-dir", str(out)],
+        cwd=REPO_ROOT, capture_output=True, timeout=900,
+    )
+    if proc.returncode != 0:
+        pytest.fail(
+            "default-config run failed with exit "
+            f"{proc.returncode}:\n{proc.stderr.decode(errors='replace')[-3000:]}"
+        )
+    return json.loads((out / "analysis_results.json").read_text())
+
+
+@requires_flores
+class TestTheDefaultCodeConfigurationIsAsymmetric:
+    """Omitting --code-ast-config gives the code metrics synthetic data and
+    reconstruction fidelity no code domain at all.
+
+    That asymmetry is deliberate and was confirmed as intended on 2026-08-19.
+    It is pinned here because it emerges from two different truth tests on the
+    same value rather than from anything stated in one place, so a refactor that
+    resolves "which corpus" once, in one rule, would quietly give reconstruction
+    fidelity a code domain it has never had. No test covered this before.
+    """
+
+    def _one_tokenizer(self, block):
+        per_tok = block["per_tokenizer"]
+        return per_tok[sorted(per_tok)[0]]
+
+    def test_reconstruction_fidelity_has_no_code_domain(
+            self, default_code_config_results):
+        entry = self._one_tokenizer(
+            default_code_config_results["reconstruction_fidelity"])
+        domains = sorted(entry.get("per_domain") or {})
+        assert domains, "expected some domains, so the assertion below means something"
+        assert not [d for d in domains if d.startswith("code")], domains
+        # math is present, so this is specific to code rather than a run in
+        # which no derived corpus reached the metric at all.
+        assert "math" in domains, domains
+
+    def test_the_code_metrics_do_get_synthetic_code(
+            self, default_code_config_results):
+        entry = self._one_tokenizer(
+            default_code_config_results["ast_boundary_alignment"])
+        languages = sorted(entry.get("per_language") or {})
+        assert "python" in languages, languages
+        assert len(languages) > 3, languages
+
+
+class TestBaseResultsSemanticsInGroupedAnalysis:
+    """base_results={} means "nothing precomputed"; truthy-without-the-key
+    means "the base run disabled digit metrics".
+
+    The distinction regressed once (the sixth review's base_results fix) and
+    shipped without a test: mutating ``elif base_results`` to
+    ``elif base_results is not None`` in run_grouped_analysis passed the
+    whole suite (RELEASE_AUDIT Q35.4). These two tests are the guard.
+    """
+
+    @pytest.fixture(scope="class")
+    def analyzer(self, tmp_path_factory):
+        from tokenizer_analysis.main import create_analyzer_from_raw_inputs
+        from tokenizer_analysis.config.language_metadata import LanguageMetadata
+
+        cfg = tmp_path_factory.mktemp("grouped") / "langs.json"
+        cfg.write_text(json.dumps({
+            "languages": {
+                "eng_Latn": {"name": "English", "script_family": "Latin",
+                             "resource_level": "high"},
+                "rus_Cyrl": {"name": "Russian", "script_family": "Cyrillic",
+                             "resource_level": "medium"},
+            },
+            "analysis_groups": {"script_family": {"Latin": ["eng_Latn"],
+                                                  "Cyrillic": ["rus_Cyrl"]}},
+        }))
+        return create_analyzer_from_raw_inputs(
+            tokenizer_configs={"bpe": {"class": "huggingface",
+                                       "path": "tokenizers/bpe.json"}},
+            language_texts={
+                "eng_Latn": ["The total was 12 and 345.", "Sum 6789 next."],
+                "rus_Cyrl": ["Line 12 and 345 here.", "Total 6789."],
+            },
+            language_metadata=LanguageMetadata(str(cfg)),
+            plot_save_dir=str(tmp_path_factory.mktemp("plots")),
+            code_ast_config=None,
+        )
+
+    def test_an_empty_dict_means_nothing_precomputed(self, analyzer):
+        groups = analyzer.run_grouped_analysis(
+            group_by=["script_family"], save_plots=False, base_results={},
+            include_reconstruction=False,
+        )
+        latin = groups["script_family"]["Latin"]
+        assert "three_digit_boundary_alignment" in latin
+        assert "numeric_magnitude_consistency" in latin
+        assert "operator_isolation_rate" in latin
+
+    def test_a_base_run_without_digit_metrics_reports_none(self, analyzer):
+        groups = analyzer.run_grouped_analysis(
+            group_by=["script_family"], save_plots=False,
+            base_results={"fertility": {"per_tokenizer": {}}},
+            include_reconstruction=False,
+        )
+        latin = groups["script_family"]["Latin"]
+        assert "three_digit_boundary_alignment" not in latin
+        assert "numeric_magnitude_consistency" not in latin
+        assert "operator_isolation_rate" not in latin
+
+
+    def test_utf8_is_computed_when_nothing_was_precomputed(self, analyzer):
+        """The gap: with no base results there was no UTF-8 block at all."""
+        groups = analyzer.run_grouped_analysis(
+            group_by=["script_family"], save_plots=False, base_results={},
+            include_reconstruction=False,
+        )
+        assert "utf8_token_integrity" in groups["script_family"]["Latin"]
+
+    def test_utf8_is_not_resurrected_when_the_caller_turned_it_off(self, analyzer):
+        """The half a bare "compute it either way" would break.
+
+        A base run that passed --no-utf8-integrity produces base results with
+        no UTF-8 key. That missing key is the only signal the grouped path
+        gets, so computing unconditionally would switch the metric back on for
+        someone who asked for it off. The digit metrics next door already
+        handle this with the same three cases.
+        """
+        groups = analyzer.run_grouped_analysis(
+            group_by=["script_family"], save_plots=False,
+            base_results={"fertility": {"per_tokenizer": {}}},
+            include_reconstruction=False,
+        )
+        assert "utf8_token_integrity" not in groups["script_family"]["Latin"]
+
+    def test_utf8_is_filtered_when_the_base_run_had_it(self, analyzer):
+        groups = analyzer.run_grouped_analysis(
+            group_by=["script_family"], save_plots=False,
+            base_results={"utf8_token_integrity": {"per_tokenizer": {}}},
+            include_reconstruction=False,
+        )
+        assert "utf8_token_integrity" in groups["script_family"]["Latin"]
+
+
+class TestAGroupBlockCarriesNoWholeCorpusStatistics:
+    """A group block must hold group numbers or nothing, never corpus ones.
+
+    _filter_digit_boundary_results used to copy the base run's summary into
+    every group (byte-identical across groups, pooling the whole corpus) and
+    pass the magnitude scaling fit through unfiltered into the slim results
+    file; _filter_operator_results copied metadata that said "Code and math
+    always run" beside empty blocks; _filter_morphscore_results invented a
+    top-level summary whose counters summed over tokenizers. All four were
+    published by a default --run-grouped-analysis run (RELEASE_AUDIT Q35.2
+    R1/R2).
+    """
+
+    @staticmethod
+    def _analyzer():
+        from tokenizer_analysis.main import UnifiedTokenizerAnalyzer
+        return object.__new__(UnifiedTokenizerAnalyzer)
+
+    def test_the_group_summary_is_recomputed_from_the_group_languages(self):
+        base = {
+            "per_tokenizer": {"bpe": {
+                "overall": {
+                    "eng_Latn": {"mean_f1": 0.9, "mean_precision": 0.8,
+                                 "mean_recall": 0.7, "count": 4},
+                    "arb_Arab": {"mean_f1": 0.1, "mean_precision": 0.2,
+                                 "mean_recall": 0.3, "count": 6},
+                },
+            }},
+            "summary": {"bpe": {"avg_f1": 0.42, "numbers_analyzed": 10,
+                                "languages_analyzed": 2}},
+        }
+        filtered = self._analyzer()._filter_digit_boundary_results(
+            base, ["eng_Latn"]
+        )
+        summary = filtered["summary"]["bpe"]
+        assert summary["avg_f1"] == pytest.approx(0.9)
+        assert summary["numbers_analyzed"] == 4
+        assert summary["languages_analyzed"] == 1
+        assert summary is not base["summary"]["bpe"]
+
+        # Both languages: the re-aggregation must weight each language's mean
+        # by its count, reproducing the base run's pooled figure. An
+        # unweighted mean of the two per-language means (0.5) passed every
+        # other test in the suite, so this assertion is the one guard on the
+        # weighting.
+        both = self._analyzer()._filter_digit_boundary_results(
+            base, ["eng_Latn", "arb_Arab"]
+        )["summary"]["bpe"]
+        assert both["avg_f1"] == pytest.approx(0.42)
+        assert both["avg_precision"] == pytest.approx(0.44)
+        assert both["avg_recall"] == pytest.approx(0.46)
+        assert both["numbers_analyzed"] == 10
+        assert both["languages_analyzed"] == 2
+
+    def test_a_group_with_no_numbers_publishes_no_summary(self):
+        """The math-corpus case: digit metrics measured a corpus that belongs
+        to no language group, so the group reports nothing rather than the
+        whole corpus."""
+        base = {
+            "per_tokenizer": {"bpe": {
+                "overall": {"math": {"mean_f1": 0.6, "count": 627}},
+            }},
+            "summary": {"bpe": {"avg_f1": 0.6, "numbers_analyzed": 627,
+                                "languages_analyzed": 1}},
+        }
+        filtered = self._analyzer()._filter_digit_boundary_results(
+            base, ["eng_Latn"]
+        )
+        assert filtered["summary"] == {}
+
+    def test_the_corpus_scaling_fit_is_not_copied_into_a_group(self):
+        from tokenizer_analysis.metrics.math import magnitude_metadata
+        base = {
+            "per_tokenizer": {"bpe": {
+                "overall": {"eng_Latn": {"mean_fertility": 0.5, "count": 3}},
+                "scaling": {"spearman_rho": -0.59, "per_bucket": {"1": {}}},
+            }},
+            "metadata": magnitude_metadata(),
+        }
+        filtered = self._analyzer()._filter_digit_boundary_results(
+            base, ["eng_Latn"], grouped_metadata=magnitude_metadata(grouped=True)
+        )
+        assert "scaling" not in filtered["per_tokenizer"]["bpe"]
+        assert filtered["metadata"] == magnitude_metadata(grouped=True)
+        assert "does not carry one" in filtered["metadata"]["description"]
+
+    def test_every_bucket_key_survives_filtering(self):
+        base = {"per_tokenizer": {"bpe": {
+            "by_bucket": {"short": {"eng_Latn": {"mean_f1": 1.0, "count": 2}},
+                          "long": {"arb_Arab": {"mean_f1": 0.5, "count": 1}}},
+        }}}
+        filtered = self._analyzer()._filter_digit_boundary_results(
+            base, ["eng_Latn"]
+        )
+        buckets = filtered["per_tokenizer"]["bpe"]["by_bucket"]
+        assert set(buckets) == {"short", "long"}
+        assert buckets["long"] == {}
+
+    def test_the_grouped_operator_metadata_describes_the_filtered_block(self):
+        from tokenizer_analysis.metrics.math import operator_metadata
+        base = {
+            "per_tokenizer": {"bpe": {"by_language": {
+                "eng_Latn": {"isolated": 1, "total": 2,
+                             "compound_ok": 0, "compound_total": 0},
+            }}},
+            "metadata": operator_metadata(include_code_math=True),
+        }
+        filtered = self._analyzer()._filter_operator_results(
+            base, ["eng_Latn"]
+        )
+        description = filtered["metadata"]["description"]
+        assert "always run" not in description
+        assert filtered["metadata"] == operator_metadata(
+            include_code_math=False, filtered=True
+        )
+
+    def test_a_group_gets_no_invented_morphscore_summary(self):
+        row = {"morphscore_recall": 0.5, "morphscore_precision": 0.6,
+               "micro_f1": 0.55, "macro_f1": 0.54, "num_samples": 5}
+        base = {
+            "per_tokenizer": {"bpe": {
+                "per_language": {"eng_Latn": dict(row), "arb_Arab": dict(row)},
+                "summary": {"avg_morphscore_recall": 0.5,
+                            "languages_evaluated": 2, "total_samples": 10},
+            }},
+            "metadata": {"description": "x"},
+        }
+        filtered = self._analyzer()._filter_morphscore_results(
+            base, ["eng_Latn"]
+        )
+        assert "summary" not in filtered
+        per_tok = filtered["per_tokenizer"]["bpe"]["summary"]
+        assert per_tok["languages_evaluated"] == 1
+
+
+def _FERTILITY_METADATA():
+    """fertility's published metadata, without needing a corpus."""
+    from tokenizer_analysis.metrics.basic import BasicTokenizationMetrics
+    from tokenizer_analysis.core.input_types import InputSpecification
+    from tokenizer_analysis.core.input_providers import RawTokenizationProvider
+
+    class _T:
+        def can_encode(self): return True
+        def encode(self, t): return [1]
+        def encode_batch_with_offsets(self, ts): return [([1], [(0, 1)]) for _ in ts]
+        def encode_with_offsets(self, t): return [1], [(0, 1)]
+        def get_vocab_size(self): return 10
+
+    p = RawTokenizationProvider({"t": InputSpecification(tokenizer=_T(), texts={"eng_Latn": ["a"]})})
+    m = BasicTokenizationMetrics(p)
+    return m.compute_fertility_analysis(p.get_tokenized_data())["fertility"]["metadata"]
+
+
+def _TOKEN_LENGTH_METADATA():
+    from tokenizer_analysis.metrics.basic import BasicTokenizationMetrics
+    from tokenizer_analysis.core.input_types import InputSpecification
+    from tokenizer_analysis.core.input_providers import RawTokenizationProvider
+
+    class _T:
+        def can_encode(self): return True
+        def encode(self, t): return [1]
+        def encode_batch_with_offsets(self, ts): return [([1], [(0, 1)]) for _ in ts]
+        def encode_with_offsets(self, t): return [1], [(0, 1)]
+        def get_vocab_size(self): return 10
+
+    p = RawTokenizationProvider({"t": InputSpecification(tokenizer=_T(), texts={"eng_Latn": ["a"]})})
+    m = BasicTokenizationMetrics(p)
+    return m.compute_token_length_analysis(p.get_tokenized_data())["token_length"]["metadata"]
+
+
+def _DIGIT_METRIC_METADATA():
+    """The two digit blocks' metadata, straight from the builders.
+
+    Read from the built results rather than from the metadata helpers, so a
+    builder that stops calling its helper is caught too.
+    """
+    from tokenizer_analysis.metrics.math import DigitBoundaryMetrics
+    # object.__new__: both builders read only their argument, and a real
+    # construction would need a provider and a corpus for a metadata read.
+    inst = object.__new__(DigitBoundaryMetrics)
+    inst.tokenizer_names = []
+    align = DigitBoundaryMetrics._build_alignment_results(inst, {})
+    mag = DigitBoundaryMetrics._build_magnitude_results(inst, {})
+    return {
+        "three_digit_boundary_alignment": align["metadata"],
+        "numeric_magnitude_consistency": mag["metadata"],
+    }
+
+
+class TestTheAggregationLabelNamesWhatTheGlobalBlockComputes:
+    """A label saying micro_pooled over a mean of per-item ratios is a wrong
+    number in the metadata: docs/OUTPUT.md invites a consumer to re-derive the
+    other weighting from the per-language counts, and the two differ by up to
+    18.7% on the committed benchmark.
+
+    test_every_metric_declares_its_aggregation cannot catch this. It imports
+    AGGREGATION_LABELS, so adding a fifth member makes both the right and the
+    wrong label pass for every metric.
+    """
+
+    def test_every_mean_of_ratios_metric_declares_it(self):
+        """The plan's named mutation for this item is "leave one of the four
+        labelled micro_pooled", and until this test the whole suite stayed
+        green with three_digit_boundary_alignment mislabelled: nothing
+        asserted its aggregation at all.
+
+        A label assertion is the floor, not the ceiling. It catches the
+        relabel-three-miss-one error, which is the one the plan predicted,
+        because the two digit metrics come from one helper and one
+        accumulator. The value tests in test_basic.py carry the heavier
+        claim that the label names what is computed.
+        """
+        from tokenizer_analysis.constants import (
+            AGGREGATION_MEAN_OF_RATIOS, AGGREGATION_MICRO_POOLED,
+        )
+        from tokenizer_analysis.metrics.basic import BasicTokenizationMetrics
+        from tokenizer_analysis.metrics.math import (
+            DigitBoundaryMetrics, magnitude_metadata, operator_metadata,
+        )
+
+        declared = {}
+        for name, block in _DIGIT_METRIC_METADATA().items():
+            declared[name] = block["aggregation"]
+        declared["fertility"] = _FERTILITY_METADATA()["aggregation"]
+        declared["token_length"] = _TOKEN_LENGTH_METADATA()["aggregation"]
+
+        assert declared == {
+            "three_digit_boundary_alignment": AGGREGATION_MEAN_OF_RATIOS,
+            "numeric_magnitude_consistency": AGGREGATION_MEAN_OF_RATIOS,
+            "fertility": AGGREGATION_MEAN_OF_RATIOS,
+            "token_length": AGGREGATION_MEAN_OF_RATIOS,
+        }, declared
+        # The operator rate really is pooled: isolated over total.
+        assert operator_metadata()["aggregation"] == AGGREGATION_MICRO_POOLED
+
+    def test_the_two_digit_metrics_built_by_one_helper_agree(self):
+        """Relabelling one and missing the other is the plausible error:
+        three_digit_boundary_alignment and numeric_magnitude_consistency come
+        from the same accumulator, and both average per-number ratios.
+        """
+        from tokenizer_analysis.constants import AGGREGATION_MEAN_OF_RATIOS
+        from tokenizer_analysis.metrics.math import (
+            magnitude_metadata, operator_metadata,
+        )
+
+        assert magnitude_metadata()["aggregation"] == AGGREGATION_MEAN_OF_RATIOS
+        # The operator rate really is pooled: isolated over total.
+        assert operator_metadata()["aggregation"] != AGGREGATION_MEAN_OF_RATIOS
+
+
+class TestOneDefinitionOfAPublishedDomainKey:
+    """Two files published the same domain keys, one through a shared function
+    and one by writing the strings out by hand in five places. They agreed, and
+    nothing kept them agreeing.
+
+    The assertions below are the literal expected strings. Asserting that the
+    two places agree with each other would pass for a format that is uniformly
+    wrong, which is the shape of a mistake this project has made before.
+    """
+
+    def test_each_domain_produces_its_documented_key(self):
+        from tokenizer_analysis.core.input_types import (
+            CODE_CORPUS, MATH_CORPUS, PROSE_CORPUS, published_language_key,
+        )
+
+        assert published_language_key(PROSE_CORPUS, "eng_Latn") == "eng_Latn"
+        assert published_language_key(CODE_CORPUS, "python") == "code_python"
+        assert published_language_key(MATH_CORPUS, "math") == "math"
+        # The label is ignored for maths: there is one maths domain, and the
+        # label inside it is not part of the published key.
+        assert published_language_key(MATH_CORPUS, "anything") == "math"
+
+    def test_a_key_can_be_recognised_as_belonging_to_a_corpus(self):
+        """The two places that read these keys back tested `startswith("code_")
+        or == "math"` by hand. That is the same format knowledge as building
+        the key, so it lives with it.
+        """
+        from tokenizer_analysis.core.input_types import is_corpus_domain_key
+
+        assert is_corpus_domain_key("code_python") is True
+        assert is_corpus_domain_key("math") is True
+        assert is_corpus_domain_key("eng_Latn") is False
+        assert is_corpus_domain_key("rus_Cyrl") is False
+
+    def test_building_and_recognising_agree(self):
+        """Not a substitute for the literal assertions above: this only checks
+        the two halves are consistent, which they would be if both were wrong.
+        """
+        from tokenizer_analysis.core.input_types import (
+            CODE_CORPUS, MATH_CORPUS, PROSE_CORPUS,
+            is_corpus_domain_key, published_language_key,
+        )
+
+        for domain, lang in ((CODE_CORPUS, "rust"), (MATH_CORPUS, "math")):
+            assert is_corpus_domain_key(published_language_key(domain, lang))
+        assert not is_corpus_domain_key(
+            published_language_key(PROSE_CORPUS, "deu_Latn"))

@@ -58,7 +58,6 @@ PATH_PATTERN = re.compile(r"`([a-z0-9_]+(?:\.[a-zA-Z0-9_<>]+)+)`")
 # reason it is not simply a stale document.
 KNOWN_PRE_SLIM_PATHS: set = set()
 
-
 def _documented_paths():
     """Every dotted path the docs name, with the file and line it came from."""
     for name in DOCS:
@@ -106,3 +105,4 @@ def test_documented_result_paths_exist():
 
     assert checked > 0, "no documented result paths were found to check"
     assert not unresolved, "\n".join(unresolved)
+

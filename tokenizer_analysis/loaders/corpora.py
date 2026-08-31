@@ -1,0 +1,238 @@
+"""Resolution of the code and math corpora a run measures.
+
+One definition of "which corpus does this run measure", used by the run
+(``UnifiedTokenizerAnalyzer``, which resolves both corpora once and registers
+them on the input provider) and by the metric classes when they are constructed
+on their own with no provider registry to read. Two copies of these rules would
+let a corpus built here and a corpus built there drift apart, and the results
+file would then carry numbers measured on one while naming the other.
+
+Every function returns a ``Corpus``, whose ``source`` is published as
+``by_domain.<domain>.source`` and whose ``synthetic`` flag records that the
+texts are the samples bundled with the package rather than data the caller
+asked to have measured.
+"""
+
+import logging
+from typing import Dict, List, Optional
+
+from ..core.input_types import (
+    CODE_CORPUS, CODE_DATASET_SOURCE, MATH_CORPUS, Corpus, CorpusCaps,
+)
+from ..utils.text_utils import load_math_data, BUILTIN_MATH_SAMPLES_PATH
+from .code_data import CodeDataLoader
+
+logger = logging.getLogger(__name__)
+
+
+def _caps_of(loader: CodeDataLoader) -> CorpusCaps:
+    """The cap provenance of a corpus this loader built."""
+    return CorpusCaps(
+        max_snippets_per_lang=loader.max_snippets_per_lang,
+        max_snippet_chars=loader.max_snippet_chars,
+        dropped_file_counts=loader.dropped_file_counts,
+        truncated_char_counts=loader.truncated_char_counts,
+        dropped_whitespace_only_counts=loader.dropped_whitespace_only_counts,
+    )
+
+
+def synthetic_code_corpus(max_snippets_per_lang: Optional[int] = None) -> Corpus:
+    """The code samples bundled with the package.
+
+    ``synthetic`` is load-bearing rather than descriptive. With no code config
+    the AST metrics and the operator-isolation code domain run on these samples
+    while reconstruction fidelity gets no code domain at all. That asymmetry is
+    deliberate; see ``TestTheDefaultCodeConfigurationIsAsymmetric`` in
+    tests/test_output_contract.py.
+
+    *max_snippets_per_lang* is applied here rather than left to each reader.
+    ``ASTBoundaryMetrics`` re-applies it through ``get_code_snippets`` and the
+    operator and digit metrics read the registered corpus directly, so a cap
+    honoured in one place and not the other had the two scoring different text
+    sets under one corpus name and one source: 57 texts over 19 languages
+    against 2 per language, with nothing in the output saying so.
+
+    There is deliberately no character cap. Every one of the 57 samples parses
+    with zero tree-sitter errors at full length; cutting them at 400 characters
+    produces 19 ERROR or missing nodes and cutting at the last line boundary
+    before 400 still produces 15, so truncation would move every AST alignment
+    rate for a reason unrelated to any tokenizer. The whole corpus is 48715
+    characters, so there is no I/O here for a cap to bound. Callers asking for
+    one are told, in ``resolve_code_corpus``.
+    """
+    texts = CodeDataLoader.generate_synthetic_samples()
+    cap = max_snippets_per_lang or 0
+    dropped: Dict[str, int] = {}
+    if cap > 0:
+        capped = {}
+        for lang, snippets in texts.items():
+            capped[lang] = snippets[:cap]
+            if len(snippets) > cap:
+                dropped[lang] = len(snippets) - cap
+        texts = capped
+    return Corpus(
+        name=CODE_CORPUS,
+        texts=texts,
+        source=CodeDataLoader._BUILTIN_CODE_SAMPLES_PATH,
+        synthetic=True,
+        caps=CorpusCaps(
+            max_snippets_per_lang=cap,
+            max_snippet_chars=0,
+            dropped_file_counts=dropped,
+            truncated_char_counts={},
+            dropped_whitespace_only_counts={},
+        ),
+    )
+
+
+def code_corpus_from_texts(
+    code_texts: Optional[Dict[str, List[str]]],
+    max_snippets_per_lang: Optional[int] = None,
+) -> Corpus:
+    """A code corpus from texts a caller loaded itself, or the bundled samples.
+
+    A language whose list is empty is dropped, so that it is absent from the
+    published corpus size rather than reported as a language that supplied no
+    operators. ``CodeDataLoader`` never stores an empty list, so this only
+    affects a caller passing *code_texts* by hand.
+    """
+    if not code_texts:
+        return synthetic_code_corpus(max_snippets_per_lang)
+    cap = max_snippets_per_lang or 0
+    kept = {}
+    dropped: Dict[str, int] = {}
+    for lang, texts in code_texts.items():
+        if not texts:
+            continue
+        kept[lang] = texts[:cap] if cap > 0 else texts
+        if cap > 0 and len(texts) > cap:
+            dropped[lang] = len(texts) - cap
+    return Corpus(
+        name=CODE_CORPUS,
+        texts=kept,
+        source=CODE_DATASET_SOURCE,
+        synthetic=False,
+        caps=CorpusCaps(
+            max_snippets_per_lang=cap,
+            max_snippet_chars=0,
+            dropped_file_counts=dropped,
+            truncated_char_counts={},
+            dropped_whitespace_only_counts={},
+        ),
+    )
+
+
+def resolve_code_corpus(
+    code_config: Optional[Dict[str, str]],
+    max_snippets_per_lang: Optional[int] = None,
+    max_snippet_chars: Optional[int] = None,
+) -> Corpus:
+    """The code corpus for a run: the caller's files, or the bundled samples.
+
+    No try/except around the load: a code config the caller named explicitly
+    either loads or aborts. Swallowing the failure left the operator-isolation
+    code domain with zero samples and no signal beyond one warning line, while
+    the same malformed config crashed uncaught further down with a raw
+    AttributeError that named neither the flag nor the file.
+    """
+    if not code_config:
+        if max_snippet_chars:
+            # Loud, because the flag was passed and will not be honoured.
+            # Truncating the bundled samples corrupts their syntax: they parse
+            # with zero tree-sitter errors at full length and 19 with a
+            # 400-character cut, which would move every AST alignment rate
+            # without any tokenizer changing. Not an abort, because the flag is
+            # meaningful for the corpus the same run may load next.
+            logger.warning(
+                "max_snippet_chars=%d is not applied to the bundled code "
+                "samples. Truncating source code leaves unparsable fragments, "
+                "and the whole bundled corpus is 48715 characters, so there is "
+                "no I/O for the cap to bound. Pass --code-ast-config to "
+                "measure real files, where the cap does apply.",
+                max_snippet_chars,
+            )
+        return synthetic_code_corpus(max_snippets_per_lang)
+    loader = CodeDataLoader(
+        code_config,
+        max_snippets_per_lang=max_snippets_per_lang,
+        max_snippet_chars=max_snippet_chars,
+    )
+    loader.load_all()
+    # Substituting the bundled samples for a config that named real paths would
+    # report code metrics computed on toy snippets under the name of the corpus
+    # the caller asked for: measured 0.562 full AST alignment on the samples
+    # against 0.493 on StarCoder for the same tokenizer.
+    if not loader.code_snippets:
+        dropped = sum(loader.dropped_whitespace_only_counts.values())
+        if dropped:
+            raise ValueError(
+                f"The code config named {', '.join(sorted(code_config))} and "
+                f"every snippet read from those paths was dropped: "
+                f"max_snippet_chars={loader.max_snippet_chars} truncated {dropped} "
+                "of them down to leading whitespace. Raise the character cap, "
+                "or drop it to keep each file in full."
+            )
+        raise ValueError(
+            f"The code config named {', '.join(sorted(code_config))} but no "
+            "snippet was read from any of those paths. Check that the "
+            "directories hold files with the expected extensions."
+        )
+    return Corpus(
+        name=CODE_CORPUS,
+        texts=loader.code_snippets,
+        source=CODE_DATASET_SOURCE,
+        synthetic=False,
+        # The loader is local to this function and is discarded on return, so
+        # what the caps removed is copied onto the corpus. Without it
+        # ASTBoundaryMetrics reported the loader default for max_snippet_chars
+        # rather than the value these texts were truncated with, and the three
+        # counters were empty in every pipeline run whatever the caps did.
+        caps=_caps_of(loader),
+    )
+
+
+def resolve_math_corpus(
+    math_data_path: Optional[str] = None,
+    use_builtin_math_data: bool = False,
+) -> Corpus:
+    """The math corpus for a run: the caller's file, or the bundled samples.
+
+    The bundled samples are ``synthetic`` only when the caller asked for
+    neither. They are what the operator-isolation math domain falls back to so
+    that it always has something to score. The digit metrics and reconstruction
+    fidelity do not read a synthetic corpus, so neither has ever run on the
+    bundled samples unless --math-data or --use-builtin-math-data was passed.
+    """
+    if math_data_path:
+        texts = load_math_data(math_data_path)
+        if not texts:
+            raise ValueError(
+                f"math_data_path {math_data_path!r} loaded 0 texts. Refusing to "
+                "fall back to the bundled samples: the run would silently measure "
+                "a different corpus than the one asked for."
+            )
+        logger.info("Loaded %d math texts from %s", len(texts), math_data_path)
+        return Corpus(
+            name=MATH_CORPUS, texts={MATH_CORPUS: texts},
+            source=math_data_path, synthetic=False,
+        )
+    texts = load_math_data(BUILTIN_MATH_SAMPLES_PATH)
+    if use_builtin_math_data:
+        # The same refusal the math_data_path branch above makes, for the same
+        # reason. A caller who passed --use-builtin-math-data and got 0 texts
+        # back, from a truncated or unreadable bundled file, would otherwise
+        # have the digit metrics fall through to the prose corpus and publish
+        # numbers measured on FLORES under a run that asked for math.
+        if not texts:
+            raise ValueError(
+                f"use_builtin_math_data was set but {BUILTIN_MATH_SAMPLES_PATH} "
+                "loaded 0 texts. Refusing to fall back to the prose corpus: the "
+                "run would silently measure something other than the math data "
+                "it asked for."
+            )
+        logger.info("Loaded %d built-in math samples", len(texts))
+    return Corpus(
+        name=MATH_CORPUS, texts={MATH_CORPUS: texts},
+        source=BUILTIN_MATH_SAMPLES_PATH,
+        synthetic=not use_builtin_math_data,
+    )

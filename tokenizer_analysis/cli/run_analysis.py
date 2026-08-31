@@ -293,12 +293,16 @@ def _pool_per_language(per_language: dict, fields) -> dict:
     Used by the metrics whose per-language entries are a mean over items and a
     ``count`` of those items. Pooling ``sum(mean_l * count_l) / sum(count_l)``
     recovers the mean over every item in every language, which is what
-    ``micro_pooled`` names. It is derived from the per-language block rather
-    than read from the metric's ``summary``, because ``summary`` is computed
-    over the whole corpus and is copied unchanged into each language group, so
-    a grouped result would otherwise publish a global belonging to the full
-    language set. Reordering the same additions leaves a relative difference
-    around 1e-16 against the value ``summary`` reports.
+    ``mean_of_ratios`` names for these metrics: the per-language entries are
+    themselves means of per-item ratios, so the count-weighted pool of them is
+    the mean over all items, not a ratio of summed counts. It is derived from the per-language block rather
+    than read from the metric's ``summary``. Historically that was because the
+    grouped filter copied the whole-corpus ``summary`` into each group; the
+    filter now re-aggregates ``summary`` per group by the same weighting
+    (``UnifiedTokenizerAnalyzer._regroup_digit_summary``), and this stays
+    per-language-derived so the slim file does not depend on which path
+    produced the block. Reordering the same additions leaves a relative
+    difference around 1e-16 against the value ``summary`` reports.
 
     Every field is null and ``count`` is 0 when no language contributed an
     item, so an empty measurement is not published as a measured zero.
@@ -762,15 +766,17 @@ def _select_tokenizer_entry(
 
     elif metric_name == 'tokenizer_fairness_gini':
         global_full = tok_data.get('global', {})
+        # Copied only when present. This used to read with .get(), which turns
+        # a key the metric did not produce into a null, so the slim file
+        # published fields the full file did not have and stopped being a
+        # subset of it. A writer whose whole job is to drop fields should not
+        # be able to invent one.
         out['global'] = {
-            'gini_coefficient': global_full.get('gini_coefficient'),
-            'mean_cost': global_full.get('mean_cost'),
-            'std_cost': global_full.get('std_cost'),
-            'cost_ratio': global_full.get('cost_ratio'),
-            'num_languages': global_full.get('num_languages'),
+            field: global_full[field]
+            for field in ('gini_coefficient', 'mean_cost', 'std_cost',
+                          'cost_ratio', 'num_languages', 'warning')
+            if field in global_full
         }
-        if 'warning' in global_full:
-            out['global']['warning'] = global_full['warning']
         if 'per_language' in tok_data:
             out['per_language'] = tok_data['per_language']
         # The whole per-line block, including its own language_costs, rather

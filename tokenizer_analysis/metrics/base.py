@@ -25,7 +25,7 @@ import scipy.stats
 from collections import defaultdict
 import logging
 
-from ..core.input_types import TokenizedData
+from ..core.input_types import Corpus, TokenizedData
 from ..core.input_providers import InputProvider
 from ..core.tokenizer_wrapper import resolve_special_token_strings
 from ..constants import (
@@ -153,6 +153,120 @@ class BaseMetrics(ABC):
         # unresolved or undetected marker set both mean "strip nothing".
         self._subword_markers: Optional[Set[str]] = None
         self._subword_marker_cache: Dict[int, Tuple[Any, Set[str]]] = {}
+
+    def _registered_corpus(self, name: str) -> Optional['Corpus']:
+        """The corpus registered under *name* on the input provider, or None.
+
+        None means the run registered nothing, and the metric then builds the
+        corpus from its own constructor arguments. That path is what keeps the
+        classes constructible on their own: per_example.py and
+        scripts/run_ast_only.py both build a metric against a provider that
+        carries no corpora, and so does most of the test suite.
+
+        The registry is looked up by attribute rather than assumed, because a
+        provider need not be an ``InputProvider`` subclass. Every provider in
+        this package is one, including the stand-ins
+        (``per_example._StubInputProvider``, the test suite's ``MockProvider``
+        and ``scripts/run_ast_only._AstOnlyProvider``), so the attribute check
+        is there for a caller's own duck-typed provider rather than for
+        anything shipped here.
+        """
+        corpus_names = getattr(self.input_provider, 'corpus_names', None)
+        get_corpus = getattr(self.input_provider, 'get_corpus', None)
+        if not callable(corpus_names):
+            return None
+        if not callable(get_corpus):
+            # Named here rather than as a bare AttributeError from the line
+            # below. A provider carrying one of the pair and not the other is
+            # half a registry, and _register_corpus already refuses the same
+            # shape of provider by name.
+            raise TypeError(
+                f"{type(self.input_provider).__name__} implements corpus_names "
+                "but not get_corpus, so a registered corpus cannot be read "
+                "back. Subclass InputProvider, which implements the whole "
+                "corpus registry."
+            )
+        # set(), not the list: corpus_names() builds a fresh list on every call
+        # and this runs once per corpus per metric construction.
+        if name not in set(corpus_names()):
+            return None
+        return get_corpus(name)
+
+    def _corpus_or_refuse_arguments(
+        self, name: str, arguments: Dict[str, bool], build=None,
+    ) -> Optional['Corpus']:
+        """The registered corpus under *name*, refusing arguments it overrides.
+
+        A metric takes its corpus from the registry when the run put one there,
+        and builds one from its own constructor arguments otherwise. When both
+        are present the registry used to win and the arguments were dropped
+        without a word, so a caller who passed ``math_data_path`` could be
+        handed numbers measured on a different corpus with nothing in the
+        output saying so.
+
+        *arguments* maps each argument's name to whether the caller supplied
+        it. The caller decides that, because only the caller knows what each
+        argument's empty value means: ``code_config={}`` is a request for the
+        bundled samples, while ``code_texts={}`` and ``max_snippet_chars=0``
+        ask for nothing. Testing the values here instead got all three wrong in
+        one direction or the other.
+
+        *build* is how the arguments would be turned into a corpus, used only
+        to compare against the registered one. Without it this refused any
+        arguments at all when something was registered, so two metrics handed
+        the same code_texts failed from the second, each asking for a corpus
+        the other had already put there. Asking for what is already present is
+        not a conflict.
+
+        Returns None when nothing is registered, which is the signal to build
+        the corpus from the arguments instead.
+        """
+        corpus = self._registered_corpus(name)
+        if corpus is None:
+            return None
+        supplied = sorted(key for key, was_supplied in arguments.items()
+                          if was_supplied)
+        if supplied and build is not None:
+            # Compared by value. Two metrics that each resolve the bundled
+            # samples produce equal corpora from different objects, and that
+            # is agreement, not conflict.
+            try:
+                asked_for = build()
+            except Exception:
+                # Whatever went wrong building it is the caller's problem to
+                # see, not something to convert into a conflict report.
+                asked_for = None
+            if asked_for is not None and asked_for == corpus:
+                return corpus
+        if supplied:
+            raise ValueError(
+                f"{type(self).__name__} was given {', '.join(supplied)}, but a "
+                f"{name!r} corpus from {corpus.source!r} is already registered "
+                "on the input provider. Using the registered corpus would "
+                "report numbers measured on it under a request for the other "
+                "one. Pass the arguments or register the corpus, not both."
+            )
+        return corpus
+
+    def _register_corpus(self, corpus: 'Corpus') -> 'Corpus':
+        """Register a corpus this metric built itself, and return it.
+
+        The provider is where a corpus is encoded and memoized per tokenizer, so
+        a metric that had to build its own still puts it there rather than
+        keeping it. A provider that does not implement the registry is named
+        here, rather than reaching the encode call three frames later as an
+        AttributeError on a method nobody mentioned.
+        """
+        add_corpus = getattr(self.input_provider, 'add_corpus', None)
+        if not callable(add_corpus):
+            raise TypeError(
+                f"{type(self.input_provider).__name__} does not implement "
+                f"add_corpus, so the {corpus.name!r} corpus this metric built "
+                "cannot be encoded. Subclass InputProvider, which implements "
+                "the corpus registry."
+            )
+        add_corpus(corpus)
+        return corpus
 
     def _resolve_special_tokens(self, tokenizer: Any) -> Set[str]:
         """Special-token strings declared by *tokenizer*, memoized per object.

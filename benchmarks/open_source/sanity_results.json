@@ -306,9 +306,9 @@
             "name": "C5 whitespace handling",
             "category": "behavioral",
             "severity": "warn",
-            "observed": 0.125,
+            "observed": 0.16666666666666666,
             "threshold": 1.0,
-            "detail": "whitespace fidelity=0.1250; whitespace-only vocab share=0.0000 (0/30517)",
+            "detail": "whitespace fidelity=0.1667; whitespace-only vocab share=0.0000 (0/30517)",
             "rationale": "whitespace loss corrupts code/indentation (warn-only: WordPiece/SentencePiece are intentionally lossy here)",
             "examples": []
           },

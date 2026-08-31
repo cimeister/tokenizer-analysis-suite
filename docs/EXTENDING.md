@@ -144,6 +144,54 @@ register_tokenizer_class('my_class', MyTokenizer)
 
 Then reference `"class": "my_class"` in your tokenizer config.
 
+## Supplying input: providers and corpora
+
+`InputProvider` in `tokenizer_analysis.core.input_types` is the interface the
+metrics read texts and encodings from. The two implementations in `input_providers.py`
+cover the shipped modes: `RawTokenizationProvider` encodes raw texts, and
+`PreTokenizedProvider` serves ids that were produced elsewhere. Subclass
+`InputProvider` only to supply data the two do not.
+
+Four abstract methods have to be implemented: `get_tokenized_data()`,
+`get_tokenizer_names()`, `get_vocab_size(tokenizer_name)` and
+`get_languages(tokenizer_name=None)`.
+
+`get_tokenized_data()` takes no arguments. It returns the provider's own prose
+texts, keyed by tokenizer name.
+
+The code and math corpora are separate. A run resolves each one, registers it
+with `add_corpus(Corpus(...))`, and the metrics read it back through
+`get_corpus_data(name)`. Both methods are concrete on `InputProvider`, so a
+subclass inherits them and does not implement either. `get_corpus_data` encodes
+a registered corpus once per tokenizer and memoizes the result, which is what
+stops the three metric classes that consume code from encoding it three times.
+
+Two names are refused rather than resolved. `add_corpus` rejects a corpus named
+`prose`, and `get_corpus_data("prose")` raises. Prose comes from
+`get_tokenized_data()`, so allowing it in the registry would create a second
+place to put prose texts that no metric reads.
+
+A metric that can also be constructed on its own accepts the corpus as a
+constructor argument instead: `BasicTokenizationMetrics` and
+`DigitBoundaryMetrics` both take `code_texts`, `math_data_path` and
+`use_builtin_math_data`. Passing one of those while the same corpus is
+registered on the provider raises. The registered corpus and the argument can
+name different texts, and reporting the first under a request for the second is
+the failure that check exists to prevent.
+
+Subclasses should also implement `get_tokenizer(name)`, which returns the
+`TokenizerWrapper` for a name. `InputProvider` defines it, but the definition
+raises `NotImplementedError`. The method is concrete, so a provider that omits
+it still constructs; the failure comes at the first call, with a message naming
+the provider class rather than an `AttributeError` about a missing attribute.
+Callers do not all treat that the same way.
+`_encode_corpus` leaves the tokenizer out of the encoded corpus and
+reconstruction fidelity skips it, both with a logged warning; MorphScore records
+an `error` for that tokenizer in its results; and the digit, AST and UTF-8
+metrics do not catch it at all, so the run fails once one of them is reached.
+Implement `get_tokenizer` unless every metric that needs a tokenizer object is
+turned off.
+
 ## Adding new metrics
 
 1. Inherit from `BaseMetrics` in `tokenizer_analysis/metrics/base.py`.

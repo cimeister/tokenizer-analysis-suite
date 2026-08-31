@@ -44,6 +44,68 @@ class TokenizerGiniMetrics(BaseMetrics):
         self.text_measurer = TextMeasurer(self.measurement_config)
         self.language_metadata = language_metadata
     
+    @classmethod
+    def _fairness_block(cls, tok_name, language_costs):
+        """The published fairness block for one tokenizer's language costs.
+
+        One function for both cases, because they were two literal dictionaries
+        that had to be kept in step by hand and were not: the fewer-than-two
+        case omitted seven of the keys the other one carries, directly below a
+        comment saying every block carries the same keys.
+
+        Only two values are genuinely undefined with a single language: the
+        coefficient, because inequality across one language means nothing, and
+        the standard deviation, because one value has no spread. The smallest
+        and largest cost are that language's cost, their ratio is 1.0, and the
+        most and least efficient language are both that one. Publishing null
+        for those would be a stand-in where a real value exists.
+        """
+        # Sorted, so the sum is order-independent: floating point addition is
+        # not associative, and an order that varied gave a different last digit
+        # between runs of the same commit.
+        total_costs = [language_costs[lang] for lang in sorted(language_costs)]
+        enough = len(language_costs) >= MIN_LANGUAGES_FOR_GINI
+
+        if not language_costs:
+            mean_cost = min_cost = max_cost = cost_ratio = None
+            sorted_langs = []
+            most_efficient = least_efficient = None
+        else:
+            mean_cost = float(np.mean(total_costs))
+            min_cost = min(total_costs)
+            max_cost = max(total_costs)
+            # None, not inf: json.dump writes bare Infinity, which is not valid
+            # JSON and fails strict parsers such as JavaScript's JSON.parse.
+            cost_ratio = max_cost / min_cost if min_cost > 0 else None
+            sorted_langs = sorted(language_costs.items(), key=lambda x: x[1])
+            most_efficient = sorted_langs[0]
+            least_efficient = sorted_langs[-1]
+
+        block = {
+            'gini_coefficient': cls._gini_of(total_costs) if enough else None,
+            'mean_cost': mean_cost,
+            # ddof=1 to match BaseMetrics.compute_basic_stats and
+            # vocabulary_utilization's per_language_std, which both use the
+            # sample convention. At 13 languages the population form
+            # understated this by 4.1%.
+            'std_cost': float(np.std(total_costs, ddof=1)) if enough else None,
+            'min_cost': min_cost,
+            'max_cost': max_cost,
+            'cost_ratio': cost_ratio,
+
+            'language_costs': language_costs,
+            'most_efficient_language': most_efficient,
+            'least_efficient_language': least_efficient,
+            'num_languages': len(language_costs),
+            'sorted_language_costs': sorted_langs,
+        }
+        if not enough:
+            block['warning'] = (
+                f'Undefined for fewer than {MIN_LANGUAGES_FOR_GINI} languages '
+                f'(got {len(language_costs)})'
+            )
+        return block
+
     @staticmethod
     def _gini_of(costs: List[float]) -> Optional[float]:
         """TFG over an already-ordered cost vector.
@@ -261,70 +323,38 @@ class TokenizerGiniMetrics(BaseMetrics):
             total_costs = [language_costs[lang] for lang in sorted(language_costs)]
 
             if len(language_costs) < MIN_LANGUAGES_FOR_GINI:
-                # Inequality across languages is undefined for fewer than two of
-                # them. This used to publish gini_coefficient 0.0 and mean_cost
-                # 0.0, which read as perfect fairness and zero cost; mean_cost
-                # was also contradicted by the language_costs entry sitting
-                # beside it. Both are None now, and the warning stays.
                 logger.warning(
                     "Tokenizer fairness Gini needs at least %d languages; %s has %d, "
                     "so the coefficient is reported as null rather than 0.0.",
                     MIN_LANGUAGES_FOR_GINI, tok_name, len(language_costs),
                 )
-                results['per_tokenizer'][tok_name] = {
-                    'gini_coefficient': None,
-                    'mean_cost': (float(np.mean(list(language_costs.values())))
-                                  if language_costs else None),
-                    'language_costs': language_costs,
-                    'num_languages': len(language_costs),
-                    'warning': (
-                        f'Undefined for fewer than {MIN_LANGUAGES_FOR_GINI} languages '
-                        f'(got {len(language_costs)})'
-                    ),
-                    # Present and null, not absent: every tokenizer's block
-                    # carries the same keys, so a consumer indexes rather than
-                    # tests for existence. The per-line coefficient is undefined
-                    # here for the same reason the main one is.
-                    'per_line_normalization': None,
-                }
-                continue
-            
-            mu = np.mean(total_costs)
-            n = len(total_costs)
-            tfg = self._gini_of(total_costs)
 
-            # Additional statistics for analysis
-            min_cost = min(total_costs)
-            max_cost = max(total_costs)
-            # ddof=1 to match BaseMetrics.compute_basic_stats and
-            # vocabulary_utilization's per_language_std, which both use the
-            # sample convention. At 13 languages the population form understated
-            # this by 4.1%. It is echoed into metadata so old files stay readable.
-            std_cost = np.std(total_costs, ddof=1) if len(total_costs) > 1 else None
-            
-            # Compute cost ratios (max/min)
-            # None, not inf: json.dump writes bare Infinity, which is not valid
-            # JSON and fails strict parsers such as JavaScript's JSON.parse.
-            cost_ratio = max_cost / min_cost if min_cost > 0 else None
-            
-            # Identify most and least efficient languages
-            sorted_langs = sorted(language_costs.items(), key=lambda x: x[1])
-            most_efficient = sorted_langs[0]  # Lowest cost (most efficient)
-            least_efficient = sorted_langs[-1]  # Highest cost (least efficient)
-            
-            results['per_tokenizer'][tok_name] = {
-                'gini_coefficient': tfg,
-                'mean_cost': mu,
-                'std_cost': std_cost,
-                'min_cost': min_cost,
-                'max_cost': max_cost,
-                'cost_ratio': cost_ratio,
-                'language_costs': language_costs,
-                'most_efficient_language': most_efficient,
-                'least_efficient_language': least_efficient,
-                'num_languages': len(language_costs),
-                'sorted_language_costs': sorted_langs
-            }
+            # One block builder for both cases. They were two literal
+            # dictionaries kept in step by hand, and were not: the
+            # fewer-than-two case omitted seven keys, directly below a comment
+            # saying every block carries the same keys.
+            results['per_tokenizer'][tok_name] = self._fairness_block(
+                tok_name, language_costs,
+            )
+            if len(language_costs) < MIN_LANGUAGES_FOR_GINI:
+                # The per-line coefficient is undefined here for the same
+                # reason the main one is.
+                results['per_tokenizer'][tok_name]['per_line_normalization'] = None
+                continue
+
+            # Names the reporting below still uses, read back from the block
+            # so there is one place they are computed.
+            block = results['per_tokenizer'][tok_name]
+            mu = block['mean_cost']
+            n = len(total_costs)
+            tfg = block['gini_coefficient']
+            min_cost = block['min_cost']
+            max_cost = block['max_cost']
+            cost_ratio = block['cost_ratio']
+            std_cost = block['std_cost']
+            sorted_langs = block['sorted_language_costs']
+            most_efficient = block['most_efficient_language']
+            least_efficient = block['least_efficient_language']
 
             # The same coefficient with each language's cost normalized by its
             # line count instead of by the configured unit.

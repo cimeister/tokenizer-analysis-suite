@@ -9,7 +9,7 @@ from typing import Dict, List, Any, Optional, Tuple, Union
 import numpy as np
 
 from .constants import AGGREGATION_MICRO_POOLED, DEFAULT_CER_TIME_BUDGET_S
-from .core.input_types import TokenizedData, InputSpecification
+from .core.input_types import InputSpecification, TokenizedData
 from .core.input_providers import InputProvider, create_input_provider
 from .core.input_utils import create_simple_specifications, InputValidator
 from .core.tokenizer_wrapper import create_tokenizer_wrapper
@@ -18,7 +18,9 @@ from .metrics.basic import BasicTokenizationMetrics
 from .metrics.information_theoretic import InformationTheoreticMetrics
 from .metrics.gini import TokenizerGiniMetrics
 from .metrics.morphscore import MorphScoreMetrics
-from .metrics.math import DigitBoundaryMetrics
+from .metrics.math import (
+    DigitBoundaryMetrics, magnitude_metadata, operator_metadata,
+)
 from .metrics.code_ast import ASTBoundaryMetrics
 from .metrics.utf8_integrity import UTF8IntegrityMetrics
 from .metrics.redundancy import merge_redundant_metrics
@@ -26,6 +28,7 @@ from .visualization import TokenizerVisualizer
 from .visualization.latex_tables import LaTeXTableGenerator
 from .config import TextMeasurementConfig, DEFAULT_TEXT_MEASUREMENT_CONFIG
 from .config.language_metadata import LanguageMetadata
+from .loaders.corpora import resolve_code_corpus, resolve_math_corpus
 
 logger = logging.getLogger(__name__)
 
@@ -68,12 +71,15 @@ class UnifiedTokenizerAnalyzer:
             per_language_plots: Whether to generate per-language plots
             faceted_plots: Whether to generate faceted plots (one subplot per tokenizer)
             code_ast_config: Mapping of language name to the file, directory or
-                parquet path for that language's code. With ``None`` no code
-                is loaded: the AST boundary metrics are not constructed, and
-                the code domain of operator isolation and of reconstruction
-                fidelity is empty. Construction aborts here when a configured
-                path does not load, rather than continuing with an empty code
-                corpus.
+                parquet path for that language's code. ``None`` and ``{}`` are
+                read differently. With ``None`` the AST boundary metrics are
+                not constructed at all; with ``{}`` they are, and they run on
+                the bundled samples. Either way the code domain of operator
+                isolation runs on the bundled samples and reconstruction
+                fidelity gets no code domain, because a corpus marked
+                ``synthetic`` does not reach it. Construction aborts here when
+                a configured path does not load, rather than continuing with an
+                empty code corpus.
             code_max_snippets_per_lang: Cap on code files loaded per language
                 for the code corpus (feeds both AST metrics and the code
                 domain of operator isolation). ``None`` uses
@@ -118,29 +124,54 @@ class UnifiedTokenizerAnalyzer:
         else:
             self.plot_tokenizers = self.tokenizer_names
         
-        # Pre-load code data once for BasicTokenizationMetrics
-        # No try/except: a code config the caller named explicitly either loads
-        # or aborts. Swallowing the failure here left the operator-isolation
-        # code domain with zero samples and no signal beyond one warning line,
-        # while the same malformed config crashed uncaught 50 lines later with a
-        # raw AttributeError that named neither the flag nor the file.
-        code_texts: Dict[str, List[str]] = {}
-        if code_ast_config:
-            from .loaders.code_data import CodeDataLoader
-            _loader = CodeDataLoader(
-                code_ast_config,
-                max_snippets_per_lang=code_max_snippets_per_lang,
-                max_snippet_chars=code_max_snippet_chars,
+        # Resolve the code and math corpora once, here, beside the flags that
+        # select them, and register them on the provider for every metric that
+        # reads them. Two CodeDataLoaders used to be built from the same config
+        # and the same caps, one here and one inside ASTBoundaryMetrics, so
+        # every configured file was read and truncated twice and nothing
+        # checked that the two results agreed.
+        #
+        # A provider without add_corpus is named here rather than reaching
+        # `AttributeError: 'X' object has no attribute 'add_corpus'` from inside
+        # this constructor. BaseMetrics._register_corpus gives the same error
+        # for a metric that builds its own corpus.
+        add_corpus = getattr(input_provider, 'add_corpus', None)
+        if not callable(add_corpus):
+            raise TypeError(
+                f"{type(input_provider).__name__} does not implement "
+                "add_corpus, so the code and math corpora this run resolved "
+                "cannot be registered for the metrics that read them. Subclass "
+                "InputProvider, which implements the corpus registry."
             )
-            _loader.load_all()
-            code_texts = _loader.code_snippets
+        # Both resolved before either is registered, so a failure in the
+        # second leaves the provider untouched. Registering as they resolved
+        # meant a math config that loaded 0 texts aborted with the code corpus
+        # already on the provider, and the retry then failed with "a corpus
+        # named 'code' is already registered", naming neither the original
+        # problem nor the fix.
+        code_corpus = resolve_code_corpus(
+            code_ast_config, code_max_snippets_per_lang, code_max_snippet_chars,
+        )
+        math_corpus = resolve_math_corpus(math_data_path, use_builtin_math_data)
+        # Registered together, so a refusal on the second does not leave the
+        # first behind. Resolving both first only covers a failure to load;
+        # add_corpus itself refuses a name already registered, and the sequential
+        # calls left the provider holding the code corpus when that happened.
+        registered = []
+        try:
+            for corpus in (code_corpus, math_corpus):
+                add_corpus(corpus)
+                registered.append(corpus.name)
+        except Exception:
+            registry = getattr(input_provider, '_corpora', None)
+            if isinstance(registry, dict):
+                for name in registered:
+                    registry.pop(name, None)
+            raise
 
         # Initialize metrics classes
         self.basic_metrics = BasicTokenizationMetrics(
             input_provider, measurement_config, language_metadata,
-            code_texts=code_texts,
-            math_data_path=math_data_path,
-            use_builtin_math_data=use_builtin_math_data,
         )
 
         # Initialize information-theoretic metrics
@@ -165,12 +196,10 @@ class UnifiedTokenizerAnalyzer:
                 logger.warning(f"MorphScore metrics disabled: {e}")
 
         # Initialize digit boundary metrics (always available: no external data).
-        # code_texts feeds the code domain of the operator-isolation split.
+        # The registered code and math corpora feed the domains of the
+        # operator-isolation split.
         self.digit_boundary_metrics = DigitBoundaryMetrics(
             input_provider,
-            math_data_path=math_data_path,
-            use_builtin_math_data=use_builtin_math_data,
-            code_texts=code_texts,
             include_prose_operators=include_prose_operators,
         )
 
@@ -181,10 +210,23 @@ class UnifiedTokenizerAnalyzer:
         self.ast_boundary_metrics = None
         if code_ast_config is not None:
             try:
+                # No code_config: the code corpus was resolved from it above
+                # and registered on the provider, so this metric reads it from
+                # there. Passing it as well is refused, because the two could
+                # name different corpora and the registered one would win
+                # without a word. max_snippets_per_lang is still passed, because
+                # it bounds the corpus rather than selects it and
+                # get_code_snippets applies it to the registered snippets.
+                # resolve_code_corpus now bounds the bundled samples itself, so
+                # this is a second application rather than the only one; it
+                # used to be the only one, which left the operator and digit
+                # metrics reading an uncapped corpus.
+                # max_snippet_chars is not passed and is refused, because
+                # nothing on the registered branch can apply it: the corpus was
+                # already truncated when it was resolved.
                 self.ast_boundary_metrics = ASTBoundaryMetrics(
-                    input_provider, code_config=code_ast_config,
+                    input_provider,
                     max_snippets_per_lang=code_max_snippets_per_lang,
-                    max_snippet_chars=code_max_snippet_chars,
                 )
             except ImportError as e:
                 # tree-sitter missing is the one condition that disables these
@@ -202,7 +244,7 @@ class UnifiedTokenizerAnalyzer:
         for name in self.tokenizer_names:
             vocab_size = self.input_provider.get_vocab_size(name)
             logger.info(f"  {name}: {vocab_size} tokens")
-    
+
     def run_analysis(self,
                     save_plots: bool = True,
                     include_morphscore: bool = True,
@@ -435,10 +477,17 @@ class UnifiedTokenizerAnalyzer:
                 # Run analysis on filtered data (same as main analysis)
                 group_result = {}
                 
-                # Basic metrics
+                # Basic metrics. include_code_math=False because a group is a
+                # set of prose languages: _filter_data_by_languages selects the
+                # prose TokenizedData for the group's languages, and the code
+                # and math corpora belong to no language. Reporting the whole of
+                # both inside every group made each group's reconstruction
+                # `global` a figure measured mostly on the same texts in every
+                # group, and put those texts into every group's CER budget.
                 basic_results = self.basic_metrics.compute(
                     filtered_data, include_reconstruction=include_reconstruction,
-                    cer_time_budget_s=cer_time_budget_s)
+                    cer_time_budget_s=cer_time_budget_s,
+                    include_code_math=False)
                 group_result.update(basic_results)
                 
                 # Information-theoretic metrics (includes compression_rate)
@@ -461,11 +510,32 @@ class UnifiedTokenizerAnalyzer:
                     morphscore_results = self.morphscore_metrics.compute(filtered_data)
                     group_result.update(morphscore_results)
 
-                # UTF-8 integrity metrics - recompute on filtered data (fast)
+                # UTF-8 integrity metrics, recomputed on the filtered data
+                # because it is cheap. Three cases, the same three the digit
+                # metrics below use, and for the same reasons.
                 if base_results and 'utf8_token_integrity' in base_results:
                     logger.info(f"Computing UTF-8 integrity results for group {group_name}")
                     utf8_results = self.utf8_integrity_metrics.compute(filtered_data)
                     group_result.update(utf8_results)
+                elif base_results:
+                    # Truthy base results without the key means the base run
+                    # produced no UTF-8 metrics, which is what
+                    # --no-utf8-integrity does. The missing key is the only
+                    # signal the grouped path gets, so computing here anyway
+                    # would switch the metric back on for a caller who asked
+                    # for it off.
+                    logger.info(
+                        "No UTF-8 integrity results in the base run, so group "
+                        "%s reports none either.", group_name,
+                    )
+                else:
+                    # Nothing precomputed at all, so compute them. This branch
+                    # published no UTF-8 block whatsoever, which made a whole
+                    # metric depend on how the caller invoked the function.
+                    logger.info(f"Computing UTF-8 integrity results for group {group_name}")
+                    group_result.update(
+                        self.utf8_integrity_metrics.compute(filtered_data)
+                    )
 
                 # Digit boundary metrics - filter from base results if available
                 if base_results and 'three_digit_boundary_alignment' in base_results:
@@ -473,19 +543,40 @@ class UnifiedTokenizerAnalyzer:
                     group_result['three_digit_boundary_alignment'] = self._filter_digit_boundary_results(
                         base_results['three_digit_boundary_alignment'], group_languages
                     )
-                    # Magnitude consistency uses the same structure as digit boundary
+                    # Magnitude consistency uses the same structure as digit
+                    # boundary, except its metadata promises the scaling fit
+                    # the filter drops, so the grouped variant replaces it.
                     if 'numeric_magnitude_consistency' in base_results:
                         group_result['numeric_magnitude_consistency'] = self._filter_digit_boundary_results(
-                            base_results['numeric_magnitude_consistency'], group_languages
+                            base_results['numeric_magnitude_consistency'], group_languages,
+                            grouped_metadata=magnitude_metadata(grouped=True),
                         )
                     # Operator isolation has its own structure
                     if 'operator_isolation_rate' in base_results:
                         group_result['operator_isolation_rate'] = self._filter_operator_results(
                             base_results['operator_isolation_rate'], group_languages
                         )
+                elif base_results:
+                    # Truthy base_results without the digit keys means the
+                    # base run produced no digit metrics, which is what
+                    # --no-digit-boundary does, so the groups report none
+                    # either rather than computing what the caller turned off.
+                    # An empty dict is "nothing precomputed" and falls to the
+                    # branch below, as it did before.
+                    logger.info(
+                        "No digit boundary results in the base run, so group "
+                        "%s reports none either.", group_name,
+                    )
                 else:
+                    # No base results to filter, so compute them, with
+                    # include_code_math=False for the same reason the basic
+                    # metrics use it: a group is a set of prose languages, and
+                    # reading the whole code and math corpora here put both
+                    # entire corpora into every group's operator isolation.
                     logger.info(f"Computing digit boundary results for group {group_name}")
-                    db_results = self.digit_boundary_metrics.compute(filtered_data)
+                    db_results = self.digit_boundary_metrics.compute(
+                        filtered_data, include_code_math=False,
+                    )
                     group_result.update(db_results)
 
                 # Same merge the top-level results get, so a group block and
@@ -516,11 +607,30 @@ class UnifiedTokenizerAnalyzer:
         
         return filtered_data
     
-    def _filter_digit_boundary_results(self, db_results: Dict[str, Any], target_languages: List[str]) -> Dict[str, Any]:
+    def _filter_digit_boundary_results(
+        self, db_results: Dict[str, Any], target_languages: List[str],
+        grouped_metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """Filter digit boundary alignment, entropy, or magnitude results to specified languages.
 
-        Unknown keys (e.g. ``scaling``) are passed through as-is so this
-        method works for magnitude results too.
+        Two things are deliberately NOT copied from the base results, because
+        both pool every language in the run and a group block carrying them
+        published whole-corpus statistics under a group label
+        (RELEASE_AUDIT Q35.2 R1): ``summary`` is re-aggregated from the
+        group's own per-language blocks, and the magnitude ``scaling`` fit is
+        dropped (this filter reads only the per-language ``overall`` blocks,
+        which do not determine the fit). The recompute path, reached with no
+        base results, computes ``scaling`` from whatever the digit metrics
+        measure: the group's own data, unless a dedicated math corpus is
+        configured, in which case it is the whole math corpus (RELEASE_AUDIT
+        Q35.2 R12). Other unknown keys are passed through, but a key holding
+        a corpus-level aggregate must be added to the drop next to
+        ``scaling``, not passed through.
+
+        *grouped_metadata* replaces the copied metadata when the group block's
+        contract differs from the base run's; the magnitude call site passes
+        ``magnitude_metadata(grouped=True)`` because its base description
+        promises the scaling fit this filter drops.
         """
         filtered: Dict[str, Any] = {
             "per_tokenizer": {},
@@ -542,14 +652,19 @@ class UnifiedTokenizerAnalyzer:
                 if fbd:
                     ftok["by_digit_length"] = fbd
 
-            # Filter by_bucket
+            # Filter by_bucket. Every bucket key the base run had survives,
+            # holding {} when the group has no numbers in it: a group with
+            # short numbers and none long used to lose the "long" key
+            # entirely, so the shape depended on the group's data. by_bucket
+            # has a fixed two-key schema, which is why its keys are held;
+            # by_digit_length's keys are the digit lengths that occurred, so
+            # that block stays data-dependent and can be absent for a group.
             if "by_bucket" in tok_data:
-                fb: Dict[str, Any] = {}
-                for bucket, lang_dict in tok_data["by_bucket"].items():
-                    flang = {l: d for l, d in lang_dict.items() if l in target_languages}
-                    if flang:
-                        fb[bucket] = flang
-                ftok["by_bucket"] = fb if fb else {"short": {}, "long": {}}
+                ftok["by_bucket"] = {
+                    bucket: {l: d for l, d in lang_dict.items()
+                             if l in target_languages}
+                    for bucket, lang_dict in tok_data["by_bucket"].items()
+                }
 
             # Filter overall
             if "overall" in tok_data:
@@ -565,6 +680,13 @@ class UnifiedTokenizerAnalyzer:
             for key, value in tok_data.items():
                 if key in _LANG_DICT_KEYS or key in ftok:
                     continue
+                if key == "scaling":
+                    # The fit pools every language of the run and cannot be
+                    # derived from base results for a subset. Copying it gave
+                    # every group the whole-corpus rho, cv and linear fit,
+                    # kept by the slim writer, so a default grouped run
+                    # published them under each group label (Q35.2 R1).
+                    continue
                 if isinstance(value, dict) and _LANG_DICT_KEYS & set(value):
                     nested = self._filter_digit_boundary_results(
                         {"per_tokenizer": {tok_name: value}}, target_languages
@@ -576,17 +698,68 @@ class UnifiedTokenizerAnalyzer:
             if ftok:
                 filtered["per_tokenizer"][tok_name] = ftok
 
-        # Copy summary as-is
-        if "summary" in db_results:
-            filtered["summary"] = db_results["summary"]
+        # Summary: re-aggregated from the group's own per-language blocks.
+        # The base run's summary pools every language in the run, so copying
+        # it published the whole-corpus figure, byte-identical in every
+        # group, next to per-language blocks that can be empty (Q35.2 R1).
+        for tok_name, ftok in filtered["per_tokenizer"].items():
+            regrouped = self._regroup_digit_summary(ftok.get("overall", {}))
+            if regrouped is not None:
+                filtered["summary"][tok_name] = regrouped
 
-        # Metadata describes the metric, not the language set, so a group block
-        # keeps it. Without this a grouped result published no aggregation
-        # label and no count unit while the whole-corpus block did.
-        if "metadata" in db_results:
+        # Metadata describes the metric, not the language set, so a group
+        # block keeps it, except where the group contract differs from the
+        # base run's; the caller then supplies the grouped variant.
+        if grouped_metadata is not None:
+            filtered["metadata"] = grouped_metadata
+        elif "metadata" in db_results:
             filtered["metadata"] = db_results["metadata"]
 
         return filtered
+
+    # Per-language mean fields and the summary field each re-aggregates to.
+    # The per-language blocks hold means over that language's numbers plus
+    # the count, so the group's pooled mean is the count-weighted mean of the
+    # per-language means, which is the same pooling the base summary applies
+    # to the whole run. Summary fields that are not determined by the
+    # per-language overall blocks this helper reads (the scaling fit's
+    # cv/rho/linear terms, avg_uniform_chunk, single_token_frac) are left
+    # out of a group summary rather than copied from the whole corpus; most
+    # could be derived from the by_digit_length blocks if a group ever needs
+    # them.
+    _PER_LANGUAGE_MEAN_TO_SUMMARY = {
+        "mean_f1": "avg_f1",
+        "mean_precision": "avg_precision",
+        "mean_recall": "avg_recall",
+        "mean_fertility": "avg_fertility",
+    }
+
+    @classmethod
+    def _regroup_digit_summary(
+        cls, overall: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        """A group's digit-metric summary from its own per-language blocks.
+
+        Returns None when the group's languages hold no numbers (for example
+        a run whose digit metrics measured a dedicated math corpus, which
+        belongs to no language group); the group then publishes no summary
+        entry rather than the whole-corpus one.
+        """
+        entries = [d for d in overall.values()
+                   if isinstance(d, dict) and d.get("count", 0)]
+        total = sum(d["count"] for d in entries)
+        if not total:
+            return None
+        summary: Dict[str, Any] = {}
+        for lang_field, summary_field in cls._PER_LANGUAGE_MEAN_TO_SUMMARY.items():
+            pairs = [(d[lang_field], d["count"]) for d in entries
+                     if d.get(lang_field) is not None]
+            if pairs:
+                weight = sum(c for _, c in pairs)
+                summary[summary_field] = sum(v * c for v, c in pairs) / weight
+        summary["numbers_analyzed"] = total
+        summary["languages_analyzed"] = len(entries)
+        return summary
 
     def _filter_operator_results(self, op_results: Dict[str, Any], target_languages: List[str]) -> Dict[str, Any]:
         """Filter operator isolation results to specified languages.
@@ -598,9 +771,11 @@ class UnifiedTokenizerAnalyzer:
         are therefore recomputed from the group's own languages, using the raw
         counts carried on each ``by_language`` entry.
 
-        Code and math rows are namespaced ("code:python", "math:math") in the
-        pooled ``by_language``, so matching against FLORES codes selects the
-        prose rows only, which is exactly the intended scope.
+        Code and math rows are keyed "code_python" and "math" in the pooled
+        ``by_language``, matching reconstruction fidelity. Matching against
+        FLORES codes therefore selects the prose rows only, and a prose
+        language whose name would collide with one of those keys aborts in
+        _merge_operator_accs rather than reaching this filter.
 
         The prose/code/math ``by_domain`` split is a corpus-level view, not a
         per-language-group one; it is reported once in the top-level results.
@@ -665,20 +840,31 @@ class UnifiedTokenizerAnalyzer:
                     "total_compound_operators": tot_ctot,
                 }
 
-        # Metadata describes the metric, not the language set, so a group block
-        # keeps it.
-        if "metadata" in op_results:
-            filtered["metadata"] = op_results["metadata"]
+        # Not the base run's metadata: that one was built with
+        # include_code_math=True and said "Code and math always run" beside a
+        # group block holding neither and no by_domain (RELEASE_AUDIT Q35.2
+        # R2). The description is single-sourced in metrics/math.py so this
+        # filter and the per-group recompute cannot drift apart.
+        filtered["metadata"] = operator_metadata(
+            include_code_math=False, filtered=True,
+        )
 
         return filtered
 
     def _filter_morphscore_results(self, morphscore_results: Dict[str, Any], target_languages: List[str]) -> Dict[str, Any]:
-        """Filter MorphScore results to include only specified languages and recompute summary statistics."""
+        """Filter MorphScore results to include only specified languages.
+
+        The group block gets the same top-level keys the base block has:
+        ``per_tokenizer`` and ``metadata``, with no top-level summary,
+        because MorphScoreMetrics.compute publishes none. A tokenizer's own
+        ``summary`` is recomputed over the group's languages when it has any
+        evaluated language in the group, and is absent otherwise, so a
+        per-tokenizer entry can hold fewer keys than the base run's.
+        """
         import numpy as np
-        
+
         filtered_results = {
             'per_tokenizer': {},
-            'summary': {}
         }
         
         # Filter per-tokenizer results
@@ -738,41 +924,13 @@ class UnifiedTokenizerAnalyzer:
             if filtered_tok_data:
                 filtered_results['per_tokenizer'][tok_name] = filtered_tok_data
         
-        # Recompute global summary based on filtered tokenizer summaries
-        if filtered_results['per_tokenizer']:
-            # Aggregate summary across all tokenizers for the filtered group
-            all_recall_values = []
-            all_precision_values = []
-            all_micro_f1_values = []
-            all_macro_f1_values = []
-            total_langs_evaluated = 0
-            total_samples_all = 0
-            
-            for tok_data in filtered_results['per_tokenizer'].values():
-                if 'summary' in tok_data:
-                    summary = tok_data['summary']
-                    # Use per-tokenizer averages weighted by number of languages
-                    langs_count = summary.get('languages_evaluated', 0)
-                    if langs_count > 0:
-                        all_recall_values.append(summary['avg_morphscore_recall'])
-                        all_precision_values.append(summary['avg_morphscore_precision'])
-                        all_micro_f1_values.append(summary['avg_micro_f1'])
-                        all_macro_f1_values.append(summary['avg_macro_f1'])
-                        total_langs_evaluated += langs_count
-                        total_samples_all += summary.get('total_samples', 0)
-            
-            if all_recall_values:
-                filtered_results['summary'] = {
-                    'avg_morphscore_recall': np.mean(all_recall_values),
-                    'avg_morphscore_precision': np.mean(all_precision_values),
-                    'avg_micro_f1': np.mean(all_micro_f1_values),
-                    'avg_macro_f1': np.mean(all_macro_f1_values),
-                    'total_languages_evaluated': total_langs_evaluated,
-                    'total_samples': total_samples_all,
-                    'avg_morphscore_recall_std_err': np.std(all_recall_values) / np.sqrt(len(all_recall_values)) if len(all_recall_values) > 1 else 0.0,
-                    'avg_morphscore_precision_std_err': np.std(all_precision_values) / np.sqrt(len(all_precision_values)) if len(all_precision_values) > 1 else 0.0
-                }
-        
+        # No top-level summary: MorphScoreMetrics.compute publishes none, so a
+        # group block does not invent one. The one built here averaged
+        # per-tokenizer means and summed languages_evaluated and total_samples
+        # over tokenizers, so a 9-tokenizer group over 5 languages reported
+        # total_languages_evaluated 45, a field no ungrouped block carries
+        # (RELEASE_AUDIT Q35.2 R1).
+
         # Add any metadata
         if 'metadata' in morphscore_results:
             filtered_results['metadata'] = morphscore_results['metadata']
@@ -855,14 +1013,33 @@ class UnifiedTokenizerAnalyzer:
                 for tok_name in self.tokenizer_names:
                     if tok_name in summary:
                         s = summary[tok_name]
-                        em = s.get('exact_match_rate') or 0.0
-                        cer = s.get('mean_cer')
-                        unk = s.get('unk_token_rate') or 0.0
-                        ws = s.get('whitespace_fidelity')
+                        # `or 0.0` printed the stand-in default that the null
+                        # contract removed, so a domain where every decode
+                        # failed showed EM=0.000 rather than saying nothing was
+                        # measured. SKIP is reserved for the CER budget, which
+                        # is a different reason for a null and is what
+                        # docs/METRICS.md defines it as; n/a is no denominator.
+                        skipped = bool(s.get('cer_skipped'))
+
+                        def _rate(value, places):
+                            if value is not None:
+                                return f"{value:.{places}f}"
+                            return "SKIP" if skipped else "n/a"
+
                         n = s.get('texts_analyzed', 0)
-                        cer_str = f"{cer:.4f}" if cer is not None else "SKIP"
-                        ws_str = f"{ws:.3f}" if ws is not None else "SKIP"
-                        print(f"{tok_name:20}: EM={em:.3f}  CER={cer_str}  UNK={unk:.4f}  WS={ws_str}  ({n} texts)")
+                        failures = s.get('decode_failures', 0)
+                        line = (
+                            f"{tok_name:20}: EM={_rate(s.get('exact_match_rate'), 3)}"
+                            f"  CER={_rate(s.get('mean_cer'), 4)}"
+                            f"  UNK={_rate(s.get('unk_token_rate'), 4)}"
+                            f"  WS={_rate(s.get('whitespace_fidelity'), 3)}"
+                            f"  ({n} texts)"
+                        )
+                        if failures:
+                            # Otherwise every rate above is over survivors with
+                            # nothing on the line saying texts were dropped.
+                            line += f"  [{failures} decode failure(s)]"
+                        print(line)
 
         print("\n" + "="*60)
     

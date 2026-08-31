@@ -17,7 +17,7 @@ from tokenizer_analysis.metrics.code_ast import (
 # _WHITESPACE_SIGNIFICANT_LANGS is now defined in code_ast.py (not the worker)
 from tokenizer_analysis.metrics._treesitter_worker import ERROR_SPANS_KEY
 from tokenizer_analysis.loaders.code_data import CodeDataLoader
-from tokenizer_analysis.core.input_types import TokenizedData
+from tokenizer_analysis.core.input_types import CODE_CORPUS, Corpus, TokenizedData
 
 
 # ======================================================================
@@ -60,6 +60,10 @@ def _make_instance():
     inst._special_token_cache = {}
     inst._subword_markers = None
     inst._subword_marker_cache = {}
+    # Set here rather than declared on the class. It used to be a class
+    # attribute purely so these bare instances would not raise, which meant
+    # every new attribute on the production class needed the same treatment.
+    inst._code_corpus = None
     return inst
 
 
@@ -831,14 +835,7 @@ class TestEndToEnd:
         provider = _MockProvider("char_tok", char_tok)
 
         # Build metrics with a single Python snippet
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -872,14 +869,7 @@ class TestEndToEnd:
         char_tok = _CharTokenizer()
         provider = _MockProvider("test_tok", char_tok)
 
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -911,14 +901,7 @@ class TestEndToEnd:
         char_tok = _CharTokenizer()
         provider = _MockProvider("test_tok", char_tok)
 
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -945,14 +928,7 @@ class TestEndToEnd:
         char_tok = _CharTokenizer()
         provider = _MockProvider("test_tok", char_tok)
 
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -988,14 +964,7 @@ class TestEndToEnd:
         tok = _PerfectTokenizer({snippet: tokens})
         provider = _MockProvider("perfect", tok)
 
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -1066,14 +1035,7 @@ class TestErrorSpansAreCountedNotScored:
         return n
 
     def _run(self, ts_pack):
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -1867,14 +1829,7 @@ class TestIdentifierFragmentationE2E:
         char_tok = _CharTokenizer()
         provider = _MockProvider("char_tok", char_tok)
 
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -1906,14 +1861,7 @@ class TestIdentifierFragmentationE2E:
         tok = _PerfectTokenizer({snippet: tokens})
         provider = _MockProvider("perfect", tok)
 
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -1951,14 +1899,7 @@ class TestIndentationConsistencyE2E:
         char_tok = _CharTokenizer()
         provider = _MockProvider("char_tok", char_tok)
 
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -1986,14 +1927,7 @@ class TestIndentationConsistencyE2E:
         char_tok = _CharTokenizer()
         provider = _MockProvider("char_tok", char_tok)
 
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -2032,14 +1966,7 @@ class TestIndentationConsistencyE2E:
         tok = _PerfectTokenizer({snippet: tokens})
         provider = _MockProvider("perf", tok)
 
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -2092,14 +2019,7 @@ class TestIndentationConsistencyE2E:
         tok = _PerfectTokenizer({snippet: tokens})
         provider = _MockProvider("const_ws", tok)
 
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -2140,14 +2060,7 @@ class TestIndentationConsistencyE2E:
         tok = _PerfectTokenizer({snippet: tokens})
         provider = _MockProvider("inv", tok)
 
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -2180,14 +2093,7 @@ class TestIndentationConsistencyE2E:
         tok = _PerfectTokenizer({snippet: tokens})
         provider = _MockProvider("shallow", tok)
 
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -2231,14 +2137,7 @@ class TestIndentationConsistencyE2E:
         tok = _PerfectTokenizer({snippet: tokens})
         provider = _MockProvider("prop", tok)
 
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -2517,14 +2416,7 @@ class TestWhitespaceStrippingTokenizer:
         tok = _WSStrippingTokenizer(tokens, offsets)
         provider = _MockProvider("ws_strip", tok)
 
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -2609,14 +2501,7 @@ class TestIndentationConsistencyBPE:
         tok = _PerfectTokenizer({snippet: tokens})
         provider = _MockProvider("bpe", tok)
 
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -2646,14 +2531,7 @@ class TestIndentationConsistencyBPE:
         tok = _PerfectTokenizer({snippet: tokens})
         provider = _MockProvider("bpe_uni", tok)
 
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -2697,14 +2575,7 @@ class TestIndentationConsistencyBPE:
         tok = _PerfectTokenizer({snippet: tokens})
         provider = _MockProvider("bpe_const", tok)
 
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -2759,14 +2630,7 @@ class TestIndentationConsistencySP:
         tok = _PerfectTokenizer({snippet: tokens})
         provider = _MockProvider("sp", tok)
 
-        inst = object.__new__(ASTBoundaryMetrics)
-        inst._tokenizer_vocab_cache = {}
-        inst._warned_tokenizers = set()
-        inst._char_decode_table = None
-        inst._special_tokens = None
-        inst._special_token_cache = {}
-        inst._subword_markers = None
-        inst._subword_marker_cache = {}
+        inst = _make_instance()
         inst._treesitter_available = True
         inst._ts_pack = ts_pack
         inst._parser_cache = {}
@@ -3343,3 +3207,475 @@ class TestFastMethodsParity:
             assert ASTBoundaryMetrics._count_identifier_tokens_fast(
                 c_start, c_end, s2r_arr, c2t_arr, c2t_len
             ) is None
+
+
+# ======================================================================
+# One encoding of the registered code corpus per run
+# ======================================================================
+
+class TestTheCodeCorpusIsEncodedOncePerRun:
+    """The registered code corpus is encoded once, not once per metric.
+
+    ASTBoundaryMetrics and DigitBoundaryMetrics both measure the code corpus.
+    Each used to encode it itself, so a run with both active encoded every
+    snippet twice. Both now read the encoding the provider memoizes.
+    """
+
+    @pytest.fixture(scope="class")
+    def ts_pack(self):
+        try:
+            import tree_sitter_language_pack
+            return tree_sitter_language_pack
+        except ImportError:
+            pytest.skip("tree-sitter-language-pack not installed")
+
+    def test_both_metrics_read_one_encoding_of_each_snippet(self, ts_pack):
+        from collections import Counter
+
+        from tokenizer_analysis.core.input_types import (
+            CODE_CORPUS, MATH_CORPUS, Corpus,
+        )
+        from tokenizer_analysis.metrics.math import DigitBoundaryMetrics
+
+        class _CountingCharTokenizer(_CharTokenizer):
+            """Records every text it is asked to encode."""
+
+            def __init__(self):
+                super().__init__()
+                self.encoded_texts = []
+
+            def encode_with_offsets(self, text):
+                self.encoded_texts.append(text)
+                return super().encode_with_offsets(text)
+
+            def get_vocab_size(self):
+                return 256
+
+        code_texts = {
+            "python": [
+                "def add(a, b):\n    return a + b\n",
+                "total = 12 + 345\n",
+            ],
+        }
+        tokenizer = _CountingCharTokenizer()
+        provider = _MockProvider("tok", tokenizer)
+        provider.add_corpus(Corpus(
+            name=CODE_CORPUS, texts=code_texts,
+            source="test code", synthetic=False,
+        ))
+        provider.add_corpus(Corpus(
+            name=MATH_CORPUS, texts={MATH_CORPUS: ["12 + 345 = 357"]},
+            source="test math", synthetic=False,
+        ))
+
+        ast_result = ASTBoundaryMetrics(provider).compute()
+        digit_result = DigitBoundaryMetrics(provider).compute()
+
+        counts = Counter(tokenizer.encoded_texts)
+        assert [counts[text] for text in code_texts["python"]] == [1, 1], (
+            "each code snippet is encoded once for the whole run"
+        )
+
+        # Both metrics have to have measured something, or the count above is
+        # one because a metric produced nothing rather than because the two
+        # share an encoding.
+        ast = ast_result["ast_boundary_alignment"]
+        assert "error" not in ast
+        assert ast["per_tokenizer"]["tok"]["overall"]["count"] > 0
+        code_domain = (
+            digit_result["operator_isolation_rate"]["by_domain"][CODE_CORPUS]
+        )
+        assert code_domain["summary"]["tok"]["total_operators"] > 0
+
+
+class TestSharedCodeEncodingsArePairedByTextNotByRecordOrder:
+    """_shared_code_encodings's lookup is keyed by (language, text), never by
+    position in the encoded list.
+
+    compute() now applies the same ``text and text.strip()`` filter as
+    InputProvider._encode_corpus, so within this package the two lists agree in
+    order and in length and a positional lookup would happen to work. That
+    agreement is a property of the two filters matching, not something the
+    lookup relies on: ``get_corpus_data`` is public, and a provider that returns
+    the same records in another order is a correct provider.
+
+    Reversing the records is the smallest way to make the two disagree. With
+    the lookup keyed by text every snippet still finds its own encoding; keyed
+    by position, each would be scored against another snippet's tokens and
+    nothing in the results would show it.
+    """
+
+    @pytest.fixture(scope="class")
+    def ts_pack(self):
+        try:
+            import tree_sitter_language_pack
+            return tree_sitter_language_pack
+        except ImportError:
+            pytest.skip("tree-sitter-language-pack not installed")
+
+    def test_records_returned_in_reverse_order_are_still_matched_correctly(
+        self, ts_pack,
+    ):
+        from tokenizer_analysis.core.input_types import CODE_CORPUS, Corpus
+
+        # Deliberately different lengths. The alignment rate alone cannot tell
+        # the two apart: the char tokenizer emits one token per character, so
+        # every span lands on a token boundary whichever snippet's encoding is
+        # used. What does differ is coverage, because the shorter encoding does
+        # not reach the end of the longer snippet, so the spans past it become
+        # unmappable.
+        code_texts = {
+            "python": [
+                "def calculate_total_amount(first_value, second_value):\n"
+                "    return first_value + second_value\n",
+                "x = 1\n",
+            ],
+        }
+
+        class _ReversedOrderProvider(_MockProvider):
+            def get_corpus_data(self, name):
+                data = super().get_corpus_data(name)
+                return {tok: list(reversed(records)) for tok, records in data.items()}
+
+        def _overall(provider_cls):
+            provider = provider_cls("tok", _CharTokenizer())
+            provider.add_corpus(Corpus(
+                name=CODE_CORPUS, texts=code_texts,
+                source="test code", synthetic=False,
+            ))
+            results = ASTBoundaryMetrics(provider).compute()
+            return results["ast_boundary_alignment"]["per_tokenizer"]["tok"]["overall"]
+
+        in_order = _overall(_MockProvider)
+        reversed_order = _overall(_ReversedOrderProvider)
+
+        assert reversed_order == in_order, (
+            "the order a provider returns its records in must not change what "
+            "is measured; pairing by position scores each snippet against the "
+            "other one's tokens"
+        )
+        assert in_order["unmappable"] == 0, (
+            "every span should map, so a non-zero count in the reversed case "
+            "is what the comparison above would catch"
+        )
+
+    def test_a_snippet_with_no_encoding_still_raises(self, ts_pack):
+        """The loud error stays for a miss the filters cannot explain."""
+        from tokenizer_analysis.core.input_types import CODE_CORPUS, Corpus
+
+        class _DropsOneProvider(_MockProvider):
+            def get_corpus_data(self, name):
+                data = super().get_corpus_data(name)
+                return {tok: records[:-1] for tok, records in data.items()}
+
+        provider = _DropsOneProvider("tok", _CharTokenizer())
+        provider.add_corpus(Corpus(
+            name=CODE_CORPUS,
+            texts={"python": ["def add(a, b):\n    return a + b\n",
+                              "total = 12 + 345\n"]},
+            source="test code", synthetic=False,
+        ))
+
+        with pytest.raises(ValueError, match="holds no encoding"):
+            ASTBoundaryMetrics(provider).compute()
+
+
+class TestASTMetricsRefuseAConfigTheRegisteredCorpusWouldOverride:
+    """The AST metrics take their code from the registry or from code_config.
+
+    When a run has registered a code corpus, the registry used to win and
+    code_config was dropped without a word, along with max_snippets_per_lang
+    and max_snippet_chars. A caller who named real paths while the bundled
+    synthetic samples were registered got ast_boundary_alignment,
+    identifier_fragmentation and indentation_consistency measured on synthetic
+    code and reported under the name of their own corpus. The measured gap
+    between the two is 0.562 full alignment on synthetic against 0.493 on
+    StarCoder for the same tokenizer, so the substitution is not cosmetic.
+
+    UnifiedTokenizerAnalyzer passes neither the config nor the caps, because it
+    registers the corpus they would have built.
+    """
+
+    def _provider_with_registered_code(self, texts=None):
+        from tokenizer_analysis.core.input_providers import RawTokenizationProvider
+        from tokenizer_analysis.core.input_types import InputSpecification
+
+        class _Tok:
+            def can_encode(self): return True
+            def encode(self, t): return [ord(c) for c in t]
+            def encode_with_offsets(self, t):
+                return self.encode(t), [(i, i + 1) for i in range(len(t))]
+            def get_vocab_size(self): return 100
+
+        provider = RawTokenizationProvider({
+            "tok": InputSpecification(tokenizer=_Tok(), texts={"eng_Latn": ["hi"]}),
+        })
+        provider.add_corpus(Corpus(
+            name=CODE_CORPUS, texts=texts or {"python": ["x = 1\n"]},
+            source="bundled samples", synthetic=True,
+        ))
+        return provider
+
+    def test_a_code_config_alongside_a_registered_corpus_raises(self):
+        provider = self._provider_with_registered_code()
+
+        with pytest.raises(ValueError, match="already registered"):
+            ASTBoundaryMetrics(
+                provider, code_config={"python": "/some/real/corpus"},
+            )
+
+    def test_the_caps_are_accepted_because_they_bound_rather_than_select(self):
+        """max_snippets_per_lang still bounds the registered corpus.
+
+        Only code_config selects which corpus is measured. get_code_snippets
+        re-applies max_snippets_per_lang to whatever the loader holds, and
+        resolve_code_corpus applies neither cap on the synthetic path, so this
+        is where the bundled samples get bounded. Refusing the caps alongside a
+        registered corpus moved ast_boundary_alignment.global.count from 4512
+        to 7018 on the default configuration.
+        """
+        provider = self._provider_with_registered_code(
+            texts={"python": ["x = 1\n", "y = 2\n"]},
+        )
+
+        metrics = ASTBoundaryMetrics(provider, max_snippets_per_lang=1)
+        assert metrics.code_loader.get_code_snippets("python") == ["x = 1\n"]
+
+    def test_the_metric_reports_the_truncation_its_corpus_actually_got(self):
+        """max_snippet_chars read back the loader default, not the real value.
+
+        The loader that applied the caps is built and discarded inside
+        resolve_code_corpus, so this metric constructed a second loader with
+        no caps and reported its default. A reader of
+        ASTBoundaryMetrics.max_snippet_chars, or of the three cap counters on
+        code_loader, saw 0 and {} however much the caps had removed.
+        """
+        from tokenizer_analysis.core.input_types import CorpusCaps
+
+        provider = self._provider_with_registered_code()
+        corpus = provider.get_corpus(CODE_CORPUS)
+        provider._corpora[CODE_CORPUS] = Corpus(
+            name=CODE_CORPUS, texts=dict(corpus.texts), source=corpus.source,
+            synthetic=corpus.synthetic,
+            caps=CorpusCaps(
+                max_snippets_per_lang=2, max_snippet_chars=400,
+                dropped_file_counts={"python": 3},
+                truncated_char_counts={"python": 1200},
+                dropped_whitespace_only_counts={"python": 1},
+            ),
+        )
+
+        metrics = ASTBoundaryMetrics(provider)
+
+        assert metrics.max_snippet_chars == 400
+        assert metrics.code_loader.dropped_file_counts == {"python": 3}
+        assert metrics.code_loader.truncated_char_counts == {"python": 1200}
+        assert metrics.code_loader.dropped_whitespace_only_counts == {"python": 1}
+
+    def test_a_corpus_with_no_cap_record_leaves_the_loader_defaults(self):
+        """A hand-built corpus carries no caps, and must not be misreported."""
+        provider = self._provider_with_registered_code()
+
+        metrics = ASTBoundaryMetrics(provider)
+
+        assert metrics.max_snippet_chars == 0
+        assert metrics.code_loader.dropped_file_counts == {}
+
+    def test_no_arguments_reads_the_registered_corpus(self):
+        """The path UnifiedTokenizerAnalyzer takes."""
+        provider = self._provider_with_registered_code()
+
+        metrics = ASTBoundaryMetrics(provider)
+        assert metrics.code_loader.get_code_snippets("python") == ["x = 1\n"]
+        assert metrics._code_corpus.source == "bundled samples"
+
+
+class TestAnEmptyRegisteredCorpusIsRefused:
+    """A registered 'code' corpus holding no texts raises at construction.
+
+    code_corpus_from_texts drops a label whose list is empty, so
+    code_texts={"python": []} registers a corpus with no texts at all.
+    Publishing empty per-tokenizer blocks for it would read as a corpus that
+    scored nothing rather than one that was never there. Pinned because
+    disabling the guard in ASTBoundaryMetrics.__init__ passed the whole
+    suite (RELEASE_AUDIT Q35.4).
+    """
+
+    def test_construction_raises_naming_the_empty_corpus(self):
+        from tokenizer_analysis.loaders.corpora import code_corpus_from_texts
+
+        provider = _MockProvider("tok", MockTokenizer({}))
+        provider.add_corpus(code_corpus_from_texts({"python": []}))
+        with pytest.raises(ValueError, match="holds no texts"):
+            ASTBoundaryMetrics(provider)
+
+
+class TestAnEmptyListLabelDoesNotPassTheEmptyCorpusGuard:
+    """`Corpus.__post_init__` keeps a label whose list is empty as an empty
+    tuple, so `code_snippets` is a non-empty dict of empty lists and a
+    truthiness check on the dict is True. The metrics then construct, run, and
+    publish empty per-tokenizer blocks with no error.
+
+    code_corpus_from_texts drops such a label, which is why the Q30 scenario
+    is covered; a Corpus built by hand is not.
+    """
+
+    def _provider(self, texts):
+        from tokenizer_analysis.core.input_providers import RawTokenizationProvider
+        from tokenizer_analysis.core.input_types import InputSpecification
+
+        class _Tok:
+            def can_encode(self): return True
+            def encode(self, t): return [ord(c) for c in t]
+            def encode_with_offsets(self, t):
+                return self.encode(t), [(i, i + 1) for i in range(len(t))]
+            def get_vocab_size(self): return 100
+
+        provider = RawTokenizationProvider({
+            "tok": InputSpecification(tokenizer=_Tok(), texts={"eng_Latn": ["hi"]}),
+        })
+        provider.add_corpus(Corpus(name=CODE_CORPUS, texts=texts,
+                                   source="hand built", synthetic=False))
+        return provider
+
+    def test_a_label_holding_an_empty_list_is_refused(self):
+        provider = self._provider({"python": []})
+        with pytest.raises(ValueError, match="holds no texts"):
+            ASTBoundaryMetrics(provider)
+
+    def test_a_label_holding_a_text_still_constructs(self):
+        """The benign half, so the guard cannot become "always refuse"."""
+        provider = self._provider({"python": ["x = 1\n"]})
+        metrics = ASTBoundaryMetrics(provider)
+        assert metrics.code_loader.get_code_snippets("python") == ["x = 1\n"]
+
+
+class TestTheClassCarriesNoInstanceStateForTheTestsSake:
+    """`_code_corpus` was declared on the class so that tests building the
+    object with `object.__new__`, which skips the constructor, would not fail.
+
+    That made every future attribute on this class need the same treatment: add
+    one without a class-level default and 24 tests break. The tests set what
+    they need through a helper instead, so the class carries no state on its
+    behalf.
+    """
+
+    def test_the_corpus_is_set_on_the_instance_not_the_class(self):
+        assert not hasattr(ASTBoundaryMetrics, "_code_corpus"), (
+            "a class-level default here means the tests are dictating the "
+            "shape of the production class"
+        )
+
+    def test_a_real_instance_still_has_it(self):
+        from tokenizer_analysis.core.input_providers import RawTokenizationProvider
+        from tokenizer_analysis.core.input_types import InputSpecification
+
+        class _Tok:
+            def can_encode(self): return True
+            def encode(self, t): return [ord(c) for c in t]
+            def encode_with_offsets(self, t):
+                return self.encode(t), [(i, i + 1) for i in range(len(t))]
+            def encode_batch_with_offsets(self, ts):
+                return [self.encode_with_offsets(t) for t in ts]
+            def get_vocab_size(self): return 100
+
+        provider = RawTokenizationProvider({
+            "tok": InputSpecification(tokenizer=_Tok(), texts={"eng_Latn": ["hi"]}),
+        })
+        metrics = ASTBoundaryMetrics(provider)
+        assert "_code_corpus" in metrics.__dict__
+
+
+class TestTheAbortHappensBeforeTheParsing:
+    """The check that can stop this metric ran after every snippet had been
+    parsed in per-language subprocesses. On the 1500-file corpus a run did all
+    that work and threw it away.
+
+    The check rejects a tokenizer that says it can encode but has no entry in
+    the encoded corpus. It reads only the tokenizer list and the registered
+    corpus, both known before any parsing.
+
+    Nothing exercised this abort before, so building the scenario is most of
+    the test. A per-snippet miss is a different failure, raised later while
+    scoring, and moving this check does not affect it.
+    """
+
+    def test_no_snippet_is_parsed_before_the_abort(self, monkeypatch):
+        from tokenizer_analysis.core.input_types import CODE_CORPUS, Corpus
+        from tokenizer_analysis.metrics import code_ast as code_ast_module
+
+        class _EncodesNothingProvider(_MockProvider):
+            def get_corpus_data(self, name):
+                # The tokenizer says it can encode, and the corpus comes back
+                # with no entry for it at all.
+                return {}
+
+        provider = _EncodesNothingProvider("tok", _CharTokenizer())
+        provider.add_corpus(Corpus(
+            name=CODE_CORPUS,
+            texts={"python": ["def add(a, b):\n    return a + b\n"]},
+            source="test code", synthetic=False,
+        ))
+
+        calls = []
+        real = code_ast_module.parse_snippets_fenced
+        monkeypatch.setattr(
+            code_ast_module, "parse_snippets_fenced",
+            lambda *a, **k: (calls.append(1), real(*a, **k))[1],
+        )
+
+        with pytest.raises(ValueError, match="can_encode"):
+            ASTBoundaryMetrics(provider).compute()
+
+        assert calls == [], (
+            "the corpus was parsed before the check that rejected it"
+        )
+
+
+class TestEachEmptyCorpusCheckDoesItsOwnThing:
+    """Four sites test the same condition and do four different things. Only
+    the first had a test, and reverting any of the other three left the whole
+    file passing.
+
+    They are not copies of one guard: two raise with different messages, one
+    falls back to the bundled samples, and one returns an error block instead
+    of raising. A test written as though they were the same would be wrong
+    about three of them.
+    """
+
+    def test_a_code_config_that_reads_nothing_names_the_config(self, tmp_path):
+        """Distinct from the registered-corpus case: this one names the paths
+        the caller gave, because the caller can act on that.
+        """
+        empty = tmp_path / "nothing"
+        empty.mkdir()
+        provider = _MockProvider("tok", _CharTokenizer())
+
+        with pytest.raises(ValueError, match="no snippet was read"):
+            ASTBoundaryMetrics(provider, code_config={"python": str(empty)})
+
+    def test_no_code_config_falls_back_to_the_bundled_samples(self):
+        """Not a guard at all. With nothing registered and no config, the
+        bundled samples are the documented input, so this site fills them in
+        rather than refusing.
+        """
+        provider = _MockProvider("tok", _CharTokenizer())
+        metrics = ASTBoundaryMetrics(provider)
+        assert metrics.code_loader.code_snippets, "the samples should be loaded"
+        assert "python" in metrics.code_loader.code_snippets
+
+    def test_computing_with_nothing_loaded_reports_rather_than_raises(self):
+        """The fourth site is reached after construction, so it returns a
+        result saying nothing was measured instead of raising.
+        """
+        inst = _make_instance()
+        inst.input_provider = _MockProvider("tok", _CharTokenizer())
+        inst.tokenizer_names = ["tok"]
+        inst._treesitter_available = True
+        inst._ts_pack = None
+        inst._parser_cache = {}
+        inst.code_loader = CodeDataLoader(None)
+        inst.code_loader.code_snippets = {"python": []}
+
+        results = inst.compute()
+        assert results["ast_boundary_alignment"]["error"] == "No code data loaded"

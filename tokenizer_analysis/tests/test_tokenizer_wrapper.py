@@ -40,6 +40,13 @@ _CORPUS = [
 _TEST_TEXT = "Hello world, this is a test."
 _TEST_TEXT_MULTI = "Die Relativitätstheorie ist wichtig."
 
+# Code- and math-shaped texts: the two corpora the batch-encoding refactor
+# shares. Leading indentation and a long digit run are exactly the shapes
+# a pretokenizer's whitespace- and digit-splitting rules are most likely to
+# treat differently from the plain-prose texts above.
+_CODE_TEXT = "    if x:\n        return foo(x, y)\n"
+_MATH_TEXT = "The sum is 314159265358979323846264338327950288 exactly."
+
 # Offset inputs, written with escapes so the composition is unambiguous in the
 # source rather than depending on how this file was saved.
 _NFD_CAFE = "cafe\u0301"           # 5 characters; NFC composes them into 4
@@ -203,6 +210,43 @@ class TestEncodeConsistency:
             assert ids_plain == ids_offsets, (
                 f"{wrapper.get_name()}: encode() and encode_with_offsets() "
                 f"returned different IDs for {text!r}"
+            )
+
+    @pytest.mark.parametrize("wrapper_name", ALL_WRAPPER_FIXTURES)
+    def test_batch_ids_match_single_encode(self, wrapper_name, request):
+        """encode_batch_with_offsets() must agree with encode() and with
+        encode_with_offsets(), text by text, in one batch call.
+
+        A metrics refactor is about to make reconstruction-fidelity and
+        fertility read their ids from encode_batch_with_offsets() instead of
+        encode(). If a wrapper's batch path (a native tokenizers.Tokenizer
+        .encode_batch call, a transformers fast-tokenizer batched __call__,
+        or the base class's per-text loop) ever returned ids out of order,
+        for the wrong text, or offsets misaligned with the per-text offsets
+        encode_with_offsets() reports, published token counts and
+        reconstructed text would silently start describing a different text
+        than the one that produced them.
+        """
+        wrapper = request.getfixturevalue(wrapper_name)
+        texts = [_TEST_TEXT, _TEST_TEXT_MULTI, _CODE_TEXT, _MATH_TEXT]
+
+        batch_results = wrapper.encode_batch_with_offsets(texts)
+        assert len(batch_results) == len(texts)
+
+        for i, text in enumerate(texts):
+            batch_ids, batch_offsets = batch_results[i]
+            assert batch_ids == wrapper.encode(text), (
+                f"{wrapper.get_name()}: encode_batch_with_offsets()[{i}][0] "
+                f"!= encode(texts[{i}]) for {text!r}"
+            )
+            # Some wrappers (e.g. when alignment cannot be established) return
+            # None offsets for a given text; that must match single-text
+            # encode_with_offsets() exactly, None included, without weakening
+            # the id check above.
+            _single_ids, single_offsets = wrapper.encode_with_offsets(text)
+            assert batch_offsets == single_offsets, (
+                f"{wrapper.get_name()}: batch offsets for texts[{i}] "
+                f"({text!r}) != encode_with_offsets(texts[{i}])[1]"
             )
 
 
@@ -1488,3 +1532,39 @@ class TestUniMixLMResolvesThroughItsBaseTokenizer:
         assert wrapper.pretokenize_with_spans("hello") is None
         with pytest.raises(NotImplementedError):
             wrapper.pretokenize("hello")
+
+
+class TestUniMixLMBatchEncodingIsPairedWithTheRightText:
+    """UniMixLMTokenizer.encode_batch_with_offsets() must return result i for
+    text i, same as every other wrapper's batch path.
+
+    UniMixLM is not one of ALL_WRAPPER_FIXTURES, so
+    TestEncodeConsistency.test_batch_ids_match_single_encode -- the test that
+    checks exactly this pairing for every other wrapper -- never runs against
+    it. Its override always falls back to a per-text loop rather than a
+    tokenizers.Tokenizer.encode_batch call (langspec needs the per-text
+    scoring; non-langspec does not, but the override does not distinguish
+    the two), so this pins that the loop's output stays in the input order.
+    If it were ever reversed or otherwise reordered, the ids returned for
+    texts[i] would silently belong to a different text -- code and math
+    reconstruction fidelity, which read exactly these ids, would then score
+    every code and math text against another text's tokens.
+    """
+
+    def test_batch_results_are_in_the_same_order_as_the_input_texts(
+        self, trained_hf_tokenizer,
+    ):
+        from tokenizer_analysis.core.tokenizer_wrapper import UniMixLMTokenizer
+
+        wrapper = UniMixLMTokenizer("test-unimix", trained_hf_tokenizer, {})
+        texts = [_TEST_TEXT, _TEST_TEXT_MULTI, _CODE_TEXT, _MATH_TEXT]
+
+        batch_results = wrapper.encode_batch_with_offsets(texts)
+        assert len(batch_results) == len(texts)
+
+        for i, text in enumerate(texts):
+            batch_ids, _batch_offsets = batch_results[i]
+            assert batch_ids == wrapper.encode(text), (
+                f"encode_batch_with_offsets()[{i}][0] != encode(texts[{i}]) "
+                f"for {text!r}; the batch result is paired with the wrong text"
+            )

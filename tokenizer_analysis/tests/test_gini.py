@@ -269,3 +269,51 @@ class TestPerLineNormalization:
         text = md["per_line_normalization"]
         assert "same line count" in text
         assert "not sufficient" in text
+
+
+class TestTheSingleLanguageBranchCarriesEveryKey:
+    """The branch for a group with fewer than two languages carries a comment
+    saying every block must have the same keys, "present and null, not absent",
+    and then omits seven of them.
+
+    The slim results writer reads these with `.get()`, which turns a missing
+    key into a null, so the slim file invented fields the metric never produced
+    and stopped being a subset of the full file.
+
+    Only one of the seven is genuinely undefined. With one language the
+    smallest and largest cost are that language's value, their ratio is 1.0,
+    and the most and least efficient language are both that one. Publishing
+    null for a computable number is the mistake this project removed once
+    already.
+    """
+
+    @staticmethod
+    def _blocks():
+        from tokenizer_analysis.metrics.gini import TokenizerGiniMetrics
+        one = TokenizerGiniMetrics._fairness_block("tok", {"eng": 0.5})
+        two = TokenizerGiniMetrics._fairness_block("tok", {"eng": 0.5, "deu": 1.5})
+        return one, two
+
+    def test_the_single_language_block_carries_every_key_the_other_does(self):
+        """Plus `warning`, which explains why the coefficient is null. A
+        consumer indexing a block should never have to test for existence.
+        """
+        one, two = self._blocks()
+        assert set(two) - set(one) == set(), set(two) - set(one)
+        assert set(one) - set(two) == {"warning"}
+
+    def test_only_the_standard_deviation_is_undefined(self):
+        one, _ = self._blocks()
+        assert one["std_cost"] is None, "one value has no spread"
+        assert one["min_cost"] == 0.5
+        assert one["max_cost"] == 0.5
+        assert one["cost_ratio"] == 1.0
+        assert one["most_efficient_language"] == ("eng", 0.5)
+        assert one["least_efficient_language"] == ("eng", 0.5)
+        assert one["sorted_language_costs"] == [("eng", 0.5)]
+
+    def test_the_coefficient_itself_stays_undefined(self):
+        """The benign half: the fix must not start inventing a coefficient."""
+        one, _ = self._blocks()
+        assert one["gini_coefficient"] is None
+        assert "warning" in one
