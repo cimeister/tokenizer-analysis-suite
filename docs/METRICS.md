@@ -322,7 +322,7 @@ tokenization of numbers. Disable with `--no-digit-boundary`.
 > domain running on the bundled samples. `--no-digit-boundary` drops
 > `operator_isolation_rate` along with the three digit metrics.
 >
-> See [the fuller invocation](../README.md#three-defaults-to-change-before-publishing-a-number) for the invocation
+> See [the fuller invocation](../README.md#settings-that-change-what-is-measured) for the invocation
 > that supplies math data.
 
 ### Three-digit place-value boundary alignment (`three_digit_boundary_alignment`)

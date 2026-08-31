@@ -7,7 +7,8 @@ it is intact. A tokenizer that loses text, holds vocabulary entries no input can
 produce, or encodes the same string two ways will still produce a full set of
 metrics, and none of those metrics will say so.
 
-See [../README.md](../README.md) for the other two commands,
+See [../README.md](../README.md) for `tokenizer-analysis` and
+`tokenizer-visualize`,
 [METRICS.md](METRICS.md) for what `tokenizer-analysis` measures, and
 [VISUALIZATION.md](VISUALIZATION.md) for the plotting and LaTeX tools.
 

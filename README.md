@@ -1,16 +1,15 @@
 # TokEval
 
 A toolkit for computing intrinsic quality metrics for tokenizers across natural
-language, code, and math.
+language, code and math.
 
 The metrics, and the pretraining experiments that check which of them predict
 downstream behaviour, are described in
-[TokEval: A Tokenizer Evaluation Suite](https://arxiv.org/abs/2608.18062).
+[TokEval: A Tokenizer Evaluation Suite](https://arxiv.org/abs/2608.18062)
+(COLM 2026).
 
-**New:** the library also ships a tokenizer health checker and a visualization
-module, documented in [docs/SANITY_CHECKS.md](docs/SANITY_CHECKS.md) and
-[docs/VISUALIZATION.md](docs/VISUALIZATION.md). Both are described under
-[The other two commands](#the-other-two-commands).
+Installing the package puts three commands on the path:
+`tokenizer-analysis`, `tokenizer-visualize` and `tokenizer-sanity-check`.
 
 This supersedes `tokenizer-analysis-suite`. The install name changed to
 `tokenizer-intrinsic-evals`; the import name is still `tokenizer_analysis`. The
@@ -23,11 +22,11 @@ from the old suite are not comparable with numbers from this one:
 
 - [Install](#install)
 - [Quick Start](#quick-start)
-- [What it measures](#what-it-measures)
-- [Running it on your own data](#running-it-on-your-own-data)
+- [The metrics](#the-metrics)
+- [Running on your own data](#running-on-your-own-data)
 - [Reading the output](#reading-the-output)
-- [The other two commands](#the-other-two-commands)
-- [A worked comparison](#a-worked-comparison)
+- [`tokenizer-visualize` and `tokenizer-sanity-check`](#tokenizer-visualize-and-tokenizer-sanity-check)
+- [Results for nine open-source tokenizers](#results-for-nine-open-source-tokenizers)
 - [Troubleshooting](#troubleshooting)
 - [Contributing](#contributing)
 - [Documents](#documents)
@@ -53,12 +52,12 @@ uv sync
 ```
 
 `uv run` puts the console scripts on the path; activate the venv instead if you
-prefer, and drop the prefix. That is enough for the Quick Start.
+prefer, and drop the prefix.
 
 Not published to PyPI. To use it as a dependency rather than working in the
 checkout, `pip install git+https://github.com/cimeister/tokenizer-intrinsic-evals.git`.
-The demo data and the example configs are in the checkout and not in the
-installable package, so a checkout is needed for those.
+The demo data and the example configs are not in the installable package.
+Use a checkout for those.
 
 MorphScore, parquet input and the FLORES+ fetcher are optional extras with an
 install order that matters: see
@@ -72,7 +71,7 @@ from the Hugging Face Hub on first use; both are public.
 ```bash
 cat > corpus.txt <<'CORPUS'
 The quick brown fox jumps over the lazy dog.
-Tokenizers differ most on text they were not trained on.
+नई दिल्ली भारत की राजधानी है।
 def compute_total(items): return sum(i.price for i in items)
 The invoice totalled 1234567 euros on 2024-03-15.
 CORPUS
@@ -89,7 +88,7 @@ uv run tokenizer-analysis --tokenizer-config my_tokenizers.json --input corpus.t
 
 Results are written to `results/analysis_results.json`, with plots beside it.
 
-## What it measures
+## The metrics
 
 Eighteen metrics. One line each below; the definition, worked example and
 caveats for each are in [docs/METRICS.md](docs/METRICS.md), and the exact key
@@ -120,7 +119,7 @@ path for each headline value is in
 "Better" gives the direction for the quantity as defined. "neither" marks a
 metric that describes a tokenizer without ranking it.
 
-## Running it on your own data
+## Running on your own data
 
 `--input` takes one file (`.txt`, `.json`, `.jsonl`, `.parquet`) or a directory
 of them. A `.txt` file is one document per line. For several corpora at once,
@@ -131,10 +130,12 @@ A tokenizer `path` is either a Hub model id or a local `tokenizer.json`. Ten
 tokenizer classes are supported; see
 [Tokenizer Configuration](docs/CONFIGURATION.md#tokenizer-configuration).
 
-### Three defaults to change before publishing a number
+### Settings that change what is measured
 
-Three things stay at their defaults in the Quick Start command. That is fine
-for a first look and not for a result you intend to report.
+The Quick Start command uses the default code corpus, the default math corpus
+and the default character error rate budget. Each of the three changes what the
+metrics are computed on, so numbers from that command are not comparable with
+numbers from the command below.
 
 ```bash
 uv run tokenizer-analysis \
@@ -171,8 +172,8 @@ uv run python scripts/fetch_flores.py                              # 13 language
 uv run python scripts/fetch_flores.py --all                        # every language
 ```
 
-A run that names a missing file aborts and repeats that command. It never
-proceeds on a smaller corpus than the config asked for. Nothing in the library
+A run that names a missing file aborts with an error that prints the fetch
+command above. It never proceeds on a smaller corpus than the config declares. Nothing in the library
 requires FLORES+: `--input` and `--language-config` take your own corpus.
 
 ## Reading the output
@@ -192,7 +193,7 @@ not be computed is `null`, never `0.0`.
 [docs/OUTPUT.md](docs/OUTPUT.md) describes the schema, the aggregation labels,
 the null convention and the `run_metadata` provenance block.
 
-## The other two commands
+## `tokenizer-visualize` and `tokenizer-sanity-check`
 
 **`tokenizer-visualize`** renders token boundaries on source text, for
 inspecting how tokenizers split code, math and multilingual content.
@@ -213,26 +214,46 @@ uv run tokenizer-sanity-check huggingface:tokenizers/bpe.json
 Both bundled demo tokenizers fail this check on purpose: `bpe.json` and
 `unigramlm.json` each cover 94 of 256 byte values. `unigramlm.json` also logs a
 warning that it cannot report its declared special tokens, so the check falls
-back to the 13 generic ones; that is expected for this file and not a second
-defect. They exist so the check has something to report.
+back to the 13 generic ones. That follows from the same file and is
+expected.
 
-[docs/SANITY_CHECKS.md](docs/SANITY_CHECKS.md) documents all 16 checks, what
-each severity means, and the flags. [docs/VISUALIZATION.md](docs/VISUALIZATION.md)
+[docs/SANITY_CHECKS.md](docs/SANITY_CHECKS.md) documents the 16 checks, the
+five severities and the exit codes. [docs/VISUALIZATION.md](docs/VISUALIZATION.md)
 covers `tokenizer-visualize`, the metric plots and the LaTeX table generator.
 
-## A worked comparison
+## Results for nine open-source tokenizers
 
-[benchmarks/open_source/REPORT.md](benchmarks/open_source/REPORT.md) measures
-nine widely used tokenizers on 13 FLORES+ languages, 1500 source files across
-15 programming languages, and the bundled math corpus. One command regenerates
-it:
+[benchmarks/open_source/REPORT.md](benchmarks/open_source/REPORT.md) has the
+full metric set for nine open-source tokenizers on 13 FLORES+ languages of
+translated news, 1500 source files across 15 programming languages, and the 285
+bundled math expressions. Three of its results:
+
+Pooled over the 13 languages, bytes per token ranges from 2.036 for GPT-2 to
+5.067 for XLM-RoBERTa base. On English alone the order reverses: GPT-2 is
+highest at 4.805 and XLM-RoBERTa base lowest at 4.263. Vocabulary size is not
+held constant across the nine: it correlates with bytes per token at Spearman
+0.883.
+
+The Gini coefficient over per-byte costs and the Gini coefficient over per-line
+costs correlate at Spearman 0.650 over the nine, and the two orderings differ at
+the top. Llama 3 has the lowest per-byte coefficient, 0.0772, and a per-line
+coefficient of 0.0926. XLM-RoBERTa base has the lowest per-line coefficient,
+0.0494, and a per-byte coefficient of 0.0976. The per-line coefficient is
+published only when every language has the same line count, which is the case for
+FLORES+.
+
+An operator isolation rate of 1.000 does not mean compound operators are kept
+whole. BERT base uncased has an isolation rate of 1.000 and a compound
+preservation rate of 0.000 over 88,398 compound operators such as `==` and
+`->`, where the other eight range from 0.844 to 0.997.
 
 ```bash
 bash benchmarks/open_source/run.sh
 ```
 
-No number in that report is typed by hand, and its results file records the
-commit and a hash of every input.
+That regenerates the report and the results file beside it. The results file
+records the package version, the commit, and a hash of the configs and the
+FLORES+ files.
 
 ## Troubleshooting
 
@@ -274,7 +295,7 @@ covered in [docs/EXTENDING.md](docs/EXTENDING.md).
 
 ## Documents
 
-| File | What it holds |
+| File | Contents |
 |---|---|
 | [docs/METRICS.md](docs/METRICS.md) | The definition, worked example and caveats for every metric |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Every CLI flag and every config file format |
@@ -295,9 +316,10 @@ not redistributed here.
 ## Citation
 
 ```bibtex
-@misc{meister2026tokeval,
+@inproceedings{meister2026tokeval,
   title         = {TokEval: A Tokenizer Evaluation Suite},
   author        = {Meister, Clara},
+  booktitle     = {Conference on Language Modeling},
   year          = {2026},
   eprint        = {2608.18062},
   archivePrefix = {arXiv},
